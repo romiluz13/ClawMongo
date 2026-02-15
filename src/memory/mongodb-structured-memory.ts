@@ -253,12 +253,10 @@ export async function getStructuredMemoryByType(
 > {
   const collection = structuredMemCollection(db, prefix);
   const docs = await collection
-    .find({ type })
-    .toSorted({ updatedAt: -1 })
-    .limit(limit ?? 50)
+    .find({ type }, { sort: { updatedAt: -1 }, limit: limit ?? 50 })
     .toArray();
 
-  return docs.map((doc) => ({
+  return docs.map((doc: Record<string, unknown>) => ({
     type: doc.type as string,
     key: doc.key as string,
     value: doc.value as string,

@@ -1,4 +1,4 @@
-import type { Db, Collection } from "mongodb";
+import type { Db } from "mongodb";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -313,8 +313,8 @@ export async function listKBDocuments(
     query["source.type"] = filter.source;
   }
 
-  const docs = await kb.find(query).toSorted({ updatedAt: -1 }).toArray();
-  return docs.map((doc) => ({
+  const docs = await kb.find(query, { sort: { updatedAt: -1 } }).toArray();
+  return docs.map((doc: Record<string, unknown>) => ({
     _id: String(doc._id),
     title: doc.title as string,
     source: doc.source as Record<string, unknown>,
