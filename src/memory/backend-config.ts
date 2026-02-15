@@ -329,7 +329,7 @@ export function resolveMemoryBackendConfig(params: {
         collectionPrefix: mongoCfg?.collectionPrefix ?? "openclaw_",
         deploymentProfile,
         embeddingMode: mongoCfg?.embeddingMode ?? defaultEmbeddingMode,
-        fusionMethod: mongoCfg?.fusionMethod ?? "rankFusion",
+        fusionMethod: mongoCfg?.fusionMethod ?? "scoreFusion",
         quantization: mongoCfg?.quantization ?? "none",
         watchDebounceMs:
           typeof mongoCfg?.watchDebounceMs === "number" &&
