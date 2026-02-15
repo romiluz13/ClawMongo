@@ -74,7 +74,11 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
 // Standard indexes (work on all MongoDB editions)
 // ---------------------------------------------------------------------------
 
-export async function ensureStandardIndexes(db: Db, prefix: string): Promise<number> {
+export async function ensureStandardIndexes(
+  db: Db,
+  prefix: string,
+  ttlOpts?: { embeddingCacheTtlDays?: number; memoryTtlDays?: number },
+): Promise<number> {
   let applied = 0;
 
   const chunks = chunksCollection(db, prefix);
@@ -97,8 +101,37 @@ export async function ensureStandardIndexes(db: Db, prefix: string): Promise<num
     { name: "uq_embedding_cache_composite", unique: true },
   );
   applied++;
-  await cache.createIndex({ updatedAt: 1 }, { name: "idx_cache_updated" });
-  applied++;
+
+  // TTL index on embedding_cache for auto-expiry (per `index-ttl` rule).
+  // When TTL is enabled, use TTL index instead of regular idx_cache_updated
+  // because MongoDB cannot have two indexes on the same field with different options.
+  if (ttlOpts?.embeddingCacheTtlDays && ttlOpts.embeddingCacheTtlDays > 0) {
+    const seconds = ttlOpts.embeddingCacheTtlDays * 24 * 60 * 60;
+    await cache.createIndex(
+      { updatedAt: 1 },
+      { name: "idx_cache_ttl", expireAfterSeconds: seconds },
+    );
+    applied++;
+    log.info(`created TTL index on embedding_cache: ${ttlOpts.embeddingCacheTtlDays} days`);
+  } else {
+    await cache.createIndex({ updatedAt: 1 }, { name: "idx_cache_updated" });
+    applied++;
+  }
+
+  // Optional TTL on files for memory auto-expiry
+  // WARNING: This deletes memory files from MongoDB after ttlDays
+  if (ttlOpts?.memoryTtlDays && ttlOpts.memoryTtlDays > 0) {
+    const files = filesCollection(db, prefix);
+    const seconds = ttlOpts.memoryTtlDays * 24 * 60 * 60;
+    await files.createIndex(
+      { updatedAt: 1 },
+      { name: "idx_files_ttl", expireAfterSeconds: seconds },
+    );
+    applied++;
+    log.warn(
+      `created TTL index on files: ${ttlOpts.memoryTtlDays} days — old memory files will be auto-deleted`,
+    );
+  }
 
   log.info(`ensured ${applied} standard indexes`);
   return applied;
@@ -114,6 +147,7 @@ export async function ensureSearchIndexes(
   profile: MemoryMongoDBDeploymentProfile,
   embeddingMode: MemoryMongoDBEmbeddingMode,
   quantization: "none" | "scalar" | "binary" = "none",
+  numDimensions: number = 1024,
 ): Promise<{ text: boolean; vector: boolean }> {
   const budget = assertIndexBudget(profile, 2);
   if (!budget.withinBudget) {
@@ -192,7 +226,7 @@ export async function ensureSearchIndexes(
           {
             type: "vector",
             path: "embedding",
-            numDimensions: 1536,
+            numDimensions,
             similarity: "cosine",
             ...(quantization !== "none" ? { quantization } : {}),
           },

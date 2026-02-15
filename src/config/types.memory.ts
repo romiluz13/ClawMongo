@@ -29,6 +29,18 @@ export type MemoryMongoDBConfig = {
   quantization?: "none" | "scalar" | "binary";
   /** File watcher debounce in milliseconds. Default: 500 */
   watchDebounceMs?: number;
+  /** Number of dimensions for vector embeddings. Default: 1024 (Voyage-4-large) */
+  numDimensions?: number;
+  /** Max connection pool size. Default: 10 */
+  maxPoolSize?: number;
+  /** TTL for cached embeddings in days. Default: 30. Set 0 to disable. */
+  embeddingCacheTtlDays?: number;
+  /** TTL for memory files in days. Default: 0 (disabled). WARNING: expired files are auto-deleted. */
+  memoryTtlDays?: number;
+  /** Enable Change Streams for real-time cross-instance sync. Default: false. Requires replica set. */
+  enableChangeStreams?: boolean;
+  /** Debounce for batching change stream events in ms. Default: 1000 */
+  changeStreamDebounceMs?: number;
 };
 export type MemoryCitationsMode = "auto" | "on" | "off";
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";

@@ -178,6 +178,126 @@ describe("resolveMemoryBackendConfig", () => {
     }
   });
 
+  it("resolves numDimensions with default 1024", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.numDimensions).toBe(1024);
+  });
+
+  it("resolves custom numDimensions", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", numDimensions: 768 },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.numDimensions).toBe(768);
+  });
+
+  it("resolves maxPoolSize with default 10", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.maxPoolSize).toBe(10);
+  });
+
+  it("resolves custom maxPoolSize", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", maxPoolSize: 20 },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.maxPoolSize).toBe(20);
+  });
+
+  it("resolves embeddingCacheTtlDays with default 30", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.embeddingCacheTtlDays).toBe(30);
+  });
+
+  it("resolves custom embeddingCacheTtlDays", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", embeddingCacheTtlDays: 7 },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.embeddingCacheTtlDays).toBe(7);
+  });
+
+  it("resolves memoryTtlDays with default 0 (disabled)", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.memoryTtlDays).toBe(0);
+  });
+
+  it("resolves enableChangeStreams with default false", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.enableChangeStreams).toBe(false);
+  });
+
+  it("resolves enableChangeStreams when true", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", enableChangeStreams: true },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.enableChangeStreams).toBe(true);
+  });
+
+  it("resolves changeStreamDebounceMs with default 1000", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.changeStreamDebounceMs).toBe(1000);
+  });
+
   it("throws when mongodb backend has no URI", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },

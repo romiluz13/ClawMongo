@@ -1,4 +1,4 @@
-import type { Db } from "mongodb";
+import type { Db, ClientSession, MongoClient } from "mongodb";
 import type { Collection } from "mongodb";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -584,6 +584,179 @@ describe("syncToMongoDB — session files", () => {
     for (const op of bulkOps) {
       expect(op.updateOne.update.$set.embedding).toEqual([0.5, 0.6, 0.7]);
       expect(op.updateOne.update.$set.source).toBe("sessions");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Transaction wrapping tests
+// ---------------------------------------------------------------------------
+
+function createMockSession(): ClientSession {
+  const session = {
+    withTransaction: vi.fn(async (fn: () => Promise<void>) => {
+      await fn();
+    }),
+    endSession: vi.fn(),
+  };
+  return session as unknown as ClientSession;
+}
+
+function createMockClient(session: ClientSession): MongoClient {
+  return {
+    startSession: vi.fn(() => session),
+  } as unknown as MongoClient;
+}
+
+describe("syncToMongoDB — transaction wrapping", () => {
+  it("uses withTransaction when client is provided", async () => {
+    await writeMemoryFiles(tmpDir, {
+      "test.md": "# Test\n\nContent for transaction test",
+    });
+
+    const mockSession = createMockSession();
+    const mockClient = createMockClient(mockSession);
+
+    await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      embeddingMode: "automated",
+      client: mockClient,
+    });
+
+    expect(mockClient.startSession).toHaveBeenCalled();
+    expect(mockSession.withTransaction).toHaveBeenCalled();
+    expect(mockSession.endSession).toHaveBeenCalled();
+  });
+
+  it("passes session to bulkWrite and deleteMany inside transaction", async () => {
+    await writeMemoryFiles(tmpDir, {
+      "test.md": "# Test\n\nContent for session propagation test",
+    });
+
+    const mockSession = createMockSession();
+    const mockClient = createMockClient(mockSession);
+
+    await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      embeddingMode: "automated",
+      client: mockClient,
+    });
+
+    // bulkWrite should be called with session option
+    const bulkWriteCalls = (mockChunks.bulkWrite as ReturnType<typeof vi.fn>).mock.calls;
+    expect(bulkWriteCalls.length).toBeGreaterThan(0);
+    const bulkWriteOpts = bulkWriteCalls[0][1];
+    expect(bulkWriteOpts).toMatchObject({ session: mockSession });
+  });
+
+  it("passes session to stale chunk deleteMany", async () => {
+    await writeMemoryFiles(tmpDir, {
+      "keep.md": "# Keep\n\nKeep this file in transaction",
+    });
+
+    // Mock stale chunks exist
+    (mockChunks.distinct as ReturnType<typeof vi.fn>).mockResolvedValue([
+      "memory/keep.md",
+      "memory/stale.md",
+    ]);
+    (mockChunks.deleteMany as ReturnType<typeof vi.fn>).mockResolvedValue({ deletedCount: 2 });
+
+    const mockSession = createMockSession();
+    const mockClient = createMockClient(mockSession);
+
+    await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      embeddingMode: "automated",
+      client: mockClient,
+    });
+
+    // deleteMany for stale chunks should include session
+    const deleteCalls = (mockChunks.deleteMany as ReturnType<typeof vi.fn>).mock.calls;
+    const staleDeleteCall = deleteCalls.find((call: unknown[]) => call[0]?.path?.$in !== undefined);
+    expect(staleDeleteCall).toBeDefined();
+    expect(staleDeleteCall![1]).toMatchObject({ session: mockSession });
+  });
+
+  it("falls back to non-transactional when transactions are not supported", async () => {
+    await writeMemoryFiles(tmpDir, {
+      "test.md": "# Test\n\nContent for fallback test",
+    });
+
+    // Simulate standalone MongoDB error
+    const mockSession = createMockSession();
+    (mockSession.withTransaction as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("Transaction numbers are only allowed on a replica set member or mongos"),
+    );
+    const mockClient = createMockClient(mockSession);
+
+    const result = await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      embeddingMode: "automated",
+      client: mockClient,
+    });
+
+    // Should still succeed with non-transactional fallback
+    expect(result.filesProcessed).toBe(1);
+    expect(result.chunksUpserted).toBeGreaterThanOrEqual(1);
+    expect(mockSession.endSession).toHaveBeenCalled();
+  });
+
+  it("does not use transactions when client is not provided", async () => {
+    await writeMemoryFiles(tmpDir, {
+      "test.md": "# Test\n\nContent without client",
+    });
+
+    const result = await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      embeddingMode: "automated",
+    });
+
+    // Should still work normally without transactions
+    expect(result.filesProcessed).toBe(1);
+    expect(result.chunksUpserted).toBeGreaterThanOrEqual(1);
+  });
+
+  it("session files also use transactions when client is provided", async () => {
+    const sessionEntry = {
+      path: "sessions/tx-session.jsonl",
+      absPath: "/tmp/sessions/tx-session.jsonl",
+      mtimeMs: Date.now(),
+      size: 300,
+      hash: "tx-session-hash",
+      content: "User: Transaction test\nAssistant: In transaction",
+      lineMap: [1, 2],
+    };
+
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/tx-session.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
+
+    const mockSession = createMockSession();
+    const mockClient = createMockClient(mockSession);
+
+    await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      agentId: "agent-1",
+      embeddingMode: "automated",
+      client: mockClient,
+    });
+
+    // Session file bulkWrite should include session
+    const bulkWriteCalls = (mockChunks.bulkWrite as ReturnType<typeof vi.fn>).mock.calls;
+    expect(bulkWriteCalls.length).toBeGreaterThan(0);
+    for (const call of bulkWriteCalls) {
+      expect(call[1]).toMatchObject({ session: mockSession });
     }
   });
 });

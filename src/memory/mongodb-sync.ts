@@ -1,4 +1,4 @@
-import type { Collection, Db, Document } from "mongodb";
+import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import fs from "node:fs/promises";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -46,20 +46,25 @@ async function upsertFileMetadata(
   files: Collection,
   entry: MemoryFileEntry,
   source: MemorySource,
+  session?: ClientSession,
 ): Promise<void> {
-  await files.updateOne(
-    { _id: entry.path as unknown as Document["_id"] },
-    {
-      $set: {
-        source,
-        hash: entry.hash,
-        mtime: entry.mtimeMs,
-        size: entry.size,
-        updatedAt: new Date(),
-      },
+  const update = {
+    $set: {
+      source,
+      hash: entry.hash,
+      mtime: entry.mtimeMs,
+      size: entry.size,
+      updatedAt: new Date(),
     },
-    { upsert: true },
-  );
+  };
+  // String _id — MongoDB accepts any type for _id including strings.
+  // Cast filter to satisfy TS's Collection<Document> generic (expects ObjectId by default).
+  const filter = { _id: entry.path } as Record<string, unknown>;
+  if (session) {
+    await files.updateOne(filter, update, { upsert: true, session });
+  } else {
+    await files.updateOne(filter, update, { upsert: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,6 +82,7 @@ async function upsertChunks(
   chunkList: MemoryChunk[],
   model: string,
   embeddings: number[][] | null,
+  session?: ClientSession,
 ): Promise<number> {
   if (chunkList.length === 0) {
     return 0;
@@ -100,31 +106,137 @@ async function upsertChunks(
     }
     return {
       updateOne: {
-        filter: { _id: chunkId as unknown as Document["_id"] },
+        filter: { _id: chunkId } as Record<string, unknown>,
         update: { $set: setDoc },
         upsert: true,
       },
     };
   });
 
-  const result = await chunks.bulkWrite(ops, { ordered: false });
+  const result = session
+    ? await chunks.bulkWrite(ops, { ordered: false, session })
+    : await chunks.bulkWrite(ops, { ordered: false });
   return result.upsertedCount + result.modifiedCount;
 }
 
-async function deleteChunksForPath(chunks: Collection, path: string): Promise<number> {
-  const result = await chunks.deleteMany({ path });
+async function deleteChunksForPath(
+  chunks: Collection,
+  path: string,
+  session?: ClientSession,
+): Promise<number> {
+  const result = session
+    ? await chunks.deleteMany({ path }, { session })
+    : await chunks.deleteMany({ path });
   return result.deletedCount;
 }
 
-async function deleteStaleChunks(chunks: Collection, validPaths: Set<string>): Promise<number> {
-  const allPaths = await chunks.distinct("path");
+async function deleteStaleChunks(
+  chunks: Collection,
+  validPaths: Set<string>,
+  session?: ClientSession,
+): Promise<number> {
+  const allPaths = session
+    ? await chunks.distinct("path", {}, { session })
+    : await chunks.distinct("path");
   const stalePaths = allPaths.filter((p) => !validPaths.has(p));
   if (stalePaths.length === 0) {
     return 0;
   }
 
-  const result = await chunks.deleteMany({ path: { $in: stalePaths } });
+  const result = session
+    ? await chunks.deleteMany({ path: { $in: stalePaths } }, { session })
+    : await chunks.deleteMany({ path: { $in: stalePaths } });
   return result.deletedCount;
+}
+
+// ---------------------------------------------------------------------------
+// Transaction helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect if an error indicates transactions are not supported (standalone topology).
+ * Transactions require a replica set or mongos.
+ */
+function isTransactionNotSupported(err: unknown): boolean {
+  if (err instanceof Error && "code" in err) {
+    const code = (err as { code: number }).code;
+    // 20 = IllegalOperation (standalone), 263 = NoSuchTransaction
+    if (code === 20 || code === 263) {
+      return true;
+    }
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("Transaction numbers are only allowed on a replica set");
+}
+
+/**
+ * Run a per-file write operation atomically (delete old chunks + upsert new + update metadata).
+ * Uses a MongoDB transaction if `client` is provided and transactions are supported.
+ * Falls back to non-transactional writes for standalone topology or when no client is given.
+ *
+ * Returns the number of chunks upserted and whether transactions should be disabled for
+ * subsequent files (standalone detection).
+ */
+async function syncFileAtomically(params: {
+  client: MongoClient | undefined;
+  useTransactions: boolean;
+  chunksCol: Collection;
+  filesCol: Collection;
+  file: MemoryFileEntry;
+  source: MemorySource;
+  chunks: MemoryChunk[];
+  model: string;
+  embeddings: number[][] | null;
+}): Promise<{ upserted: number; disableTransactions: boolean }> {
+  const { client, chunksCol, filesCol, file, source, chunks, model, embeddings } = params;
+
+  // Non-transactional path (no client, or standalone detected)
+  if (!client || !params.useTransactions) {
+    await deleteChunksForPath(chunksCol, file.path);
+    const upserted = await upsertChunks(chunksCol, file.path, source, chunks, model, embeddings);
+    await upsertFileMetadata(filesCol, file, source);
+    return { upserted, disableTransactions: false };
+  }
+
+  // Transactional path — per `pattern-withtransaction-vs-core-api`:
+  // use withTransaction() callback API for automatic retry handling.
+  const session = client.startSession();
+  try {
+    let upserted = 0;
+    await session.withTransaction(
+      async () => {
+        // Per `fundamental-propagate-session`: pass session to every operation.
+        // Per `pattern-idempotent-transaction-body`: all ops are idempotent
+        // (upsert + deleteMany are safe under retries).
+        await deleteChunksForPath(chunksCol, file.path, session);
+        upserted = await upsertChunks(
+          chunksCol,
+          file.path,
+          source,
+          chunks,
+          model,
+          embeddings,
+          session,
+        );
+        await upsertFileMetadata(filesCol, file, source, session);
+      },
+      // Per `fundamental-commit-write-concern`: majority for durability.
+      { writeConcern: { w: "majority" } },
+    );
+    return { upserted, disableTransactions: false };
+  } catch (err) {
+    // Graceful fallback for standalone topology (no replica set).
+    if (isTransactionNotSupported(err)) {
+      log.info("transactions not supported (standalone topology), falling back to direct writes");
+      await deleteChunksForPath(chunksCol, file.path);
+      const upserted = await upsertChunks(chunksCol, file.path, source, chunks, model, embeddings);
+      await upsertFileMetadata(filesCol, file, source);
+      return { upserted, disableTransactions: true };
+    }
+    throw err;
+  } finally {
+    await session.endSession();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +252,7 @@ export type SyncResult = {
 };
 
 export async function syncToMongoDB(params: {
+  client?: MongoClient;
   db: Db;
   prefix: string;
   agentId?: string;
@@ -156,6 +269,8 @@ export async function syncToMongoDB(params: {
   const { db, prefix, workspaceDir, extraPaths, embeddingMode, progress } = params;
   const model = params.model ?? "voyage-4-large";
   const chunking = params.chunking ?? { tokens: 400, overlap: 80 };
+  // Track whether transactions are available (disabled on first standalone error)
+  let useTransactions = !!params.client;
 
   const chunksCol = chunksCollection(db, prefix);
   const filesCol = filesCollection(db, prefix);
@@ -205,9 +320,12 @@ export async function syncToMongoDB(params: {
 
   for (const file of filesToProcess) {
     try {
+      // Read file and chunk OUTSIDE the transaction (I/O — keep txn short per
+      // `ops-transaction-runtime-limit`).
       const content = await fs.readFile(file.absPath, "utf-8");
       const chunks = chunkMarkdown(content, chunking);
 
+      // Generate embeddings OUTSIDE the transaction (external API call).
       let embeddings: number[][] | null = null;
       if (embeddingMode === "managed" && params.embeddingProvider) {
         try {
@@ -219,17 +337,22 @@ export async function syncToMongoDB(params: {
         }
       }
 
-      await deleteChunksForPath(chunksCol, file.path);
-      const upserted = await upsertChunks(
+      // Atomic write: delete old chunks + upsert new + update metadata
+      const { upserted, disableTransactions } = await syncFileAtomically({
+        client: params.client,
+        useTransactions,
         chunksCol,
-        file.path,
-        "memory",
+        filesCol,
+        file,
+        source: "memory",
         chunks,
         model,
         embeddings,
-      );
+      });
       totalChunksUpserted += upserted;
-      await upsertFileMetadata(filesCol, file, "memory");
+      if (disableTransactions) {
+        useTransactions = false;
+      }
 
       filesProcessed++;
       progress?.({ completed: filesProcessed, total: filesToProcess.length, label: file.path });
@@ -249,6 +372,8 @@ export async function syncToMongoDB(params: {
   if (params.agentId) {
     try {
       const sessionResult = await syncSessionFiles({
+        client: params.client,
+        useTransactions,
         agentId: params.agentId,
         chunksCol,
         filesCol,
@@ -263,6 +388,10 @@ export async function syncToMongoDB(params: {
       });
       sessionFilesProcessed = sessionResult.filesProcessed;
       sessionChunksUpserted = sessionResult.chunksUpserted;
+      // Propagate standalone detection from session sync to stale cleanup
+      if (!sessionResult.useTransactions) {
+        useTransactions = false;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`session sync failed: ${msg}`);
@@ -273,16 +402,52 @@ export async function syncToMongoDB(params: {
   // Phase C: Stale cleanup (covers both memory and session paths)
   // =========================================================================
 
-  const staleDeleted = await deleteStaleChunks(chunksCol, validPaths);
-  if (staleDeleted > 0) {
-    log.info(`sync: removed ${staleDeleted} stale chunks`);
-  }
-
-  // Clean up stale file entries
+  // Compute stale paths OUTSIDE any transaction (avoid read pressure inside txn)
+  const staleFileIds: string[] = [];
   for (const [storedPath] of storedFiles) {
     if (!validPaths.has(storedPath)) {
-      await filesCol.deleteOne({ _id: storedPath as unknown as Document["_id"] });
+      staleFileIds.push(storedPath);
     }
+  }
+
+  let staleDeleted = 0;
+  if (params.client && useTransactions) {
+    let session: ClientSession | undefined;
+    try {
+      session = params.client.startSession();
+      await session.withTransaction(
+        async () => {
+          staleDeleted = await deleteStaleChunks(chunksCol, validPaths, session);
+          if (staleFileIds.length > 0) {
+            await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>, {
+              session,
+            });
+          }
+        },
+        { writeConcern: { w: "majority" } },
+      );
+    } catch (err) {
+      if (isTransactionNotSupported(err)) {
+        // Fallback: non-transactional stale cleanup
+        staleDeleted = await deleteStaleChunks(chunksCol, validPaths);
+        if (staleFileIds.length > 0) {
+          await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>);
+        }
+      } else {
+        throw err;
+      }
+    } finally {
+      await session?.endSession();
+    }
+  } else {
+    staleDeleted = await deleteStaleChunks(chunksCol, validPaths);
+    if (staleFileIds.length > 0) {
+      await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>);
+    }
+  }
+
+  if (staleDeleted > 0) {
+    log.info(`sync: removed ${staleDeleted} stale chunks`);
   }
 
   log.info(
@@ -303,6 +468,8 @@ export async function syncToMongoDB(params: {
 // ---------------------------------------------------------------------------
 
 async function syncSessionFiles(params: {
+  client?: MongoClient;
+  useTransactions: boolean;
   agentId: string;
   chunksCol: Collection;
   filesCol: Collection;
@@ -314,15 +481,16 @@ async function syncSessionFiles(params: {
   model: string;
   force?: boolean;
   progress?: (update: MemorySyncProgressUpdate) => void;
-}): Promise<{ filesProcessed: number; chunksUpserted: number }> {
+}): Promise<{ filesProcessed: number; chunksUpserted: number; useTransactions: boolean }> {
   const sessionPaths = await listSessionFilesForAgent(params.agentId);
   if (sessionPaths.length === 0) {
-    return { filesProcessed: 0, chunksUpserted: 0 };
+    return { filesProcessed: 0, chunksUpserted: 0, useTransactions: params.useTransactions };
   }
 
   log.info(`sync: found ${sessionPaths.length} session files`);
   let filesProcessed = 0;
   let chunksUpserted = 0;
+  let useTransactions = params.useTransactions;
 
   for (const absPath of sessionPaths) {
     try {
@@ -343,7 +511,7 @@ async function syncSessionFiles(params: {
       // Chunk the session content (same as memory files)
       const chunks = chunkMarkdown(entry.content, params.chunking);
 
-      // Generate embeddings in managed mode
+      // Generate embeddings OUTSIDE transaction (external API call)
       let embeddings: number[][] | null = null;
       if (params.embeddingMode === "managed" && params.embeddingProvider) {
         try {
@@ -355,20 +523,21 @@ async function syncSessionFiles(params: {
         }
       }
 
-      // Delete old chunks, upsert new ones with source="sessions"
-      await deleteChunksForPath(params.chunksCol, entry.path);
-      const upserted = await upsertChunks(
-        params.chunksCol,
-        entry.path,
-        "sessions",
+      // Atomic write: delete + upsert + metadata (reuse syncFileAtomically)
+      const { upserted, disableTransactions } = await syncSessionFileAtomically({
+        client: params.client,
+        useTransactions,
+        chunksCol: params.chunksCol,
+        filesCol: params.filesCol,
+        entry,
         chunks,
-        params.model,
+        model: params.model,
         embeddings,
-      );
+      });
       chunksUpserted += upserted;
-
-      // Store session file metadata
-      await upsertSessionFileMetadata(params.filesCol, entry);
+      if (disableTransactions) {
+        useTransactions = false;
+      }
       filesProcessed++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -377,24 +546,95 @@ async function syncSessionFiles(params: {
   }
 
   log.info(`sync: sessions processed=${filesProcessed} chunks=${chunksUpserted}`);
-  return { filesProcessed, chunksUpserted };
+  return { filesProcessed, chunksUpserted, useTransactions };
+}
+
+/** Atomic session file sync — same pattern as syncFileAtomically but for SessionFileEntry. */
+async function syncSessionFileAtomically(params: {
+  client: MongoClient | undefined;
+  useTransactions: boolean;
+  chunksCol: Collection;
+  filesCol: Collection;
+  entry: SessionFileEntry;
+  chunks: MemoryChunk[];
+  model: string;
+  embeddings: number[][] | null;
+}): Promise<{ upserted: number; disableTransactions: boolean }> {
+  const { client, chunksCol, filesCol, entry, chunks, model, embeddings } = params;
+
+  if (!client || !params.useTransactions) {
+    await deleteChunksForPath(chunksCol, entry.path);
+    const upserted = await upsertChunks(
+      chunksCol,
+      entry.path,
+      "sessions",
+      chunks,
+      model,
+      embeddings,
+    );
+    await upsertSessionFileMetadata(filesCol, entry);
+    return { upserted, disableTransactions: false };
+  }
+
+  const session = client.startSession();
+  try {
+    let upserted = 0;
+    await session.withTransaction(
+      async () => {
+        await deleteChunksForPath(chunksCol, entry.path, session);
+        upserted = await upsertChunks(
+          chunksCol,
+          entry.path,
+          "sessions",
+          chunks,
+          model,
+          embeddings,
+          session,
+        );
+        await upsertSessionFileMetadata(filesCol, entry, session);
+      },
+      { writeConcern: { w: "majority" } },
+    );
+    return { upserted, disableTransactions: false };
+  } catch (err) {
+    if (isTransactionNotSupported(err)) {
+      log.info("transactions not supported (standalone), falling back for session sync");
+      await deleteChunksForPath(chunksCol, entry.path);
+      const upserted = await upsertChunks(
+        chunksCol,
+        entry.path,
+        "sessions",
+        chunks,
+        model,
+        embeddings,
+      );
+      await upsertSessionFileMetadata(filesCol, entry);
+      return { upserted, disableTransactions: true };
+    }
+    throw err;
+  } finally {
+    await session.endSession();
+  }
 }
 
 async function upsertSessionFileMetadata(
   files: Collection,
   entry: SessionFileEntry,
+  session?: ClientSession,
 ): Promise<void> {
-  await files.updateOne(
-    { _id: entry.path as unknown as Document["_id"] },
-    {
-      $set: {
-        source: "sessions" as MemorySource,
-        hash: entry.hash,
-        mtime: entry.mtimeMs,
-        size: entry.size,
-        updatedAt: new Date(),
-      },
+  const update = {
+    $set: {
+      source: "sessions" as MemorySource,
+      hash: entry.hash,
+      mtime: entry.mtimeMs,
+      size: entry.size,
+      updatedAt: new Date(),
     },
-    { upsert: true },
-  );
+  };
+  const filter = { _id: entry.path } as Record<string, unknown>;
+  if (session) {
+    await files.updateOne(filter, update, { upsert: true, session });
+  } else {
+    await files.updateOne(filter, update, { upsert: true });
+  }
 }

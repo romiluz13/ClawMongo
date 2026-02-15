@@ -151,6 +151,100 @@ describe("ensureStandardIndexes", () => {
     expect(textIndexCall![1]).toEqual({ name: "idx_chunks_text" });
   });
 
+  it("creates TTL index on embedding_cache when ttlDays is set", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_", { embeddingCacheTtlDays: 30 });
+
+    const cache = db.collection("test_embedding_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = cache.createIndex.mock.calls;
+    const ttlCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).expireAfterSeconds !== undefined,
+    );
+    expect(ttlCall).toBeDefined();
+    expect(ttlCall![1]).toMatchObject({
+      expireAfterSeconds: 30 * 24 * 60 * 60,
+      name: "idx_cache_ttl",
+    });
+  });
+
+  it("skips regular idx_cache_updated when TTL is enabled (TTL index serves same purpose)", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_", { embeddingCacheTtlDays: 7 });
+
+    const cache = db.collection("test_embedding_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = cache.createIndex.mock.calls;
+    const regularUpdatedCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_cache_updated",
+    );
+    // Regular idx_cache_updated should NOT be created when TTL is active
+    expect(regularUpdatedCall).toBeUndefined();
+  });
+
+  it("creates regular idx_cache_updated when no TTL is configured", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+
+    const cache = db.collection("test_embedding_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = cache.createIndex.mock.calls;
+    const regularCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_cache_updated",
+    );
+    expect(regularCall).toBeDefined();
+  });
+
+  it("creates TTL index on files collection when memoryTtlDays is set", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_", { memoryTtlDays: 90 });
+
+    const files = db.collection("test_files") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = files.createIndex.mock.calls;
+    const ttlCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_files_ttl",
+    );
+    expect(ttlCall).toBeDefined();
+    expect(ttlCall![1]).toMatchObject({
+      expireAfterSeconds: 90 * 24 * 60 * 60,
+      name: "idx_files_ttl",
+    });
+  });
+
+  it("skips files TTL index when memoryTtlDays is 0", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_", { memoryTtlDays: 0 });
+
+    const files = db.collection("test_files") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = files.createIndex.mock.calls;
+    const ttlCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_files_ttl",
+    );
+    expect(ttlCall).toBeUndefined();
+  });
+
   it("creates unique composite index on embedding_cache", async () => {
     const db = mockDb();
     await ensureStandardIndexes(db, "test_");
@@ -211,7 +305,7 @@ describe("ensureSearchIndexes", () => {
     const vectorField = vectorFields.find((f: Document) => f.type === "vector");
     expect(vectorField).toBeDefined();
     expect(vectorField.path).toBe("embedding");
-    expect(vectorField.numDimensions).toBe(1536);
+    expect(vectorField.numDimensions).toBe(1024);
     expect(vectorField.similarity).toBe("cosine");
   });
 
@@ -264,6 +358,37 @@ describe("ensureSearchIndexes", () => {
     const vectorFields = (vectorCall![0] as Document).definition.fields;
     const vectorField = vectorFields.find((f: Document) => f.type === "vector");
     expect(vectorField.quantization).toBeUndefined();
+  });
+
+  it("uses custom numDimensions in managed mode vector index", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "atlas-default", "managed", "none", 1024);
+
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const vectorCall = chunks.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+    );
+    expect(vectorCall).toBeDefined();
+    const vectorFields = (vectorCall![0] as Document).definition.fields;
+    const vectorField = vectorFields.find((f: Document) => f.type === "vector");
+    expect(vectorField.numDimensions).toBe(1024);
+  });
+
+  it("defaults numDimensions to 1024 when not specified", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "atlas-default", "managed", "none");
+
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const vectorCall = chunks.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+    );
+    const vectorFields = (vectorCall![0] as Document).definition.fields;
+    const vectorField = vectorFields.find((f: Document) => f.type === "vector");
+    expect(vectorField.numDimensions).toBe(1024);
   });
 
   it("includes filter fields (source, path) in vector index", async () => {

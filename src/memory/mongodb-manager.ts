@@ -16,6 +16,8 @@ import type {
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
+import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
+import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import {
   chunksCollection,
   detectCapabilities,
@@ -63,6 +65,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private syncing: Promise<void> | null = null;
   private watcher: FSWatcher | null = null;
   private watchTimer: NodeJS.Timeout | null = null;
+  private changeStreamWatcher: MongoDBChangeStreamWatcher | null = null;
   private closed = false;
   private dirty = true;
   private fileCount = 0;
@@ -116,6 +119,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const client = new MongoClient(mongoCfg.uri, {
       serverSelectionTimeoutMS: 10_000,
       connectTimeoutMS: 10_000,
+      maxPoolSize: mongoCfg.maxPoolSize,
     });
     try {
       await client.connect();
@@ -137,7 +141,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Ensure collections + standard indexes
     await ensureCollections(db, prefix);
-    await ensureStandardIndexes(db, prefix);
+    await ensureStandardIndexes(db, prefix, {
+      embeddingCacheTtlDays: mongoCfg.embeddingCacheTtlDays,
+      memoryTtlDays: mongoCfg.memoryTtlDays,
+    });
 
     // Detect what the connected MongoDB supports
     const capabilities = await detectCapabilities(db);
@@ -150,6 +157,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       mongoCfg.deploymentProfile,
       mongoCfg.embeddingMode,
       mongoCfg.quantization,
+      mongoCfg.numDimensions,
     );
 
     // If in managed embedding mode, set up an embedding provider
@@ -192,6 +200,24 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Start watching memory files for changes
     manager.ensureWatcher();
+
+    // Opt-in: Change Streams for cross-instance sync (requires replica set)
+    if (mongoCfg.enableChangeStreams) {
+      const csWatcher = new MongoDBChangeStreamWatcher(
+        chunksCollection(db, prefix),
+        () => {
+          manager.dirty = true;
+        },
+        mongoCfg.changeStreamDebounceMs,
+      );
+      const started = await csWatcher.start();
+      if (started) {
+        manager.changeStreamWatcher = csWatcher;
+        log.info("change stream watcher enabled for cross-instance sync");
+      } else {
+        log.info("change streams not available — falling back to file watcher only");
+      }
+    }
 
     log.info(
       `ready: profile=${mongoCfg.deploymentProfile} embedding=${mongoCfg.embeddingMode} ` +
@@ -379,6 +405,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const mongoCfg = this.config.mongodb!;
     try {
       const result = await syncToMongoDB({
+        client: this.client,
         db: this.db,
         prefix: this.prefix,
         agentId: this.agentId,
@@ -498,6 +525,14 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   }
 
   // ---------------------------------------------------------------------------
+  // Analytics: getMemoryStats
+  // ---------------------------------------------------------------------------
+
+  async stats(): Promise<MemoryStats> {
+    return getMemoryStats(this.db, this.prefix);
+  }
+
+  // ---------------------------------------------------------------------------
   // MemorySearchManager.close
   // ---------------------------------------------------------------------------
 
@@ -521,6 +556,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         // Ignore watcher close errors
       }
       this.watcher = null;
+    }
+
+    // Close the change stream watcher
+    if (this.changeStreamWatcher) {
+      try {
+        await this.changeStreamWatcher.close();
+      } catch {
+        // Ignore change stream close errors
+      }
+      this.changeStreamWatcher = null;
     }
 
     // Wait for any in-flight sync to complete before closing the connection

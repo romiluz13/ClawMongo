@@ -25,6 +25,12 @@ export type ResolvedMongoDBConfig = {
   fusionMethod: MemoryMongoDBFusionMethod;
   quantization: "none" | "scalar" | "binary";
   watchDebounceMs: number;
+  numDimensions: number;
+  maxPoolSize: number;
+  embeddingCacheTtlDays: number;
+  memoryTtlDays: number;
+  enableChangeStreams: boolean;
+  changeStreamDebounceMs: number;
 };
 
 export type ResolvedMemoryBackendConfig = {
@@ -300,6 +306,37 @@ export function resolveMemoryBackendConfig(params: {
           mongoCfg.watchDebounceMs >= 0
             ? Math.floor(mongoCfg.watchDebounceMs)
             : 500,
+        numDimensions:
+          typeof mongoCfg?.numDimensions === "number" &&
+          Number.isFinite(mongoCfg.numDimensions) &&
+          mongoCfg.numDimensions > 0
+            ? Math.floor(mongoCfg.numDimensions)
+            : 1024,
+        maxPoolSize:
+          typeof mongoCfg?.maxPoolSize === "number" &&
+          Number.isFinite(mongoCfg.maxPoolSize) &&
+          mongoCfg.maxPoolSize > 0
+            ? Math.floor(mongoCfg.maxPoolSize)
+            : 10,
+        embeddingCacheTtlDays:
+          typeof mongoCfg?.embeddingCacheTtlDays === "number" &&
+          Number.isFinite(mongoCfg.embeddingCacheTtlDays) &&
+          mongoCfg.embeddingCacheTtlDays >= 0
+            ? Math.floor(mongoCfg.embeddingCacheTtlDays)
+            : 30,
+        memoryTtlDays:
+          typeof mongoCfg?.memoryTtlDays === "number" &&
+          Number.isFinite(mongoCfg.memoryTtlDays) &&
+          mongoCfg.memoryTtlDays >= 0
+            ? Math.floor(mongoCfg.memoryTtlDays)
+            : 0,
+        enableChangeStreams: mongoCfg?.enableChangeStreams === true,
+        changeStreamDebounceMs:
+          typeof mongoCfg?.changeStreamDebounceMs === "number" &&
+          Number.isFinite(mongoCfg.changeStreamDebounceMs) &&
+          mongoCfg.changeStreamDebounceMs >= 0
+            ? Math.floor(mongoCfg.changeStreamDebounceMs)
+            : 1000,
       },
     };
   }

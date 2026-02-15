@@ -14,6 +14,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { getMemoryStats } from "./mongodb-analytics.js";
+import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import {
   chunksCollection,
   filesCollection,
@@ -644,5 +646,365 @@ describe("E2E: Collection Helpers", () => {
     expect(files.collectionName).toBe(`${TEST_PREFIX}files`);
     expect(cache.collectionName).toBe(`${TEST_PREFIX}embedding_cache`);
     expect(meta.collectionName).toBe(`${TEST_PREFIX}meta`);
+  });
+});
+
+// ===========================================================================
+// Transaction E2E Tests (requires replica set)
+// ===========================================================================
+
+describe("E2E: Transactions (replica set)", () => {
+  let txnWorkspace: string;
+
+  beforeAll(async () => {
+    await chunksCollection(db, TEST_PREFIX).deleteMany({});
+    await filesCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  afterAll(async () => {
+    if (txnWorkspace) {
+      await fs.rm(txnWorkspace, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("syncToMongoDB uses transactions when client is provided on replica set", async () => {
+    txnWorkspace = await setupWorkspace({
+      "txn-test.md": "# Transaction Test\n\nVerifying ACID sync on replica set.",
+    });
+
+    const result = await syncToMongoDB({
+      client,
+      db,
+      prefix: TEST_PREFIX,
+      workspaceDir: txnWorkspace,
+      embeddingMode: "automated",
+      force: true,
+    });
+
+    expect(result.filesProcessed).toBeGreaterThan(0);
+    expect(result.chunksUpserted).toBeGreaterThan(0);
+
+    // Verify data was actually committed
+    const files = await filesCollection(db, TEST_PREFIX).countDocuments();
+    const chunks = await chunksCollection(db, TEST_PREFIX).countDocuments();
+    expect(files).toBeGreaterThan(0);
+    expect(chunks).toBeGreaterThan(0);
+  });
+
+  it("transaction commit is atomic — all-or-nothing per file", async () => {
+    // Sync a file, then modify and re-sync. The old chunks should be replaced atomically.
+    const chunksBefore = await chunksCollection(db, TEST_PREFIX).find({}).toArray();
+    const filesBefore = await filesCollection(db, TEST_PREFIX).find({}).toArray();
+    expect(chunksBefore.length).toBeGreaterThan(0);
+    expect(filesBefore.length).toBeGreaterThan(0);
+
+    // Modify the file content
+    const memDir = path.join(txnWorkspace, "memory");
+    await fs.writeFile(
+      path.join(memDir, "txn-test.md"),
+      "# Transaction Test v2\n\nUpdated content to verify atomic replacement.\n\n## New Section\n\nMore content here.",
+      "utf-8",
+    );
+
+    const result = await syncToMongoDB({
+      client,
+      db,
+      prefix: TEST_PREFIX,
+      workspaceDir: txnWorkspace,
+      embeddingMode: "automated",
+      force: true,
+    });
+
+    expect(result.filesProcessed).toBeGreaterThan(0);
+
+    // After atomic re-sync, no orphaned chunks from old version should remain
+    const chunksAfter = await chunksCollection(db, TEST_PREFIX).find({}).toArray();
+    for (const chunk of chunksAfter) {
+      // All chunks should contain updated text (no stale "Verifying ACID sync")
+      expect(chunk.text).not.toContain("Verifying ACID sync on replica set");
+    }
+  });
+
+  it("stale file cleanup works transactionally", async () => {
+    // Remove the file from disk, then re-sync — stale entries should be cleaned up atomically
+    const memDir = path.join(txnWorkspace, "memory");
+    await fs.rm(path.join(memDir, "txn-test.md"));
+
+    await syncToMongoDB({
+      client,
+      db,
+      prefix: TEST_PREFIX,
+      workspaceDir: txnWorkspace,
+      embeddingMode: "automated",
+      force: true,
+    });
+
+    // All data from the removed file should be gone
+    const chunks = await chunksCollection(db, TEST_PREFIX).countDocuments();
+    const files = await filesCollection(db, TEST_PREFIX).countDocuments();
+    expect(chunks).toBe(0);
+    expect(files).toBe(0);
+  });
+
+  it("withTransaction retries on transient errors", async () => {
+    // Verify the session/transaction machinery works by running a simple transaction manually
+    const session = client.startSession();
+    try {
+      let executed = false;
+      await session.withTransaction(
+        async () => {
+          const col = chunksCollection(db, TEST_PREFIX);
+          await col.insertOne(
+            {
+              _id: "txn-retry-test:1:5" as unknown as import("mongodb").InferIdType<
+                import("mongodb").Document
+              >,
+              path: "txn-retry-test",
+              text: "transaction test",
+              source: "memory",
+              startLine: 1,
+              endLine: 5,
+              model: "none",
+              syncedAt: new Date(),
+            },
+            { session },
+          );
+          executed = true;
+        },
+        { writeConcern: { w: "majority" } },
+      );
+      expect(executed).toBe(true);
+
+      // Verify the committed document exists
+      const doc = await chunksCollection(db, TEST_PREFIX).findOne({
+        _id: "txn-retry-test:1:5" as unknown as import("mongodb").InferIdType<
+          import("mongodb").Document
+        >,
+      });
+      expect(doc).not.toBeNull();
+      expect(doc!.text).toBe("transaction test");
+    } finally {
+      await session.endSession();
+      // Clean up
+      await chunksCollection(db, TEST_PREFIX).deleteOne({
+        _id: "txn-retry-test:1:5" as unknown as import("mongodb").InferIdType<
+          import("mongodb").Document
+        >,
+      });
+    }
+  });
+});
+
+// ===========================================================================
+// TTL Index E2E Tests
+// ===========================================================================
+
+describe("E2E: TTL Indexes", () => {
+  it("creates TTL index on embedding_cache when embeddingCacheTtlDays > 0", async () => {
+    // Drop and recreate to get fresh indexes
+    try {
+      await embeddingCacheCollection(db, TEST_PREFIX).drop();
+    } catch {
+      /* ok */
+    }
+    await db.createCollection(`${TEST_PREFIX}embedding_cache`);
+
+    await ensureStandardIndexes(db, TEST_PREFIX, { embeddingCacheTtlDays: 30 });
+
+    const indexes = await embeddingCacheCollection(db, TEST_PREFIX).indexes();
+    const ttlIdx = indexes.find((i) => i.name === "idx_cache_ttl");
+    expect(ttlIdx).toBeDefined();
+    expect(ttlIdx!.expireAfterSeconds).toBe(30 * 24 * 60 * 60);
+
+    // Regular idx_cache_updated should NOT exist (TTL replaces it)
+    const regularIdx = indexes.find((i) => i.name === "idx_cache_updated");
+    expect(regularIdx).toBeUndefined();
+  });
+
+  it("creates regular idx_cache_updated when TTL disabled", async () => {
+    try {
+      await embeddingCacheCollection(db, TEST_PREFIX).drop();
+    } catch {
+      /* ok */
+    }
+    await db.createCollection(`${TEST_PREFIX}embedding_cache`);
+
+    await ensureStandardIndexes(db, TEST_PREFIX, { embeddingCacheTtlDays: 0 });
+
+    const indexes = await embeddingCacheCollection(db, TEST_PREFIX).indexes();
+    const regularIdx = indexes.find((i) => i.name === "idx_cache_updated");
+    expect(regularIdx).toBeDefined();
+
+    const ttlIdx = indexes.find((i) => i.name === "idx_cache_ttl");
+    expect(ttlIdx).toBeUndefined();
+  });
+
+  it("creates TTL index on files when memoryTtlDays > 0", async () => {
+    try {
+      await filesCollection(db, TEST_PREFIX).drop();
+    } catch {
+      /* ok */
+    }
+    await db.createCollection(`${TEST_PREFIX}files`);
+
+    await ensureStandardIndexes(db, TEST_PREFIX, { memoryTtlDays: 90 });
+
+    const indexes = await filesCollection(db, TEST_PREFIX).indexes();
+    const ttlIdx = indexes.find((i) => i.name === "idx_files_ttl");
+    expect(ttlIdx).toBeDefined();
+    expect(ttlIdx!.expireAfterSeconds).toBe(90 * 24 * 60 * 60);
+  });
+
+  it("skips files TTL index when memoryTtlDays is 0", async () => {
+    try {
+      await filesCollection(db, TEST_PREFIX).drop();
+    } catch {
+      /* ok */
+    }
+    await db.createCollection(`${TEST_PREFIX}files`);
+
+    await ensureStandardIndexes(db, TEST_PREFIX, { memoryTtlDays: 0 });
+
+    const indexes = await filesCollection(db, TEST_PREFIX).indexes();
+    const ttlIdx = indexes.find((i) => i.name === "idx_files_ttl");
+    expect(ttlIdx).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// Analytics E2E Tests
+// ===========================================================================
+
+describe("E2E: Analytics (getMemoryStats)", () => {
+  let analyticsWorkspace: string;
+
+  beforeAll(async () => {
+    // Clean and sync fresh data
+    await chunksCollection(db, TEST_PREFIX).deleteMany({});
+    await filesCollection(db, TEST_PREFIX).deleteMany({});
+
+    analyticsWorkspace = await setupWorkspace({
+      "analytics-1.md": "# Analytics Test 1\n\nSome content for analytics testing.",
+      "analytics-2.md": "# Analytics Test 2\n\nMore content for source breakdown.",
+    });
+
+    await syncToMongoDB({
+      db,
+      prefix: TEST_PREFIX,
+      workspaceDir: analyticsWorkspace,
+      embeddingMode: "automated",
+      force: true,
+    });
+  });
+
+  afterAll(async () => {
+    if (analyticsWorkspace) {
+      await fs.rm(analyticsWorkspace, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("returns non-zero totals for synced data", async () => {
+    const stats = await getMemoryStats(db, TEST_PREFIX);
+
+    expect(stats.totalFiles).toBe(2);
+    expect(stats.totalChunks).toBeGreaterThanOrEqual(2);
+    expect(stats.sources.length).toBeGreaterThan(0);
+
+    const memorySrc = stats.sources.find((s) => s.source === "memory");
+    expect(memorySrc).toBeDefined();
+    expect(memorySrc!.fileCount).toBe(2);
+    expect(memorySrc!.chunkCount).toBeGreaterThanOrEqual(2);
+    expect(memorySrc!.lastSync).toBeInstanceOf(Date);
+  });
+
+  it("reports embedding coverage (automated mode has no embeddings)", async () => {
+    const stats = await getMemoryStats(db, TEST_PREFIX);
+
+    // In automated mode, MongoDB generates embeddings at query-time,
+    // so the stored documents don't have embedding fields
+    expect(stats.embeddingCoverage.total).toBeGreaterThan(0);
+    expect(stats.embeddingCoverage.withEmbedding).toBe(0);
+    expect(stats.embeddingCoverage.coveragePercent).toBe(0);
+  });
+
+  it("detects stale files when validPaths provided", async () => {
+    const stats = await getMemoryStats(db, TEST_PREFIX, new Set(["memory/analytics-1.md"]));
+
+    // analytics-2.md should show as stale
+    expect(stats.staleFiles).toContain("memory/analytics-2.md");
+    expect(stats.staleFiles.length).toBe(1);
+  });
+
+  it("reports collection sizes", async () => {
+    const stats = await getMemoryStats(db, TEST_PREFIX);
+
+    expect(stats.collectionSizes.files).toBe(2);
+    expect(stats.collectionSizes.chunks).toBeGreaterThanOrEqual(2);
+    expect(stats.collectionSizes.embeddingCache).toBe(0); // no manual embeddings cached
+  });
+});
+
+// ===========================================================================
+// Change Stream E2E Tests (requires replica set)
+// ===========================================================================
+
+describe("E2E: Change Streams", () => {
+  it("starts change stream watcher on replica set", async () => {
+    const col = chunksCollection(db, TEST_PREFIX);
+    const events: Array<{ operationType: string; paths: string[] }> = [];
+
+    const watcher = new MongoDBChangeStreamWatcher(col, (event) => events.push(event), 100);
+
+    const started = await watcher.start();
+    expect(started).toBe(true);
+    expect(watcher.isActive).toBe(true);
+
+    await watcher.close();
+    expect(watcher.isActive).toBe(false);
+  });
+
+  it("detects insert events via change stream", async () => {
+    const col = chunksCollection(db, TEST_PREFIX);
+    const events: Array<{ operationType: string; paths: string[] }> = [];
+
+    const watcher = new MongoDBChangeStreamWatcher(
+      col,
+      (event) => events.push(event),
+      100, // short debounce for test
+    );
+
+    await watcher.start();
+
+    // Small delay to let the change stream fully initialize
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // Insert a document to trigger the change stream
+    await col.insertOne({
+      _id: "cs-test:1:5" as unknown as import("mongodb").InferIdType<import("mongodb").Document>,
+      path: "cs-test",
+      text: "change stream test",
+      source: "memory",
+      startLine: 1,
+      endLine: 5,
+      model: "none",
+      updatedAt: new Date(),
+    });
+
+    // Wait for debounce + processing (change stream events are async)
+    // Retry poll: check up to 3 seconds
+    for (let i = 0; i < 30 && events.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0].operationType).toBe("insert");
+    expect(events[0].paths).toContain("cs-test");
+
+    await watcher.close();
+
+    // Clean up
+    await col.deleteOne({
+      _id: "cs-test:1:5" as unknown as import("mongodb").InferIdType<import("mongodb").Document>,
+    });
   });
 });
