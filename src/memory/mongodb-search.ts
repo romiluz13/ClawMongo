@@ -82,6 +82,7 @@ export async function vectorSearch(
     indexName: string;
     queryText?: string;
     embeddingMode?: "automated" | "managed";
+    numCandidates?: number;
   },
 ): Promise<MemorySearchResult[]> {
   const filter: Document = {};
@@ -94,7 +95,7 @@ export async function vectorSearch(
     queryText: opts.queryText ?? null,
     embeddingMode: opts.embeddingMode ?? "managed",
     indexName: opts.indexName,
-    numCandidates: Math.max(opts.maxResults * 20, 100),
+    numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults,
     filter,
   });
@@ -189,6 +190,7 @@ export async function hybridSearchScoreFusion(
     vectorWeight: number;
     textWeight: number;
     embeddingMode?: "automated" | "managed";
+    numCandidates?: number;
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
@@ -207,7 +209,7 @@ export async function hybridSearchScoreFusion(
     queryText: query,
     embeddingMode: opts.embeddingMode ?? "managed",
     indexName: opts.vectorIndexName,
-    numCandidates: Math.max(opts.maxResults * 20, 100),
+    numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
     filter: sourceFilter,
   });
@@ -282,6 +284,7 @@ export async function hybridSearchRankFusion(
     vectorWeight: number;
     textWeight: number;
     embeddingMode?: "automated" | "managed";
+    numCandidates?: number;
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
@@ -300,7 +303,7 @@ export async function hybridSearchRankFusion(
     queryText: query,
     embeddingMode: opts.embeddingMode ?? "managed",
     indexName: opts.vectorIndexName,
-    numCandidates: Math.max(opts.maxResults * 20, 100),
+    numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
     filter: sourceFilter,
   });
@@ -413,6 +416,7 @@ export async function mongoSearch(
   opts: {
     maxResults: number;
     minScore: number;
+    numCandidates?: number;
     sessionKey?: string;
     fusionMethod: MemoryMongoDBFusionMethod;
     capabilities: DetectedCapabilities;

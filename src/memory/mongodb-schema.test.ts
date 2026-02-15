@@ -110,13 +110,24 @@ describe("ensureCollections", () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
     expect(db.createCollection).toHaveBeenCalledTimes(7);
+    // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_chunks");
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
-    expect(db.createCollection).toHaveBeenCalledWith("test_knowledge_base");
-    expect(db.createCollection).toHaveBeenCalledWith("test_kb_chunks");
-    expect(db.createCollection).toHaveBeenCalledWith("test_structured_mem");
+    // Validated collections: called with name + validator options
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_knowledge_base",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_kb_chunks",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_structured_mem",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
   });
 
   it("skips already-existing collections", async () => {
@@ -125,9 +136,18 @@ describe("ensureCollections", () => {
     expect(db.createCollection).toHaveBeenCalledTimes(5);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
-    expect(db.createCollection).toHaveBeenCalledWith("test_knowledge_base");
-    expect(db.createCollection).toHaveBeenCalledWith("test_kb_chunks");
-    expect(db.createCollection).toHaveBeenCalledWith("test_structured_mem");
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_knowledge_base",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_kb_chunks",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_structured_mem",
+      expect.objectContaining({ validationAction: "warn" }),
+    );
   });
 
   it("does nothing when all collections exist", async () => {

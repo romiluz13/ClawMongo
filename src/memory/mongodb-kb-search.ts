@@ -37,6 +37,7 @@ export async function searchKB(
     textIndexName: string;
     capabilities: DetectedCapabilities;
     embeddingMode: MemoryMongoDBEmbeddingMode;
+    numCandidates?: number;
   },
 ): Promise<MemorySearchResult[]> {
   const canVector =
@@ -49,7 +50,7 @@ export async function searchKB(
     try {
       const vsStage: Document = {
         index: opts.vectorIndexName,
-        numCandidates: Math.max(opts.maxResults * 20, 100),
+        numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
         limit: opts.maxResults,
       };
 

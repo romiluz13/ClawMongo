@@ -38,11 +38,14 @@ export function createMemorySearchTool(options: {
   if (!resolveMemorySearchConfig(cfg, agentId)) {
     return null;
   }
+  const isMongoDBBackend = cfg.memory?.backend === "mongodb";
+  const description = isMongoDBBackend
+    ? "Mandatory recall step: semantically search your knowledge base, structured memory, memory files, and session transcripts. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos."
+    : "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.";
   return {
     label: "Memory Search",
     name: "memory_search",
-    description:
-      "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.",
+    description,
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -251,7 +254,7 @@ export function createKBSearchTool(options: {
     label: "KB Search",
     name: "kb_search",
     description:
-      "Search the knowledge base for documents, FAQs, architecture specs, and reference materials. Returns matching snippets with source and relevance score. Use for factual/reference lookups.",
+      "Search the knowledge base for imported documents, FAQs, architecture specs, and reference materials. Returns matching snippets with source and relevance score. Use for factual/reference lookups when you need specific documentation rather than general memory recall.",
     parameters: KBSearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -322,7 +325,7 @@ export function createMemoryWriteTool(options: {
     label: "Memory Write",
     name: "memory_write",
     description:
-      "Store a structured observation (decision, preference, fact, person, todo, project, architecture) in the agent's persistent memory. Use for important information that should be remembered across sessions. Type+key is the dedup key: writing the same type+key updates the existing record.",
+      "Store a structured observation in persistent memory. Types: decision (choices made), preference (user likes/dislikes), fact (objective info), person (people info), todo (action items), project (project-level context), architecture (technical decisions), custom (anything else). Type+key is the dedup key: writing the same type+key updates the existing record. Set confidence 0.0-1.0 to express certainty. Use for important information; use MEMORY.md for informal scratch notes.",
     parameters: MemoryWriteSchema,
     execute: async (_toolCallId, params) => {
       const type = readStringParam(params, "type", { required: true });

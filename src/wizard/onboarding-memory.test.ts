@@ -135,7 +135,7 @@ describe("setupMemoryBackend", () => {
 
     // The second select call should have initialValue "atlas-default"
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
-    expect(selectCalls.length).toBe(2);
+    expect(selectCalls.length).toBe(3); // backend, profile, kb-import
     const profileSelectParams = selectCalls[1][0];
     expect(profileSelectParams.initialValue).toBe("atlas-default");
   });
@@ -153,7 +153,7 @@ describe("setupMemoryBackend", () => {
 
     // The second select call should have initialValue "community-mongot"
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
-    expect(selectCalls.length).toBe(3); // backend, profile, embedding provider
+    expect(selectCalls.length).toBe(4); // backend, profile, embedding provider, kb-import
     const profileSelectParams = selectCalls[1][0];
     expect(profileSelectParams.initialValue).toBe("community-mongot");
   });

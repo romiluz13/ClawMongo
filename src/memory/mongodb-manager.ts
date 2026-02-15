@@ -24,10 +24,12 @@ import {
   chunksCollection,
   detectCapabilities,
   ensureCollections,
+  ensureSchemaValidation,
   ensureSearchIndexes,
   ensureStandardIndexes,
   filesCollection,
   kbChunksCollection,
+  metaCollection,
   structuredMemCollection,
 } from "./mongodb-schema.js";
 import { mongoSearch } from "./mongodb-search.js";
@@ -127,8 +129,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const safeUri = redactMongoURI(mongoCfg.uri);
     log.info(`connecting to MongoDB: ${safeUri} (db=${mongoCfg.database})`);
     const client = new MongoClient(mongoCfg.uri, {
-      serverSelectionTimeoutMS: 10_000,
-      connectTimeoutMS: 10_000,
+      serverSelectionTimeoutMS: mongoCfg.connectTimeoutMs,
+      connectTimeoutMS: mongoCfg.connectTimeoutMs,
       maxPoolSize: mongoCfg.maxPoolSize,
     });
     try {
@@ -149,8 +151,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const db = client.db(mongoCfg.database);
     const prefix = mongoCfg.collectionPrefix;
 
-    // Ensure collections + standard indexes
+    // Ensure collections + schema validation + standard indexes
     await ensureCollections(db, prefix);
+    await ensureSchemaValidation(db, prefix);
     await ensureStandardIndexes(db, prefix, {
       embeddingCacheTtlDays: mongoCfg.embeddingCacheTtlDays,
       memoryTtlDays: mongoCfg.memoryTtlDays,
@@ -282,6 +285,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       {
         maxResults,
         minScore,
+        numCandidates: mongoCfg.numCandidates,
         sessionKey: opts?.sessionKey,
         fusionMethod: mongoCfg.fusionMethod,
         capabilities: this.capabilities,
@@ -301,6 +305,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       {
         maxResults: Math.max(3, Math.floor(maxResults / 3)),
         minScore,
+        numCandidates: mongoCfg.numCandidates,
         vectorIndexName: `${this.prefix}kb_chunks_vector`,
         textIndexName: `${this.prefix}kb_chunks_text`,
         capabilities: this.capabilities,
@@ -318,6 +323,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       {
         maxResults: Math.max(3, Math.floor(maxResults / 3)),
         minScore,
+        numCandidates: mongoCfg.numCandidates,
         capabilities: this.capabilities,
         vectorIndexName: `${this.prefix}structured_mem_vector`,
         embeddingMode: mongoCfg.embeddingMode,
@@ -492,9 +498,68 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           `chunks=${result.chunksUpserted}+${result.sessionChunksUpserted} ` +
           `totals=${this.fileCount} files, ${this.chunkCount} chunks`,
       );
+
+      // KB auto-refresh: re-import autoImportPaths if autoRefreshHours has elapsed
+      await this.maybeAutoRefreshKB();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`sync failed: ${msg}`);
+    }
+  }
+
+  private async maybeAutoRefreshKB(): Promise<void> {
+    const mongoCfg = this.config.mongodb!;
+    if (!mongoCfg.kb.enabled) {
+      return;
+    }
+    const autoRefreshHours = mongoCfg.kb.autoRefreshHours;
+    if (autoRefreshHours <= 0) {
+      return;
+    }
+    const paths = mongoCfg.kb.autoImportPaths;
+    if (paths.length === 0) {
+      return;
+    }
+
+    // Check last KB import time from meta collection
+    const meta = metaCollection(this.db, this.prefix);
+    const lastRefresh = await meta.findOne({ _id: "kb_last_auto_refresh" as unknown as any });
+    const lastRefreshTime =
+      lastRefresh?.timestamp instanceof Date ? lastRefresh.timestamp.getTime() : 0;
+    const hoursSinceRefresh = (Date.now() - lastRefreshTime) / (1000 * 60 * 60);
+
+    if (hoursSinceRefresh < autoRefreshHours) {
+      return;
+    }
+
+    log.info(
+      `KB auto-refresh: ${hoursSinceRefresh.toFixed(1)}h since last import, refreshing ${paths.length} paths`,
+    );
+    try {
+      const { ingestFilesToKB } = await import("./mongodb-kb.js");
+      const result = await ingestFilesToKB({
+        db: this.db,
+        prefix: this.prefix,
+        paths,
+        recursive: true,
+        importedBy: "agent",
+        embeddingMode: mongoCfg.embeddingMode,
+        embeddingProvider: this.embeddingProvider ?? undefined,
+        chunking: mongoCfg.kb.chunking,
+      });
+      log.info(
+        `KB auto-refresh complete: ${result.documentsProcessed} docs, ${result.chunksCreated} chunks, ${result.skipped} skipped`,
+      );
+
+      // Update last refresh timestamp
+      await meta.updateOne(
+        { _id: "kb_last_auto_refresh" as unknown as any },
+        { $set: { timestamp: new Date() } },
+        { upsert: true },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`KB auto-refresh failed: ${msg}`);
     }
   }
 

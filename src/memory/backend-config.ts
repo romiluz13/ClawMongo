@@ -31,11 +31,14 @@ export type ResolvedMongoDBConfig = {
   memoryTtlDays: number;
   enableChangeStreams: boolean;
   changeStreamDebounceMs: number;
+  connectTimeoutMs: number;
+  numCandidates: number;
   kb: {
     enabled: boolean;
     chunking: { tokens: number; overlap: number };
     autoImportPaths: string[];
     maxDocumentSize: number;
+    autoRefreshHours: number;
   };
 };
 
@@ -349,6 +352,18 @@ export function resolveMemoryBackendConfig(params: {
           mongoCfg.changeStreamDebounceMs >= 0
             ? Math.floor(mongoCfg.changeStreamDebounceMs)
             : 1000,
+        connectTimeoutMs:
+          typeof mongoCfg?.connectTimeoutMs === "number" &&
+          Number.isFinite(mongoCfg.connectTimeoutMs) &&
+          mongoCfg.connectTimeoutMs > 0
+            ? Math.floor(mongoCfg.connectTimeoutMs)
+            : 10_000,
+        numCandidates:
+          typeof mongoCfg?.numCandidates === "number" &&
+          Number.isFinite(mongoCfg.numCandidates) &&
+          mongoCfg.numCandidates > 0
+            ? Math.floor(mongoCfg.numCandidates)
+            : 200,
         kb: {
           enabled: mongoCfg?.kb?.enabled !== false,
           chunking: {
@@ -376,6 +391,12 @@ export function resolveMemoryBackendConfig(params: {
             mongoCfg.kb.maxDocumentSize > 0
               ? Math.floor(mongoCfg.kb.maxDocumentSize)
               : 10 * 1024 * 1024,
+          autoRefreshHours:
+            typeof mongoCfg?.kb?.autoRefreshHours === "number" &&
+            Number.isFinite(mongoCfg.kb.autoRefreshHours) &&
+            mongoCfg.kb.autoRefreshHours >= 0
+              ? mongoCfg.kb.autoRefreshHours
+              : 24,
         },
       },
     };

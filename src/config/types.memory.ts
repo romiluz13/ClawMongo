@@ -41,6 +41,10 @@ export type MemoryMongoDBConfig = {
   enableChangeStreams?: boolean;
   /** Debounce for batching change stream events in ms. Default: 1000 */
   changeStreamDebounceMs?: number;
+  /** Connection timeout in milliseconds. Default: 10000 */
+  connectTimeoutMs?: number;
+  /** Number of candidates for vector search (numCandidates). Default: 200 */
+  numCandidates?: number;
   /** Knowledge Base configuration (MongoDB-native feature) */
   kb?: {
     /** Enable KB features. Default: true when MongoDB backend */
@@ -51,6 +55,8 @@ export type MemoryMongoDBConfig = {
     autoImportPaths?: string[];
     /** Maximum document size in bytes. Default: 10MB */
     maxDocumentSize?: number;
+    /** Hours between automatic re-import of autoImportPaths. Default: 24. Set 0 to disable. */
+    autoRefreshHours?: number;
   };
 };
 export type MemoryCitationsMode = "auto" | "on" | "off";

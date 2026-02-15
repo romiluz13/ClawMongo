@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
 import type { WizardPrompter } from "./prompts.js";
@@ -136,7 +137,7 @@ async function setupMongoDBMemory(
   };
 
   if (!isCommunity) {
-    return baseResult;
+    return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
   // community-bare: no mongot → text search only, no vector search possible
@@ -148,7 +149,7 @@ async function setupMongoDBMemory(
       ].join("\n"),
       "Search Capabilities",
     );
-    return baseResult;
+    return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
   // community-mongot: vector search available with managed embeddings
@@ -165,7 +166,7 @@ async function setupMongoDBMemory(
       ].join("\n"),
       "Text Search Only",
     );
-    return baseResult;
+    return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
   const embeddingProvider = await prompter.select<"openai" | "gemini" | "voyage" | "local">({
@@ -180,7 +181,7 @@ async function setupMongoDBMemory(
   });
 
   if (embeddingProvider === "local") {
-    return {
+    const localResult: OpenClawConfig = {
       ...baseResult,
       agents: {
         ...baseResult.agents,
@@ -193,6 +194,7 @@ async function setupMongoDBMemory(
         },
       },
     };
+    return offerKBImport(localResult, prompter, isClawMongo, trimmedUri);
   }
 
   const ENV_VAR_MAP: Record<string, string> = {
@@ -216,7 +218,7 @@ async function setupMongoDBMemory(
     );
   }
 
-  return {
+  const finalResult: OpenClawConfig = {
     ...baseResult,
     agents: {
       ...baseResult.agents,
@@ -228,6 +230,137 @@ async function setupMongoDBMemory(
           ...(apiKey
             ? { remote: { ...baseResult.agents?.defaults?.memorySearch?.remote, apiKey } }
             : {}),
+        },
+      },
+    },
+  };
+  return offerKBImport(finalResult, prompter, isClawMongo, trimmedUri);
+}
+
+// ---------------------------------------------------------------------------
+// KB Import Step (offered after MongoDB setup)
+// ---------------------------------------------------------------------------
+
+async function offerKBImport(
+  config: OpenClawConfig,
+  prompter: WizardPrompter,
+  isClawMongo: boolean,
+  uri: string,
+): Promise<OpenClawConfig> {
+  const cliName = isClawMongo ? "clawmongo" : "openclaw";
+  const wantImport = await prompter.select({
+    message: "Do you have documents to import into the knowledge base?",
+    options: [
+      {
+        value: "skip" as const,
+        label: "Skip for now",
+        hint: `Import later with: ${cliName} kb ingest <path>`,
+      },
+      {
+        value: "import" as const,
+        label: "Yes, import files/directory",
+        hint: "Import .md and .txt files",
+      },
+    ],
+    initialValue: "skip" as const,
+  });
+
+  if (wantImport !== "import") {
+    return config;
+  }
+
+  const importPath = await prompter.text({
+    message: "Path to files or directory to import",
+    placeholder: "./docs",
+    validate: (value) => {
+      if (!value.trim()) {
+        return "Path is required";
+      }
+      return undefined;
+    },
+  });
+
+  const resolvedPath = path.resolve(importPath.trim());
+  const tags = await prompter.text({
+    message: "Tags (comma-separated, or leave blank)",
+    placeholder: "docs, reference",
+  });
+  const tagList = tags
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  const progress = prompter.progress("Importing documents…");
+
+  let importSucceeded = false;
+  let client: import("mongodb").MongoClient | undefined;
+  try {
+    const { MongoClient } = await import("mongodb");
+    client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 10_000,
+      connectTimeoutMS: 10_000,
+    });
+    await client.connect();
+
+    const mongoCfg = config.memory?.mongodb;
+    const database = mongoCfg?.database ?? "openclaw";
+    const prefix = mongoCfg?.collectionPrefix ?? "openclaw_";
+    const db = client.db(database);
+
+    const { ensureCollections, ensureStandardIndexes } =
+      await import("../memory/mongodb-schema.js");
+    await ensureCollections(db, prefix);
+    await ensureStandardIndexes(db, prefix);
+
+    const { ingestFilesToKB } = await import("../memory/mongodb-kb.js");
+    const embeddingMode = mongoCfg?.embeddingMode ?? "automated";
+
+    const result = await ingestFilesToKB({
+      db,
+      prefix,
+      paths: [resolvedPath],
+      recursive: true,
+      tags: tagList.length > 0 ? tagList : undefined,
+      importedBy: "wizard",
+      embeddingMode,
+      progress: (p) => {
+        progress.update(`${p.completed}/${p.total}: ${p.label}`);
+      },
+    });
+
+    progress.stop(
+      `Imported ${result.documentsProcessed} documents (${result.chunksCreated} chunks, ${result.skipped} skipped)`,
+    );
+
+    if (result.errors.length > 0) {
+      await prompter.note(result.errors.map((e) => `- ${e}`).join("\n"), "Import Warnings");
+    }
+
+    importSucceeded = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    progress.stop(`Import failed: ${msg}`);
+    await prompter.note(
+      `You can import later with: ${cliName} kb ingest ${resolvedPath}`,
+      "Import Failed",
+    );
+  } finally {
+    await client?.close().catch(() => {});
+  }
+
+  // Store autoImportPaths in config only when import succeeded
+  if (!importSucceeded) {
+    return config;
+  }
+  return {
+    ...config,
+    memory: {
+      ...config.memory,
+      mongodb: {
+        ...config.memory?.mongodb,
+        kb: {
+          ...config.memory?.mongodb?.kb,
+          autoImportPaths: [...(config.memory?.mongodb?.kb?.autoImportPaths ?? []), resolvedPath],
         },
       },
     },

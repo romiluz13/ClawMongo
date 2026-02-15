@@ -133,6 +133,7 @@ export async function searchStructuredMemory(
     capabilities: DetectedCapabilities;
     vectorIndexName: string;
     embeddingMode: MemoryMongoDBEmbeddingMode;
+    numCandidates?: number;
   },
 ): Promise<MemorySearchResult[]> {
   const minScore = opts.minScore ?? 0.1;
@@ -146,7 +147,7 @@ export async function searchStructuredMemory(
     try {
       const vsStage: Document = {
         index: opts.vectorIndexName,
-        numCandidates: Math.max(opts.maxResults * 20, 100),
+        numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
         limit: opts.maxResults,
       };
 

@@ -42,6 +42,10 @@ vi.mock("./mongodb-schema.js", () => ({
   filesCollection: vi.fn(() => ({
     countDocuments: vi.fn().mockResolvedValue(0),
   })),
+  metaCollection: vi.fn(() => ({
+    findOne: vi.fn().mockResolvedValue(null),
+    updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1 }),
+  })),
   detectCapabilities: vi.fn().mockResolvedValue({
     vectorSearch: false,
     textSearch: false,
@@ -52,6 +56,7 @@ vi.mock("./mongodb-schema.js", () => ({
   ensureCollections: vi.fn().mockResolvedValue(undefined),
   ensureStandardIndexes: vi.fn().mockResolvedValue(undefined),
   ensureSearchIndexes: vi.fn().mockResolvedValue(undefined),
+  ensureSchemaValidation: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./mongodb-search.js", () => ({
@@ -108,6 +113,21 @@ function makeConfig(
       fusionMethod: "js-merge",
       quantization: "none",
       watchDebounceMs: 500,
+      numDimensions: 1024,
+      maxPoolSize: 10,
+      embeddingCacheTtlDays: 30,
+      memoryTtlDays: 0,
+      enableChangeStreams: false,
+      changeStreamDebounceMs: 1000,
+      connectTimeoutMs: 10_000,
+      numCandidates: 200,
+      kb: {
+        enabled: true,
+        chunking: { tokens: 600, overlap: 100 },
+        autoImportPaths: [],
+        maxDocumentSize: 10 * 1024 * 1024,
+        autoRefreshHours: 24,
+      },
       ...overrides,
     },
   };

@@ -66,6 +66,82 @@ export function structuredMemCollection(db: Db, prefix: string): Collection {
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
 
+// JSON Schema validators for MongoDB-native collections.
+// Uses $jsonSchema with validationAction: "warn" so invalid docs are still
+// inserted but produce a warning in the server logs, avoiding hard failures
+// for evolving schemas.
+
+const KB_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["hash", "title", "source", "updatedAt"],
+    properties: {
+      hash: { bsonType: "string", description: "Content hash for dedup" },
+      title: { bsonType: "string", description: "Document title" },
+      source: {
+        bsonType: "object",
+        required: ["type"],
+        properties: {
+          type: {
+            enum: ["file", "url", "text", "api"],
+            description: "Source type",
+          },
+          path: { bsonType: "string" },
+        },
+      },
+      category: { bsonType: "string" },
+      tags: { bsonType: "array", items: { bsonType: "string" } },
+      chunkCount: { bsonType: "number" },
+      importedBy: { bsonType: "string" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const KB_CHUNKS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["docId", "path", "text", "startLine", "endLine", "updatedAt"],
+    properties: {
+      docId: { bsonType: "objectId", description: "Reference to knowledge_base _id" },
+      path: { bsonType: "string" },
+      text: { bsonType: "string", description: "Chunk text content" },
+      startLine: { bsonType: "number" },
+      endLine: { bsonType: "number" },
+      embedding: { bsonType: "array", description: "Vector embedding (managed mode)" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const STRUCTURED_MEM_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["type", "key", "value", "updatedAt"],
+    properties: {
+      type: {
+        bsonType: "string",
+        description:
+          "Memory type (decision, preference, fact, person, todo, project, architecture, custom)",
+      },
+      key: { bsonType: "string", description: "Unique key within type" },
+      value: { bsonType: "string", description: "The observation/fact text" },
+      context: { bsonType: "string" },
+      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+      tags: { bsonType: "array", items: { bsonType: "string" } },
+      agentId: { bsonType: "string" },
+      embedding: { bsonType: "array", description: "Vector embedding (managed mode)" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const VALIDATED_COLLECTIONS: Record<string, Document> = {
+  knowledge_base: KB_SCHEMA,
+  kb_chunks: KB_CHUNKS_SCHEMA,
+  structured_mem: STRUCTURED_MEM_SCHEMA,
+};
+
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
   const existing = new Set(
     await db
@@ -84,8 +160,46 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
-      await db.createCollection(name);
+      // Strip prefix to look up validator
+      const baseName = name.slice(prefix.length);
+      const validator = VALIDATED_COLLECTIONS[baseName];
+      if (validator) {
+        await db.createCollection(name, {
+          validator,
+          validationLevel: "moderate",
+          validationAction: "warn",
+        });
+      } else {
+        await db.createCollection(name);
+      }
       log.info(`created collection ${name}`);
+    }
+  }
+}
+
+/**
+ * Apply JSON Schema validation to existing collections that were created
+ * before validation was added. Idempotent — safe to call on every startup.
+ * Uses validationAction: "warn" to avoid breaking existing data.
+ */
+export async function ensureSchemaValidation(db: Db, prefix: string): Promise<void> {
+  for (const [baseName, validator] of Object.entries(VALIDATED_COLLECTIONS)) {
+    const collName = `${prefix}${baseName}`;
+    try {
+      await db.command({
+        collMod: collName,
+        validator,
+        validationLevel: "moderate",
+        validationAction: "warn",
+      });
+      log.info(`applied schema validation to ${collName}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Collection might not exist yet — skip silently
+      if (msg.includes("ns not found") || msg.includes("doesn't exist")) {
+        continue;
+      }
+      log.warn(`schema validation for ${collName} failed: ${msg}`);
     }
   }
 }

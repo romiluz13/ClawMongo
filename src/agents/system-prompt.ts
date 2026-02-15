@@ -52,12 +52,35 @@ function buildMemorySection(params: {
   const isMongoDBBackend = params.memoryBackend === "mongodb";
   const lines = ["## Memory Recall"];
   if (isMongoDBBackend) {
-    const recallLine =
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from your knowledge base, structured memory, and memory files.";
-    const writeLine = params.availableTools.has("memory_write")
-      ? " Use memory_write to store important decisions, preferences, and facts. Use MEMORY.md for informal notes and working observations."
-      : "";
-    lines.push(recallLine + writeLine);
+    lines.push(
+      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from your knowledge base, structured memory, and memory files. Results come from all active sources, ranked by relevance.",
+    );
+    lines.push("");
+    lines.push("### When to use each tool");
+    lines.push(
+      "- **memory_search** — Your primary recall tool. Searches across ALL sources (memory files, knowledge base, structured memory, sessions). Use for any question about what you know.",
+    );
+    if (params.availableTools.has("kb_search")) {
+      lines.push(
+        "- **kb_search** — Dedicated knowledge base search. Use when looking for reference material, documentation, FAQs, or architecture specs that were imported into the knowledge base.",
+      );
+    }
+    if (params.availableTools.has("memory_write")) {
+      lines.push(
+        [
+          "- **memory_write** — Store structured observations to persistent memory. Use for:",
+          '  - **decision**: choices made (e.g., "We chose TypeScript for the backend")',
+          '  - **preference**: user likes/dislikes (e.g., "User prefers concise responses")',
+          '  - **fact**: objective information (e.g., "API rate limit is 100 req/min")',
+          '  - **person**: info about people (e.g., "Alice is the project manager")',
+          '  - **todo**: action items (e.g., "Migrate auth to OAuth2 by March")',
+          '  - **project**: project-level info (e.g., "Project codename is Phoenix")',
+          '  - **architecture**: technical decisions (e.g., "Using event-driven architecture")',
+          "  Type+key is the dedup key — writing the same type+key updates the existing record.",
+          "  Use MEMORY.md only for informal scratch notes and working observations.",
+        ].join("\n"),
+      );
+    }
   } else {
     lines.push(
       "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",

@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -268,7 +269,8 @@ export async function configureMemorySection(
     await testMongoDBConnection(uri);
   }
 
-  return baseResult;
+  // Offer KB import (only for MongoDB backend)
+  return offerKBImportConfigure(baseResult, runtime, isClawMongo, uri);
 }
 
 async function testMongoDBConnection(uri: string): Promise<void> {
@@ -311,6 +313,147 @@ async function testMongoDBConnection(uri: string): Promise<void> {
   } finally {
     await client.close().catch(() => {});
   }
+}
+
+// ---------------------------------------------------------------------------
+// KB Import Step (offered after MongoDB configuration)
+// ---------------------------------------------------------------------------
+
+async function offerKBImportConfigure(
+  config: OpenClawConfig,
+  runtime: RuntimeEnv,
+  isClawMongo: boolean,
+  uri: string,
+): Promise<OpenClawConfig> {
+  const cliName = isClawMongo ? "clawmongo" : "openclaw";
+  const wantImport = guardCancel(
+    await select({
+      message: "Import documents into the knowledge base?",
+      options: [
+        {
+          value: "skip",
+          label: "Skip for now",
+          hint: `Import later with: ${cliName} kb ingest <path>`,
+        },
+        {
+          value: "import",
+          label: "Yes, import files/directory",
+          hint: "Import .md and .txt files",
+        },
+      ],
+      initialValue: "skip",
+    }),
+    runtime,
+  );
+
+  if (wantImport !== "import") {
+    return config;
+  }
+
+  const importPathInput = guardCancel(
+    await text({
+      message: "Path to files or directory to import",
+      placeholder: "./docs",
+      validate: (value) => {
+        if (!(value ?? "").trim()) {
+          return "Path is required";
+        }
+        return undefined;
+      },
+    }),
+    runtime,
+  );
+
+  const resolvedPath = path.resolve(String(importPathInput).trim());
+  const tagsInput = guardCancel(
+    await text({
+      message: "Tags (comma-separated, or leave blank)",
+      placeholder: "docs, reference",
+      validate: () => undefined,
+    }),
+    runtime,
+  );
+  const tagList = String(tagsInput ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+  let importSucceeded = false;
+  let client: import("mongodb").MongoClient | undefined;
+  try {
+    const { MongoClient } = await import("mongodb");
+    client = new MongoClient(uri, {
+      serverSelectionTimeoutMS: 10_000,
+      connectTimeoutMS: 10_000,
+    });
+    await client.connect();
+
+    const mongoCfg = config.memory?.mongodb;
+    const database = mongoCfg?.database ?? "openclaw";
+    const prefix = mongoCfg?.collectionPrefix ?? "openclaw_";
+    const db = client.db(database);
+
+    const { ensureCollections, ensureStandardIndexes } =
+      await import("../memory/mongodb-schema.js");
+    await ensureCollections(db, prefix);
+    await ensureStandardIndexes(db, prefix);
+
+    const { ingestFilesToKB } = await import("../memory/mongodb-kb.js");
+    const embeddingMode = mongoCfg?.embeddingMode ?? "automated";
+
+    note("Importing documents…", "Knowledge Base");
+
+    const result = await ingestFilesToKB({
+      db,
+      prefix,
+      paths: [resolvedPath],
+      recursive: true,
+      tags: tagList.length > 0 ? tagList : undefined,
+      importedBy: "wizard",
+      embeddingMode,
+    });
+
+    note(
+      `Imported ${result.documentsProcessed} documents (${result.chunksCreated} chunks, ${result.skipped} skipped)`,
+      "Knowledge Base",
+    );
+
+    if (result.errors.length > 0) {
+      note(result.errors.map((e) => `- ${e}`).join("\n"), "Import Warnings");
+    }
+
+    importSucceeded = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    note(
+      [
+        `Import failed: ${msg}`,
+        "",
+        `You can import later with: ${cliName} kb ingest ${resolvedPath}`,
+      ].join("\n"),
+      "Knowledge Base",
+    );
+  } finally {
+    await client?.close().catch(() => {});
+  }
+
+  // Store autoImportPaths in config only when import succeeded
+  if (!importSucceeded) {
+    return config;
+  }
+  return {
+    ...config,
+    memory: {
+      ...config.memory,
+      mongodb: {
+        ...config.memory?.mongodb,
+        kb: {
+          ...config.memory?.mongodb?.kb,
+          autoImportPaths: [...(config.memory?.mongodb?.kb?.autoImportPaths ?? []), resolvedPath],
+        },
+      },
+    },
+  };
 }
 
 function redactUri(uri: string): string {
