@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { buildAgentSystemPrompt } from "./system-prompt.js";
 
 describe("buildAgentSystemPrompt MongoDB decision tree", () => {
@@ -94,5 +94,98 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     expect(prompt).toContain("### Memory Routing Guide");
     expect(prompt).toContain("When storing information:");
     expect(prompt).toContain("When searching:");
+  });
+});
+
+describe("buildAgentSystemPrompt MongoDB bridge section", () => {
+  it("renders bridge section AFTER Project Context when memoryBackend=mongodb and isMinimal=false", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      memoryBackend: "mongodb",
+      contextFiles: [
+        { path: "AGENTS.md", content: "Write it down to a file." },
+        { path: "SOUL.md", content: "These files are your memory." },
+      ],
+    });
+
+    // Bridge section must be present
+    expect(prompt).toContain("## MongoDB Memory Integration");
+    expect(prompt).toContain("The MongoDB memory backend is active.");
+    expect(prompt).toContain("memory_search FIRST");
+    expect(prompt).toContain("memory_write");
+    expect(prompt).toContain("kb_search");
+    expect(prompt).toContain("MEMORY.md is for informal scratch notes only");
+
+    // Bridge must appear AFTER the context files content (AGENTS.md/SOUL.md)
+    const bridgeIndex = prompt.indexOf("## MongoDB Memory Integration");
+    const agentsIndex = prompt.indexOf("Write it down to a file.");
+    const soulIndex = prompt.indexOf("These files are your memory.");
+    expect(bridgeIndex).toBeGreaterThan(agentsIndex);
+    expect(bridgeIndex).toBeGreaterThan(soulIndex);
+
+    // Bridge must appear BEFORE the Silent Replies section
+    const silentIndex = prompt.indexOf("## Silent Replies");
+    expect(bridgeIndex).toBeLessThan(silentIndex);
+  });
+
+  it("does NOT render bridge section for builtin backend", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get"],
+      memoryBackend: "builtin",
+      contextFiles: [{ path: "AGENTS.md", content: "Write it down to a file." }],
+    });
+
+    expect(prompt).not.toContain("## MongoDB Memory Integration");
+    expect(prompt).not.toContain("The MongoDB memory backend is active.");
+  });
+
+  it("does NOT render bridge section when isMinimal=true (subagent mode)", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      memoryBackend: "mongodb",
+      promptMode: "minimal",
+    });
+
+    expect(prompt).not.toContain("## MongoDB Memory Integration");
+    expect(prompt).not.toContain("The MongoDB memory backend is active.");
+  });
+
+  it("does NOT render bridge section when memoryBackend is undefined", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get"],
+      contextFiles: [{ path: "AGENTS.md", content: "Write it down to a file." }],
+    });
+
+    expect(prompt).not.toContain("## MongoDB Memory Integration");
+  });
+
+  it("omits memory_write line in bridge when tool not available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get", "kb_search"],
+      memoryBackend: "mongodb",
+    });
+
+    expect(prompt).toContain("## MongoDB Memory Integration");
+    expect(prompt).toContain("memory_search FIRST");
+    expect(prompt).toContain("kb_search");
+    expect(prompt).not.toContain("use memory_write");
+  });
+
+  it("omits kb_search line in bridge when tool not available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get", "memory_write"],
+      memoryBackend: "mongodb",
+    });
+
+    expect(prompt).toContain("## MongoDB Memory Integration");
+    expect(prompt).toContain("memory_search FIRST");
+    expect(prompt).toContain("memory_write");
+    expect(prompt).not.toContain("kb_search");
   });
 });

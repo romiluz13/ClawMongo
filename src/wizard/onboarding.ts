@@ -464,6 +464,18 @@ export async function runOnboardingWizard(
     nextConfig = await setupMemoryBackend(nextConfig, prompter);
   }
 
+  // Customize workspace files for MongoDB backend (non-fatal)
+  if (nextConfig.memory?.backend === "mongodb") {
+    try {
+      const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
+      await customizeWorkspaceForMongoDB(workspaceDir);
+    } catch (err) {
+      runtime.log(
+        `Warning: MongoDB workspace customization incomplete: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
   nextConfig = onboardHelpers.applyWizardMetadata(nextConfig, { command: "onboard", mode });
   await writeConfigFile(nextConfig);
 

@@ -13,6 +13,35 @@ import { listDeliverableMessageChannels } from "../utils/message-channel.js";
  */
 export type PromptMode = "full" | "minimal" | "none";
 
+/**
+ * Builds the MongoDB bridge section that gives MongoDB-specific instructions
+ * the "last word" after AGENTS.md/SOUL.md context files.
+ * Only renders when memoryBackend === "mongodb" and !isMinimal.
+ */
+function buildMongoDBBridgeSection(params: {
+  memoryBackend?: string;
+  isMinimal: boolean;
+  availableTools?: ReadonlySet<string>;
+}): string[] {
+  if (params.memoryBackend !== "mongodb" || params.isMinimal) {
+    return [];
+  }
+  const tools = params.availableTools;
+  const lines: string[] = [
+    "## MongoDB Memory Integration",
+    "The MongoDB memory backend is active. These rules override any conflicting file-based guidance above:",
+    "- To recall: always call memory_search FIRST (not file reads)",
+  ];
+  if (!tools || tools.has("memory_write")) {
+    lines.push("- To store structured data: use memory_write (not file writes)");
+  }
+  if (!tools || tools.has("kb_search")) {
+    lines.push("- To find reference docs: use kb_search");
+  }
+  lines.push("- MEMORY.md is for informal scratch notes only — NOT your primary memory", "");
+  return lines;
+}
+
 function buildSkillsSection(params: {
   skillsPrompt?: string;
   isMinimal: boolean;
@@ -643,6 +672,15 @@ export function buildAgentSystemPrompt(params: {
       lines.push(`## ${file.path}`, "", file.content, "");
     }
   }
+
+  // MongoDB bridge: override file-centric guidance from AGENTS.md/SOUL.md
+  lines.push(
+    ...buildMongoDBBridgeSection({
+      memoryBackend: params.memoryBackend,
+      isMinimal,
+      availableTools,
+    }),
+  );
 
   // Skip silent replies for subagent/none modes
   if (!isMinimal) {

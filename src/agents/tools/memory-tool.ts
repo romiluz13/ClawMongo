@@ -304,11 +304,15 @@ export function createKBSearchTool(options: {
       }
 
       try {
-        // Use the manager's search with KB-specific filtering via the query
-        // The enhanced search() in MongoDBMemoryManager already searches KB
-        const results = await manager.search(query, { maxResults });
-        // Filter to KB results only
-        const kbResults = results.filter((r) => r.source === "kb");
+        // Prefer direct searchKB() when available (MongoDB backend optimization)
+        // Falls back to search() + filter for other backends
+        let kbResults;
+        if (manager.searchKB) {
+          kbResults = await manager.searchKB(query, { maxResults });
+        } else {
+          const results = await manager.search(query, { maxResults });
+          kbResults = results.filter((r) => r.source === "kb");
+        }
         return jsonResult({ results: kbResults });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

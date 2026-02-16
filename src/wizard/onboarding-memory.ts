@@ -1,7 +1,9 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
 import type { WizardPrompter } from "./prompts.js";
+import { DEFAULT_AGENTS_FILENAME, DEFAULT_MEMORY_FILENAME } from "../agents/workspace.js";
 import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
 
 /**
@@ -365,4 +367,64 @@ async function offerKBImport(
       },
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace Customization for MongoDB Backend
+// ---------------------------------------------------------------------------
+
+const MONGODB_AGENTS_SECTION = `
+
+## MongoDB Memory Backend
+
+This workspace uses the MongoDB memory backend. The agent should prefer MongoDB tools over file-based patterns:
+
+- **Recall**: Use \`memory_search\` (not file reads) as the primary recall mechanism
+- **Store**: Use \`memory_write\` for structured data (decisions, preferences, facts)
+- **Reference**: Use \`kb_search\` for imported documents and reference materials
+- **MEMORY.md**: Use for informal scratch notes only — NOT your primary memory
+
+The MongoDB backend provides persistent, searchable, multi-instance memory with vector search,
+knowledge base ingestion, and structured agent memory.
+`;
+
+const MONGODB_MEMORY_SEED = `# Memory Notes
+
+This workspace uses the MongoDB memory backend.
+
+- Use \`memory_search\` for recall (not file reads)
+- Use \`memory_write\` for structured data (decisions, preferences, facts)
+- Use \`kb_search\` for reference documents
+- This file is for informal scratch notes only
+`;
+
+/**
+ * Customize workspace files for the MongoDB memory backend.
+ * - Appends a MongoDB section to AGENTS.md (idempotent)
+ * - Seeds MEMORY.md with correct initial content (does not overwrite)
+ */
+export async function customizeWorkspaceForMongoDB(workspaceDir: string): Promise<void> {
+  const agentsPath = path.join(workspaceDir, DEFAULT_AGENTS_FILENAME);
+  const memoryPath = path.join(workspaceDir, DEFAULT_MEMORY_FILENAME);
+
+  // --- AGENTS.md: append MongoDB section (idempotent) ---
+  try {
+    const existing = await fs.readFile(agentsPath, "utf-8");
+    if (!existing.includes("## MongoDB Memory Backend")) {
+      await fs.appendFile(agentsPath, MONGODB_AGENTS_SECTION);
+    }
+  } catch {
+    // AGENTS.md doesn't exist or can't be read — skip
+  }
+
+  // --- MEMORY.md: seed with MongoDB-aware content (exclusive create) ---
+  try {
+    await fs.writeFile(memoryPath, MONGODB_MEMORY_SEED, { flag: "wx" });
+  } catch (err) {
+    // EEXIST is expected — file already exists, don't overwrite
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
+      // Re-throw unexpected errors (but caller wraps in try/catch anyway)
+      throw err;
+    }
+  }
 }

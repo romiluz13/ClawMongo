@@ -389,6 +389,45 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   }
 
   // ---------------------------------------------------------------------------
+  // Direct KB search (for kb_search tool optimization)
+  // ---------------------------------------------------------------------------
+
+  async searchKB(
+    query: string,
+    opts?: { maxResults?: number; minScore?: number },
+  ): Promise<MemorySearchResult[]> {
+    const cleaned = query.trim();
+    if (!cleaned) {
+      return [];
+    }
+
+    const mongoCfg = this.config.mongodb!;
+    const maxResults = opts?.maxResults ?? 5;
+    const minScore = opts?.minScore ?? 0.1;
+
+    // Generate query embedding same as search() does
+    let queryVector: number[] | null = null;
+    if (mongoCfg.embeddingMode === "managed" && this.embeddingProvider) {
+      try {
+        queryVector = await this.embeddingProvider.embedQuery(cleaned);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`query embedding failed (searchKB): ${msg}`);
+      }
+    }
+
+    return searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
+      maxResults,
+      minScore,
+      numCandidates: mongoCfg.numCandidates,
+      vectorIndexName: `${this.prefix}kb_chunks_vector`,
+      textIndexName: `${this.prefix}kb_chunks_text`,
+      capabilities: this.capabilities,
+      embeddingMode: mongoCfg.embeddingMode,
+    });
+  }
+
+  // ---------------------------------------------------------------------------
   // Score normalization: detect which search method was used for legacy search
   // ---------------------------------------------------------------------------
 

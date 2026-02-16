@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import type { WizardPrompter } from "./prompts.js";
 
@@ -344,5 +344,88 @@ describe("setupMemoryBackend", () => {
       (o: { value: string }) => o.value === "mongodb",
     );
     expect(mongoOption.label).not.toContain("Recommended");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// customizeWorkspaceForMongoDB tests
+// ---------------------------------------------------------------------------
+
+const mockReadFile = vi.hoisted(() => vi.fn());
+const mockWriteFile = vi.hoisted(() => vi.fn());
+const mockAppendFile = vi.hoisted(() => vi.fn());
+vi.mock("node:fs/promises", () => ({
+  default: {
+    readFile: mockReadFile,
+    writeFile: mockWriteFile,
+    appendFile: mockAppendFile,
+  },
+  readFile: mockReadFile,
+  writeFile: mockWriteFile,
+  appendFile: mockAppendFile,
+}));
+
+describe("customizeWorkspaceForMongoDB", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("appends MongoDB section to AGENTS.md", async () => {
+    const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
+    // AGENTS.md exists without MongoDB section
+    mockReadFile.mockResolvedValue("# Agent Instructions\nDo stuff.\n");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    await customizeWorkspaceForMongoDB("/tmp/workspace");
+
+    // Should read AGENTS.md
+    expect(mockReadFile).toHaveBeenCalledWith(expect.stringContaining("AGENTS.md"), "utf-8");
+    // Should append the MongoDB section to AGENTS.md
+    expect(mockAppendFile).toHaveBeenCalledWith(
+      expect.stringContaining("AGENTS.md"),
+      expect.stringContaining("## MongoDB Memory Backend"),
+    );
+  });
+
+  it("seeds MEMORY.md with correct initial content", async () => {
+    const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
+    // AGENTS.md exists without MongoDB section
+    mockReadFile.mockResolvedValue("# Agent Instructions\n");
+    mockWriteFile.mockResolvedValue(undefined);
+
+    await customizeWorkspaceForMongoDB("/tmp/workspace");
+
+    // Should create MEMORY.md with wx flag (exclusive create)
+    expect(mockWriteFile).toHaveBeenCalledWith(
+      expect.stringContaining("MEMORY.md"),
+      expect.stringContaining("MongoDB"),
+      expect.objectContaining({ flag: "wx" }),
+    );
+  });
+
+  it("is idempotent - does not duplicate MongoDB section if already present", async () => {
+    const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
+    // AGENTS.md already has the MongoDB section
+    mockReadFile.mockResolvedValue(
+      "# Agent Instructions\n\n## MongoDB Memory Backend\nExisting content.\n",
+    );
+    mockWriteFile.mockResolvedValue(undefined);
+
+    await customizeWorkspaceForMongoDB("/tmp/workspace");
+
+    // Should NOT append again
+    expect(mockAppendFile).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite existing MEMORY.md (wx flag)", async () => {
+    const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
+    mockReadFile.mockResolvedValue("# Agent Instructions\n");
+    // writeFile with wx flag throws EEXIST if file exists
+    const existError = new Error("EEXIST: file already exists") as NodeJS.ErrnoException;
+    existError.code = "EEXIST";
+    mockWriteFile.mockRejectedValue(existError);
+
+    // Should NOT throw — EEXIST is expected and silently ignored
+    await expect(customizeWorkspaceForMongoDB("/tmp/workspace")).resolves.toBeUndefined();
   });
 });

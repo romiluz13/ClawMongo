@@ -781,13 +781,11 @@ export async function detectCapabilities(db: Db): Promise<DetectedCapabilities> 
     const collections = await db.listCollections().toArray();
     for (const col of collections.slice(0, 5)) {
       try {
-        const indexes = await db.collection(col.name).listSearchIndexes().toArray();
-        if (indexes.length >= 0) {
-          // listSearchIndexes succeeded → mongot is available
-          result.textSearch = true;
-          result.vectorSearch = true;
-          break;
-        }
+        await db.collection(col.name).listSearchIndexes().toArray();
+        // listSearchIndexes succeeded → mongot is available
+        result.textSearch = true;
+        result.vectorSearch = true;
+        break;
       } catch {
         // This collection doesn't support search indexes
       }
