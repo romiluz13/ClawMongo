@@ -635,7 +635,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Check last KB import time from meta collection
     const meta = metaCollection(this.db, this.prefix);
-    const lastRefresh = await meta.findOne({ _id: "kb_last_auto_refresh" as unknown as any });
+    const lastRefresh = await meta.findOne({ _id: "kb_last_auto_refresh" } as Record<
+      string,
+      unknown
+    >);
     const lastRefreshTime =
       lastRefresh?.timestamp instanceof Date ? lastRefresh.timestamp.getTime() : 0;
     const hoursSinceRefresh = (Date.now() - lastRefreshTime) / (1000 * 60 * 60);
@@ -665,7 +668,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
       // Update last refresh timestamp
       await meta.updateOne(
-        { _id: "kb_last_auto_refresh" as unknown as any },
+        { _id: "kb_last_auto_refresh" } as Record<string, unknown>,
         { $set: { timestamp: new Date() } },
         { upsert: true },
       );
