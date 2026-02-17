@@ -72,10 +72,19 @@ apps/ios/*.mobileprovision
 # Local untracked files
 .local/
 docs/.local/
+docs/outreach/
 IDENTITY.md
 USER.md
 .tgz
 .idea
+
+# Claude Code internals (cc10x memory, plans, etc.)
+.claude/
+
+# Temporary/test files
+temp-*.ts
+temp-*.js
+scripts/stress-test-*.ts
 
 # local tooling
 .serena/
