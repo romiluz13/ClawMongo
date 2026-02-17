@@ -1,4 +1,6 @@
-import type { Collection, Db, Document } from "mongodb";
+/* eslint-disable @typescript-eslint/unbound-method */
+
+import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 
 // Mock the schema module before imports
@@ -84,9 +86,9 @@ describe("writeStructuredMemory", () => {
     expect(result.id).toBeDefined();
     expect(col.updateOne).toHaveBeenCalledTimes(1);
 
-    // Verify upsert filter uses type + key
+    // Verify upsert filter uses agentId + type + key
     const call = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toEqual({ type: "decision", key: "framework-choice" });
+    expect(call[0]).toEqual({ agentId: "main", type: "decision", key: "framework-choice" });
     expect(call[2]).toEqual({ upsert: true });
   });
 
@@ -297,6 +299,27 @@ describe("searchStructuredMemory", () => {
     const aggregateCalls = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls;
     expect(aggregateCalls.length).toBeGreaterThan(0);
   });
+
+  it("filters by agentId when provided", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate).mockReturnValueOnce({
+      toArray: vi.fn(async () => [
+        { type: "preference", key: "theme", value: "Dark mode preferred", score: 0.8 },
+      ]),
+    } as unknown as ReturnType<Collection["aggregate"]>);
+
+    await searchStructuredMemory(col, "theme", [0.1, 0.2], {
+      maxResults: 5,
+      filter: { agentId: "main" },
+      capabilities: baseCapabilities,
+      vectorIndexName: "test_structured_mem_vector",
+      embeddingMode: "managed",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const vectorFilter = pipeline[0].$vectorSearch.filter;
+    expect(vectorFilter.agentId).toBe("main");
+  });
 });
 
 describe("getStructuredMemoryByType", () => {
@@ -333,10 +356,10 @@ describe("getStructuredMemoryByType", () => {
       toArray: vi.fn(async () => []),
     } as unknown as ReturnType<Collection["find"]>);
 
-    await getStructuredMemoryByType(mockDb(), "test_", "fact", 10);
+    await getStructuredMemoryByType(mockDb(), "test_", "fact", "main", 10);
 
     const findCall = (col.find as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(findCall[0]).toEqual({ type: "fact" });
+    expect(findCall[0]).toEqual({ type: "fact", agentId: "main" });
     expect(findCall[1]).toMatchObject({ sort: { updatedAt: -1 }, limit: 10 });
   });
 });

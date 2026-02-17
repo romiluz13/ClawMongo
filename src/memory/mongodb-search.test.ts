@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/unbound-method */
+
 import type { Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
@@ -255,7 +257,7 @@ describe("keywordSearch", () => {
       maxResults: 5,
       minScore: 0,
       indexName: "idx",
-      sessionKey: "session-123",
+      sessionKey: "__sessions__",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -263,6 +265,20 @@ describe("keywordSearch", () => {
     expect(searchStage.compound.filter).toEqual([
       { equals: { path: "source", value: "sessions" } },
     ]);
+  });
+
+  it("does not apply source filter for normal session keys", async () => {
+    const col = mockCollectionWithResults(SAMPLE_DOCS);
+    await keywordSearch(col, "test", {
+      maxResults: 5,
+      minScore: 0,
+      indexName: "idx",
+      sessionKey: "agent:main:main",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const searchStage = pipeline[0].$search;
+    expect(searchStage.compound.filter).toBeUndefined();
   });
 
   it("includes searchScore meta in $project", async () => {

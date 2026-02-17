@@ -7,6 +7,10 @@ const mockResolvePackageName = vi.hoisted(() => vi.fn(async () => "openclaw"));
 vi.mock("../infra/openclaw-root.js", () => ({
   resolveOpenClawPackageName: mockResolvePackageName,
 }));
+const mockAttemptAutoSetup = vi.hoisted(() => vi.fn(async () => ({ success: false, reason: "" })));
+vi.mock("./mongodb-auto-setup.js", () => ({
+  attemptAutoSetup: mockAttemptAutoSetup,
+}));
 
 function createMockPrompter(responses: {
   selectResponses?: unknown[];
@@ -27,6 +31,10 @@ function createMockPrompter(responses: {
 }
 
 describe("setupMemoryBackend", () => {
+  beforeEach(() => {
+    mockAttemptAutoSetup.mockResolvedValue({ success: false, reason: "Auto-setup unavailable" });
+  });
+
   it("returns config unchanged when builtin is selected", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const config: OpenClawConfig = { gateway: { mode: "local" } };
@@ -207,6 +215,28 @@ describe("setupMemoryBackend", () => {
     expect(mongoOption.label).toContain("Recommended");
   });
 
+  it("shows no-docker local setup hint when docker auto-setup is unavailable", async () => {
+    mockResolvePackageName.mockResolvedValueOnce("@romiluz/clawmongo");
+    mockAttemptAutoSetup.mockResolvedValueOnce({
+      success: false,
+      reason: "Docker is not installed. Enter a MongoDB URI manually.",
+    });
+    const { setupMemoryBackend } = await import("./onboarding-memory.js");
+    const config: OpenClawConfig = {};
+    const prompter = createMockPrompter({
+      selectResponses: ["mongodb", "community-bare"],
+      textResponses: ["mongodb://localhost:27017/"],
+    });
+
+    await setupMemoryBackend(config, prompter);
+
+    const noteCalls = (prompter.note as ReturnType<typeof vi.fn>).mock.calls;
+    const noDockerNote = noteCalls.find(
+      (c: unknown[]) => typeof c[1] === "string" && c[1] === "Local MongoDB (No Docker)",
+    );
+    expect(noDockerNote).toBeDefined();
+  });
+
   it("sets embeddingMode to managed for community-mongot and prompts for vector search", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const config: OpenClawConfig = {};
@@ -225,6 +255,7 @@ describe("setupMemoryBackend", () => {
     const result = await setupMemoryBackend(config, prompter);
 
     expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(result.agents?.defaults?.memorySearch?.provider).toBe("voyage");
     expect(result.agents?.defaults?.memorySearch?.remote?.apiKey).toBe("sk-voyage-test-key");
   });
@@ -240,6 +271,7 @@ describe("setupMemoryBackend", () => {
     const result = await setupMemoryBackend(config, prompter);
 
     expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     // No embedding provider prompt for Atlas (automated mode)
     expect(prompter.confirm).not.toHaveBeenCalled();
   });
@@ -255,6 +287,7 @@ describe("setupMemoryBackend", () => {
     const result = await setupMemoryBackend(config, prompter);
 
     expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
     // No confirm for community-bare — just a note about text search
     expect(prompter.confirm).not.toHaveBeenCalled();
     expect(prompter.note).toHaveBeenCalled();
@@ -321,6 +354,7 @@ describe("setupMemoryBackend", () => {
     const result = await setupMemoryBackend(config, prompter);
 
     expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     // No embedding provider saved
     expect(result.agents?.defaults?.memorySearch?.provider).toBeUndefined();
     // Should show text-search-only note
@@ -455,12 +489,13 @@ describe("topology detection in wizard", () => {
       textResponses: ["mongodb://localhost:27017/"],
     });
 
-    await setupMemoryBackend(config, prompter);
+    const result = await setupMemoryBackend(config, prompter);
 
     // Profile select should have initialValue "community-bare" based on standalone detection
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
     const profileSelectParams = selectCalls[1][0];
     expect(profileSelectParams.initialValue).toBe("community-bare");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
   });
 
   it("suggests replicaSet in connection string when detected", async () => {
@@ -486,7 +521,7 @@ describe("topology detection in wizard", () => {
       textResponses: ["mongodb://localhost:27017/"],
     });
 
-    await setupMemoryBackend(config, prompter);
+    const result = await setupMemoryBackend(config, prompter);
 
     // Should have shown connection string suggestion note
     const noteCalls = (prompter.note as ReturnType<typeof vi.fn>).mock.calls;
@@ -495,6 +530,7 @@ describe("topology detection in wizard", () => {
     );
     expect(connStringNote).toBeDefined();
     expect(connStringNote![0]).toContain("replicaSet");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
   });
 
   it("skips topology detection when connection fails", async () => {
@@ -514,6 +550,7 @@ describe("topology detection in wizard", () => {
     expect(mockDetectTopology).not.toHaveBeenCalled();
     // Should still succeed (graceful degradation)
     expect(result.memory?.backend).toBe("mongodb");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
   });
 
   it("shows docker-compose hint when standalone detected", async () => {
@@ -571,12 +608,13 @@ describe("topology detection in wizard", () => {
     });
     prompter.confirm = vi.fn(async () => true) as WizardPrompter["confirm"];
 
-    await setupMemoryBackend(config, prompter);
+    const result = await setupMemoryBackend(config, prompter);
 
     // Profile select should have initialValue "community-mongot" based on fullstack detection
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
     const profileSelectParams = selectCalls[1][0];
     expect(profileSelectParams.initialValue).toBe("community-mongot");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
   });
 });
 

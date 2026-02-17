@@ -1,12 +1,35 @@
 import path from "node:path";
+import { formatCliCommand } from "../cli/command-format.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
-import type { RuntimeEnv } from "../runtime.js";
-import { formatCliCommand } from "../cli/command-format.js";
 import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { note } from "../terminal/note.js";
 import { confirm, select, text } from "./configure.shared.js";
 import { guardCancel } from "./onboard-helpers.js";
+
+function shouldShowNoDockerHint(reason: string): boolean {
+  const lower = reason.toLowerCase();
+  return lower.includes("docker") || lower.includes("compose");
+}
+
+function showNoDockerLocalHint(): void {
+  note(
+    [
+      "Docker is optional. Local MongoDB works without Docker.",
+      "",
+      "Standalone (basic):",
+      "  mongod --dbpath ./data/db --port 27017",
+      "",
+      "Replica set (recommended for transactions + change streams):",
+      "  mongod --dbpath ./data/db --port 27017 --replSet rs0",
+      '  mongosh --eval "rs.initiate()"',
+      "",
+      "Then continue with URI: mongodb://localhost:27017/openclaw",
+    ].join("\n"),
+    "Local MongoDB (No Docker)",
+  );
+}
 
 /**
  * Memory backend section for the configure wizard.
@@ -89,6 +112,9 @@ export async function configureMemorySection(
       }
       // Auto-setup failed - show reason and fall through to manual
       note(autoResult.reason, "Auto-Setup");
+      if (shouldShowNoDockerHint(autoResult.reason)) {
+        showNoDockerLocalHint();
+      }
     } catch {
       // Auto-setup module not available — fall through to manual
     }
@@ -133,10 +159,78 @@ async function configureMongoDBWithUri(
   isClawMongo: boolean,
   uri: string,
 ): Promise<OpenClawConfig> {
-  const isAtlas = uri.includes(".mongodb.net");
+  let resolvedUri = uri;
+  const isAtlas = resolvedUri.includes(".mongodb.net");
   const currentProfile = nextConfig.memory?.mongodb?.deploymentProfile;
-  const suggestedProfile: MemoryMongoDBDeploymentProfile =
-    currentProfile ?? (isAtlas ? "atlas-default" : "community-mongot");
+  let detectedTier: import("../memory/mongodb-topology.js").DeploymentTier | undefined;
+
+  if (!isAtlas) {
+    try {
+      const { MongoClient } = await import("mongodb");
+      const testClient = new MongoClient(resolvedUri, {
+        serverSelectionTimeoutMS: 5_000,
+        connectTimeoutMS: 5_000,
+      });
+      try {
+        await testClient.connect();
+        const { detectTopology, topologyToTier, tierFeatures, suggestConnectionString } =
+          await import("../memory/mongodb-topology.js");
+        const topology = await detectTopology(testClient.db());
+        detectedTier = topologyToTier(topology);
+        const features = tierFeatures(detectedTier);
+
+        const suggestedUri = suggestConnectionString(topology, resolvedUri);
+        if (suggestedUri !== resolvedUri) {
+          note(
+            `Detected replica set "${topology.replicaSetName}". Recommended URI:\n${suggestedUri}`,
+            "Connection String",
+          );
+          resolvedUri = suggestedUri;
+        }
+
+        const lines: string[] = [
+          `Detected: ${detectedTier} (MongoDB ${topology.serverVersion})`,
+          "",
+          "Available features:",
+          ...features.available.map((f) => `  + ${f}`),
+        ];
+        if (features.unavailable.length > 0) {
+          lines.push("", "Not available (upgrade to enable):");
+          lines.push(...features.unavailable.map((f) => `  - ${f}`));
+        }
+        if (detectedTier === "standalone") {
+          lines.push(
+            "",
+            "Upgrade to full stack with docker-compose:",
+            "  ./docker/mongodb/start.sh fullstack",
+          );
+        } else if (detectedTier === "replicaset") {
+          lines.push("", "Add vector search with mongot:", "  ./docker/mongodb/start.sh fullstack");
+        }
+        note(lines.join("\n"), "MongoDB Topology");
+      } finally {
+        await testClient.close().catch(() => {});
+      }
+    } catch {
+      // Connection failed - keep manual flow
+    }
+  }
+
+  const suggestedProfile: MemoryMongoDBDeploymentProfile = (() => {
+    if (currentProfile) {
+      return currentProfile;
+    }
+    if (isAtlas) {
+      return "atlas-default";
+    }
+    if (detectedTier) {
+      if (detectedTier === "fullstack") {
+        return "community-mongot";
+      }
+      return "community-bare";
+    }
+    return "community-mongot";
+  })();
 
   const profile = guardCancel(
     await select({
@@ -171,6 +265,17 @@ async function configureMongoDBWithUri(
   // Auto-set embeddingMode based on profile
   const isCommunity = profile === "community-mongot" || profile === "community-bare";
   const embeddingMode = isCommunity ? "managed" : "automated";
+  const existingEnableChangeStreams = nextConfig.memory?.mongodb?.enableChangeStreams;
+  const defaultEnableChangeStreams =
+    detectedTier === "standalone"
+      ? false
+      : detectedTier === "replicaset" || detectedTier === "fullstack"
+        ? true
+        : profile !== "community-bare";
+  const enableChangeStreams =
+    typeof existingEnableChangeStreams === "boolean"
+      ? existingEnableChangeStreams
+      : defaultEnableChangeStreams;
 
   let baseResult: OpenClawConfig = {
     ...nextConfig,
@@ -179,113 +284,143 @@ async function configureMongoDBWithUri(
       backend: "mongodb",
       mongodb: {
         ...nextConfig.memory?.mongodb,
-        uri,
+        uri: resolvedUri,
         deploymentProfile: profile as MemoryMongoDBDeploymentProfile,
         embeddingMode,
+        enableChangeStreams,
       },
     },
   };
 
-  if (isCommunity) {
-    if (profile === "community-bare") {
+  if (!isCommunity) {
+    if (typeof existingEnableChangeStreams !== "boolean") {
       note(
-        [
-          "Text/keyword search via $text is available out of the box.",
-          "Vector/semantic search requires mongot (Community + mongot profile).",
-        ].join("\n"),
-        "Search Capabilities",
+        enableChangeStreams
+          ? "Change streams enabled for real-time cross-instance sync."
+          : "Change streams disabled for this setup.",
+        "Change Streams",
       );
-    } else {
-      // community-mongot: vector search available with managed embeddings
-      const wantVectorSearch = guardCancel(
-        await confirm({
-          message: "Enable vector/semantic search? (requires an embedding API key)",
-          initialValue: true,
+    }
+    note(
+      [
+        "Atlas profile detected: automated embeddings are enabled by default.",
+        "You can ingest KB docs and run semantic search without configuring an external embedding API key.",
+      ].join("\n"),
+      "Automated Embeddings",
+    );
+  } else if (profile === "community-bare") {
+    if (typeof existingEnableChangeStreams !== "boolean") {
+      note(
+        enableChangeStreams
+          ? "Change streams enabled for real-time cross-instance sync."
+          : "Change streams disabled for this setup.",
+        "Change Streams",
+      );
+    }
+    note(
+      [
+        "Text/keyword search via $text is available out of the box.",
+        "Vector/semantic search requires mongot (Community + mongot profile).",
+      ].join("\n"),
+      "Search Capabilities",
+    );
+  } else {
+    if (typeof existingEnableChangeStreams !== "boolean") {
+      note(
+        enableChangeStreams
+          ? "Change streams enabled for real-time cross-instance sync."
+          : "Change streams disabled for this setup.",
+        "Change Streams",
+      );
+    }
+    // community-mongot: vector search available with managed embeddings
+    const wantVectorSearch = guardCancel(
+      await confirm({
+        message: "Enable vector/semantic search? (requires an embedding API key)",
+        initialValue: true,
+      }),
+      runtime,
+    );
+
+    if (wantVectorSearch) {
+      const embeddingProvider = guardCancel(
+        await select({
+          message: "Embedding provider for vector search",
+          options: [
+            { value: "voyage", label: "Voyage AI", hint: "Best for code retrieval" },
+            { value: "openai", label: "OpenAI", hint: "text-embedding-3-small" },
+            { value: "gemini", label: "Google Gemini", hint: "text-embedding-004" },
+            {
+              value: "local",
+              label: "Local (no API key needed)",
+              hint: "On-device via node-llama-cpp",
+            },
+          ],
+          initialValue: "voyage",
         }),
         runtime,
       );
 
-      if (wantVectorSearch) {
-        const embeddingProvider = guardCancel(
-          await select({
-            message: "Embedding provider for vector search",
-            options: [
-              { value: "voyage", label: "Voyage AI", hint: "Best for code retrieval" },
-              { value: "openai", label: "OpenAI", hint: "text-embedding-3-small" },
-              { value: "gemini", label: "Google Gemini", hint: "text-embedding-004" },
-              {
-                value: "local",
-                label: "Local (no API key needed)",
-                hint: "On-device via node-llama-cpp",
+      if (embeddingProvider === "local") {
+        baseResult = {
+          ...baseResult,
+          agents: {
+            ...baseResult.agents,
+            defaults: {
+              ...baseResult.agents?.defaults,
+              memorySearch: {
+                ...baseResult.agents?.defaults?.memorySearch,
+                provider: "local",
               },
-            ],
-            initialValue: "voyage",
+            },
+          },
+        };
+      } else {
+        const ENV_VAR_MAP: Record<string, string> = {
+          voyage: "VOYAGE_API_KEY",
+          openai: "OPENAI_API_KEY",
+          gemini: "GEMINI_API_KEY",
+        };
+        const envVar = ENV_VAR_MAP[embeddingProvider] ?? "API_KEY";
+
+        const rawKey = guardCancel(
+          await text({
+            message: envVar,
+            placeholder: "sk-... (leave blank if already set as env var)",
+            validate: () => undefined,
           }),
           runtime,
         );
+        const apiKey = String(rawKey ?? "").trim() || undefined;
 
-        if (embeddingProvider === "local") {
-          baseResult = {
-            ...baseResult,
-            agents: {
-              ...baseResult.agents,
-              defaults: {
-                ...baseResult.agents?.defaults,
-                memorySearch: {
-                  ...baseResult.agents?.defaults?.memorySearch,
-                  provider: "local",
-                },
-              },
-            },
-          };
-        } else {
-          const ENV_VAR_MAP: Record<string, string> = {
-            voyage: "VOYAGE_API_KEY",
-            openai: "OPENAI_API_KEY",
-            gemini: "GEMINI_API_KEY",
-          };
-          const envVar = ENV_VAR_MAP[embeddingProvider] ?? "API_KEY";
-
-          const rawKey = guardCancel(
-            await text({
-              message: envVar,
-              placeholder: "sk-... (leave blank if already set as env var)",
-              validate: () => undefined,
-            }),
-            runtime,
-          );
-          const apiKey = String(rawKey ?? "").trim() || undefined;
-
-          if (!apiKey) {
-            note(`Set ${envVar} in your environment before starting the gateway.`, "Reminder");
-          }
-
-          baseResult = {
-            ...baseResult,
-            agents: {
-              ...baseResult.agents,
-              defaults: {
-                ...baseResult.agents?.defaults,
-                memorySearch: {
-                  ...baseResult.agents?.defaults?.memorySearch,
-                  provider: embeddingProvider as "openai" | "gemini" | "voyage",
-                  ...(apiKey
-                    ? { remote: { ...baseResult.agents?.defaults?.memorySearch?.remote, apiKey } }
-                    : {}),
-                },
-              },
-            },
-          };
+        if (!apiKey) {
+          note(`Set ${envVar} in your environment before starting the gateway.`, "Reminder");
         }
-      } else {
-        note(
-          [
-            "Text search will work out of the box.",
-            `Enable later: openclaw configure → Memory`,
-          ].join("\n"),
-          "Text Search Only",
-        );
+
+        baseResult = {
+          ...baseResult,
+          agents: {
+            ...baseResult.agents,
+            defaults: {
+              ...baseResult.agents?.defaults,
+              memorySearch: {
+                ...baseResult.agents?.defaults?.memorySearch,
+                provider: embeddingProvider as "openai" | "gemini" | "voyage",
+                ...(apiKey
+                  ? { remote: { ...baseResult.agents?.defaults?.memorySearch?.remote, apiKey } }
+                  : {}),
+              },
+            },
+          },
+        };
       }
+    } else {
+      note(
+        ["Text search will work out of the box.", `Enable later: openclaw configure → Memory`].join(
+          "\n",
+        ),
+        "Text Search Only",
+      );
     }
   }
 
@@ -299,44 +434,11 @@ async function configureMongoDBWithUri(
   );
 
   if (shouldTest) {
-    await testMongoDBConnection(uri);
-
-    // Topology detection after successful connection test
-    if (!uri.includes(".mongodb.net")) {
-      try {
-        const { MongoClient } = await import("mongodb");
-        const topoClient = new MongoClient(uri, {
-          serverSelectionTimeoutMS: 5_000,
-          connectTimeoutMS: 5_000,
-        });
-        try {
-          await topoClient.connect();
-          const { detectTopology, topologyToTier, tierFeatures } =
-            await import("../memory/mongodb-topology.js");
-          const topology = await detectTopology(topoClient.db());
-          const tier = topologyToTier(topology);
-          const features = tierFeatures(tier);
-
-          const lines = [`Detected topology: ${tier} (MongoDB ${topology.serverVersion})`];
-
-          if (features.unavailable.length > 0) {
-            lines.push("", "Missing features (upgrade to enable):");
-            lines.push(...features.unavailable.map((f) => `  - ${f}`));
-            lines.push("", "Upgrade: ./docker/mongodb/start.sh fullstack");
-          }
-
-          note(lines.join("\n"), "MongoDB Topology");
-        } finally {
-          await topoClient.close().catch(() => {});
-        }
-      } catch {
-        // Topology detection failed -- skip
-      }
-    }
+    await testMongoDBConnection(resolvedUri);
   }
 
   // Offer KB import (only for MongoDB backend)
-  return offerKBImportConfigure(baseResult, runtime, isClawMongo, uri);
+  return offerKBImportConfigure(baseResult, runtime, isClawMongo, resolvedUri);
 }
 
 async function testMongoDBConnection(uri: string): Promise<void> {

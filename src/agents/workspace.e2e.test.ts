@@ -11,8 +11,10 @@ import {
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
+  filterBootstrapFilesForSession,
   loadWorkspaceBootstrapFiles,
   resolveDefaultAgentWorkspaceDir,
+  type WorkspaceBootstrapFile,
 } from "./workspace.js";
 
 describe("resolveDefaultAgentWorkspaceDir", () => {
@@ -140,5 +142,61 @@ describe("loadWorkspaceBootstrapFiles", () => {
     );
 
     expect(memoryEntries).toHaveLength(0);
+  });
+});
+
+describe("filterBootstrapFilesForSession", () => {
+  const sampleFiles: WorkspaceBootstrapFile[] = [
+    {
+      name: DEFAULT_AGENTS_FILENAME,
+      path: "/tmp/AGENTS.md",
+      content: "agents",
+      missing: false,
+    },
+    {
+      name: DEFAULT_TOOLS_FILENAME,
+      path: "/tmp/TOOLS.md",
+      content: "tools",
+      missing: false,
+    },
+    {
+      name: DEFAULT_MEMORY_FILENAME,
+      path: "/tmp/MEMORY.md",
+      content: "memory",
+      missing: false,
+    },
+  ];
+
+  it("omits private memory bootstrap files in group/channel sessions", () => {
+    const filtered = filterBootstrapFilesForSession(sampleFiles, "agent:main:discord:group:123");
+    expect(filtered.map((file) => file.name)).toEqual([
+      DEFAULT_AGENTS_FILENAME,
+      DEFAULT_TOOLS_FILENAME,
+    ]);
+  });
+
+  it("omits private memory bootstrap files for legacy group keys", () => {
+    const filtered = filterBootstrapFilesForSession(sampleFiles, "group:legacy-room");
+    expect(filtered.map((file) => file.name)).toEqual([
+      DEFAULT_AGENTS_FILENAME,
+      DEFAULT_TOOLS_FILENAME,
+    ]);
+  });
+
+  it("keeps private memory bootstrap files in direct sessions", () => {
+    const filtered = filterBootstrapFilesForSession(sampleFiles, "agent:main:main");
+    expect(filtered.map((file) => file.name)).toEqual([
+      DEFAULT_AGENTS_FILENAME,
+      DEFAULT_TOOLS_FILENAME,
+      DEFAULT_MEMORY_FILENAME,
+    ]);
+  });
+
+  it("applies minimal allowlist for subagent sessions", () => {
+    const filtered = filterBootstrapFilesForSession(sampleFiles, "agent:main:subagent:run:abc");
+    expect(filtered.map((file) => file.name)).toEqual([
+      DEFAULT_AGENTS_FILENAME,
+      DEFAULT_TOOLS_FILENAME,
+    ]);
   });
 });

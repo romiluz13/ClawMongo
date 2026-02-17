@@ -1,10 +1,33 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_AGENTS_FILENAME, DEFAULT_MEMORY_FILENAME } from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
-import type { WizardPrompter } from "./prompts.js";
-import { DEFAULT_AGENTS_FILENAME, DEFAULT_MEMORY_FILENAME } from "../agents/workspace.js";
 import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
+import type { WizardPrompter } from "./prompts.js";
+
+function shouldShowNoDockerHint(reason: string): boolean {
+  const lower = reason.toLowerCase();
+  return lower.includes("docker") || lower.includes("compose");
+}
+
+async function showNoDockerLocalHint(prompter: WizardPrompter): Promise<void> {
+  await prompter.note(
+    [
+      "Docker is optional. Local MongoDB works without Docker.",
+      "",
+      "Standalone (basic):",
+      "  mongod --dbpath ./data/db --port 27017",
+      "",
+      "Replica set (recommended for transactions + change streams):",
+      "  mongod --dbpath ./data/db --port 27017 --replSet rs0",
+      '  mongosh --eval "rs.initiate()"',
+      "",
+      "Then continue with URI: mongodb://localhost:27017/openclaw",
+    ].join("\n"),
+    "Local MongoDB (No Docker)",
+  );
+}
 
 /**
  * Interactive memory backend selection for the onboarding wizard.
@@ -79,6 +102,9 @@ async function setupMongoDBMemory(
       }
       // Auto-setup failed but non-fatal - show reason and fall through to manual
       await prompter.note(autoResult.reason, "Auto-Setup");
+      if (shouldShowNoDockerHint(autoResult.reason)) {
+        await showNoDockerLocalHint(prompter);
+      }
     } catch {
       // Auto-setup module failed to load or threw - fall through to manual
     }
@@ -224,6 +250,17 @@ async function continueMongoDBSetup(
   // Auto-set embeddingMode based on profile
   const isCommunity = profile === "community-mongot" || profile === "community-bare";
   const embeddingMode = isCommunity ? "managed" : "automated";
+  const existingEnableChangeStreams = config.memory?.mongodb?.enableChangeStreams;
+  const defaultEnableChangeStreams =
+    detectedTier === "standalone"
+      ? false
+      : detectedTier === "replicaset" || detectedTier === "fullstack"
+        ? true
+        : profile !== "community-bare";
+  const enableChangeStreams =
+    typeof existingEnableChangeStreams === "boolean"
+      ? existingEnableChangeStreams
+      : defaultEnableChangeStreams;
 
   const baseResult: OpenClawConfig = {
     ...config,
@@ -235,16 +272,40 @@ async function continueMongoDBSetup(
         uri: trimmedUri,
         deploymentProfile: profile,
         embeddingMode,
+        enableChangeStreams,
       },
     },
   };
 
   if (!isCommunity) {
+    if (typeof existingEnableChangeStreams !== "boolean") {
+      await prompter.note(
+        enableChangeStreams
+          ? "Change streams enabled for real-time cross-instance sync."
+          : "Change streams disabled for this setup.",
+        "Change Streams",
+      );
+    }
+    await prompter.note(
+      [
+        "Atlas profile detected: automated embeddings are enabled by default.",
+        "You can ingest KB docs and run semantic search without configuring an external embedding API key.",
+      ].join("\n"),
+      "Automated Embeddings",
+    );
     return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
   // community-bare: no mongot → text search only, no vector search possible
   if (profile === "community-bare") {
+    if (typeof existingEnableChangeStreams !== "boolean") {
+      await prompter.note(
+        enableChangeStreams
+          ? "Change streams enabled for real-time cross-instance sync."
+          : "Change streams disabled for this setup.",
+        "Change Streams",
+      );
+    }
     await prompter.note(
       [
         "Text/keyword search via $text is available out of the box.",
@@ -256,6 +317,14 @@ async function continueMongoDBSetup(
   }
 
   // community-mongot: vector search available with managed embeddings
+  if (typeof existingEnableChangeStreams !== "boolean") {
+    await prompter.note(
+      enableChangeStreams
+        ? "Change streams enabled for real-time cross-instance sync."
+        : "Change streams disabled for this setup.",
+      "Change Streams",
+    );
+  }
   const wantVectorSearch = await prompter.confirm({
     message: "Enable vector/semantic search? (requires an embedding API key)",
     initialValue: true,

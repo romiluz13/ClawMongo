@@ -1,12 +1,12 @@
 import type { Db, Collection, Document } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import type { DetectedCapabilities } from "./mongodb-schema.js";
-import type { MemorySearchResult } from "./types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { retryEmbedding, type EmbeddingStatus } from "./mongodb-embedding-retry.js";
+import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection } from "./mongodb-schema.js";
 import { buildVectorSearchStage, MONGODB_MAX_NUM_CANDIDATES } from "./mongodb-search.js";
+import type { MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:structured");
 
@@ -105,7 +105,7 @@ export async function writeStructuredMemory(params: {
 
   // Upsert by type + key (composite unique key)
   const result = await collection.updateOne(
-    { type: entry.type, key: entry.key },
+    { agentId: entry.agentId, type: entry.type, key: entry.key },
     { $set: setDoc, $setOnInsert: setOnInsert },
     { upsert: true },
   );
@@ -141,7 +141,7 @@ export async function searchStructuredMemory(
   opts: {
     maxResults: number;
     minScore?: number;
-    filter?: { type?: string; tags?: string[] };
+    filter?: { type?: string; tags?: string[]; agentId?: string };
     capabilities: DetectedCapabilities;
     vectorIndexName: string;
     embeddingMode: MemoryMongoDBEmbeddingMode;
@@ -168,6 +168,9 @@ export async function searchStructuredMemory(
       }
       if (opts.filter?.tags?.length) {
         filter.tags = { $in: opts.filter.tags };
+      }
+      if (opts.filter?.agentId) {
+        filter.agentId = opts.filter.agentId;
       }
 
       const vsStage = buildVectorSearchStage({
@@ -220,6 +223,9 @@ export async function searchStructuredMemory(
     if (opts.filter?.tags?.length) {
       matchFilter.tags = { $in: opts.filter.tags };
     }
+    if (opts.filter?.agentId) {
+      matchFilter.agentId = opts.filter.agentId;
+    }
 
     const docs = await collection
       .aggregate([
@@ -255,6 +261,7 @@ export async function getStructuredMemoryByType(
   db: Db,
   prefix: string,
   type: string,
+  agentId?: string,
   limit?: number,
 ): Promise<
   Array<{
@@ -266,8 +273,12 @@ export async function getStructuredMemoryByType(
   }>
 > {
   const collection = structuredMemCollection(db, prefix);
+  const filter: Document = { type };
+  if (agentId) {
+    filter.agentId = agentId;
+  }
   const docs = await collection
-    .find({ type }, { sort: { updatedAt: -1 }, limit: limit ?? 50 })
+    .find(filter, { sort: { updatedAt: -1 }, limit: limit ?? 50 })
     .toArray();
 
   return docs.map((doc: Record<string, unknown>) => ({

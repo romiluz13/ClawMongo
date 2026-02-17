@@ -1,9 +1,9 @@
 import type { Collection, Document } from "mongodb";
 import type { MemoryMongoDBFusionMethod } from "../config/types.memory.js";
-import type { DetectedCapabilities } from "./mongodb-schema.js";
-import type { MemorySearchResult, MemorySource } from "./types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mergeHybridResultsMongoDB } from "./mongodb-hybrid.js";
+import type { DetectedCapabilities } from "./mongodb-schema.js";
+import type { MemorySearchResult, MemorySource } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:search");
 
@@ -24,6 +24,20 @@ function toSearchResult(doc: Document, source: MemorySource): MemorySearchResult
 
 function filterByScore(results: MemorySearchResult[], minScore: number): MemorySearchResult[] {
   return results.filter((r) => r.score >= minScore);
+}
+
+function resolveLegacySourceFilter(sessionKey?: string): MemorySource | undefined {
+  const normalized = sessionKey?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "__memory__") {
+    return "memory";
+  }
+  if (normalized === "__sessions__") {
+    return "sessions";
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,8 +104,9 @@ export async function vectorSearch(
   },
 ): Promise<MemorySearchResult[]> {
   const filter: Document = {};
-  if (opts.sessionKey) {
-    filter.source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+  const sourceFilter = resolveLegacySourceFilter(opts.sessionKey);
+  if (sourceFilter) {
+    filter.source = sourceFilter;
   }
 
   const vsStage = buildVectorSearchStage({
@@ -144,9 +159,9 @@ export async function keywordSearch(
   },
 ): Promise<MemorySearchResult[]> {
   const filterClauses: Document[] = [];
-  if (opts.sessionKey) {
-    const source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
-    filterClauses.push({ equals: { path: "source", value: source } });
+  const sourceFilter = resolveLegacySourceFilter(opts.sessionKey);
+  if (sourceFilter) {
+    filterClauses.push({ equals: { path: "source", value: sourceFilter } });
   }
 
   const pipeline: Document[] = [
@@ -199,13 +214,13 @@ export async function hybridSearchScoreFusion(
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
-  if (opts.sessionKey) {
-    sourceFilter.source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+  const source = resolveLegacySourceFilter(opts.sessionKey);
+  if (source) {
+    sourceFilter.source = source;
   }
 
   const textFilterClauses: Document[] = [];
-  if (opts.sessionKey) {
-    const source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+  if (source) {
     textFilterClauses.push({ equals: { path: "source", value: source } });
   }
 
@@ -293,13 +308,13 @@ export async function hybridSearchRankFusion(
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
-  if (opts.sessionKey) {
-    sourceFilter.source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+  const source = resolveLegacySourceFilter(opts.sessionKey);
+  if (source) {
+    sourceFilter.source = source;
   }
 
   const textFilterClauses: Document[] = [];
-  if (opts.sessionKey) {
-    const source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+  if (source) {
     textFilterClauses.push({ equals: { path: "source", value: source } });
   }
 
@@ -501,8 +516,9 @@ export async function mongoSearch(
   // Last resort: basic $text index search (Community without mongot)
   try {
     const filter: Document = { $text: { $search: query } };
-    if (opts.sessionKey) {
-      filter.source = opts.sessionKey === "__memory__" ? "memory" : "sessions";
+    const sourceFilter = resolveLegacySourceFilter(opts.sessionKey);
+    if (sourceFilter) {
+      filter.source = sourceFilter;
     }
     const docs = await collection
       .aggregate([

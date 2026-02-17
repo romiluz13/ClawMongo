@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { resolveRequiredHomeDir } from "../infra/home-dir.js";
 import { runCommandWithTimeout } from "../process/exec.js";
-import { isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
+import {
+  isCronSessionKey,
+  isSubagentSessionKey,
+  parseAgentSessionKey,
+} from "../routing/session-key.js";
 import { resolveUserPath } from "../utils.js";
 import { resolveWorkspaceTemplateDir } from "./workspace-templates.js";
 
@@ -466,15 +470,38 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
 }
 
 const MINIMAL_BOOTSTRAP_ALLOWLIST = new Set([DEFAULT_AGENTS_FILENAME, DEFAULT_TOOLS_FILENAME]);
+const PRIVATE_MEMORY_BOOTSTRAP_FILES = new Set([
+  DEFAULT_MEMORY_FILENAME,
+  DEFAULT_MEMORY_ALT_FILENAME,
+]);
+
+function isSharedConversationSession(sessionKey?: string): boolean {
+  const raw = sessionKey?.trim().toLowerCase();
+  if (!raw) {
+    return false;
+  }
+  const parsed = parseAgentSessionKey(raw);
+  const scope = parsed?.rest ?? raw;
+  const tokens = new Set(scope.split(":").filter(Boolean));
+  return (
+    tokens.has("group") || tokens.has("channel") || tokens.has("thread") || tokens.has("topic")
+  );
+}
 
 export function filterBootstrapFilesForSession(
   files: WorkspaceBootstrapFile[],
   sessionKey?: string,
 ): WorkspaceBootstrapFile[] {
-  if (!sessionKey || (!isSubagentSessionKey(sessionKey) && !isCronSessionKey(sessionKey))) {
+  if (!sessionKey) {
     return files;
   }
-  return files.filter((file) => MINIMAL_BOOTSTRAP_ALLOWLIST.has(file.name));
+  if (isSubagentSessionKey(sessionKey) || isCronSessionKey(sessionKey)) {
+    return files.filter((file) => MINIMAL_BOOTSTRAP_ALLOWLIST.has(file.name));
+  }
+  if (isSharedConversationSession(sessionKey)) {
+    return files.filter((file) => !PRIVATE_MEMORY_BOOTSTRAP_FILES.has(file.name));
+  }
+  return files;
 }
 
 export async function loadExtraBootstrapFiles(

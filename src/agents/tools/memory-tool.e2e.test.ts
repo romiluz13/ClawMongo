@@ -138,6 +138,34 @@ describe("memory search citations", () => {
 });
 
 describe("memory tools", () => {
+  it("does not emit mongodb low-confidence hint when runtime backend falls back to builtin", async () => {
+    backend = "builtin";
+    searchImpl = async () => [
+      {
+        path: "MEMORY.md",
+        startLine: 1,
+        endLine: 1,
+        score: 0.05,
+        snippet: "low confidence snippet",
+        source: "memory" as const,
+      },
+    ];
+
+    const cfg = {
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+      agents: { list: [{ id: "main", default: true }] },
+    };
+    const tool = createMemorySearchTool({ config: cfg });
+    expect(tool).not.toBeNull();
+    if (!tool) {
+      throw new Error("tool missing");
+    }
+
+    const result = await tool.execute("call_runtime_fallback_hint", { query: "hello" });
+    const details = result.details as { feedbackHint?: string };
+    expect(details.feedbackHint).toBeUndefined();
+  });
+
   it("does not throw when memory_search fails (e.g. embeddings 429)", async () => {
     searchImpl = async () => {
       throw new Error("openai embeddings failed: 429 insufficient_quota");

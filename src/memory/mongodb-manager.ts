@@ -1,26 +1,18 @@
-import chokidar, { type FSWatcher } from "chokidar";
-import { MongoClient, type Db } from "mongodb";
 import fs from "node:fs/promises";
 import path from "node:path";
+import chokidar, { type FSWatcher } from "chokidar";
+import { MongoClient, type Db } from "mongodb";
+import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
 import type { EmbeddingProvider } from "./embeddings.js";
-import type { DetectedCapabilities } from "./mongodb-schema.js";
-import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
-import type {
-  MemoryEmbeddingProbeResult,
-  MemoryProviderStatus,
-  MemorySearchManager,
-  MemorySearchResult,
-  MemorySyncProgressUpdate,
-} from "./types.js";
-import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
+import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
   chunksCollection,
   detectCapabilities,
@@ -34,8 +26,16 @@ import {
   structuredMemCollection,
 } from "./mongodb-schema.js";
 import { mongoSearch } from "./mongodb-search.js";
+import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
+import type {
+  MemoryEmbeddingProbeResult,
+  MemoryProviderStatus,
+  MemorySearchManager,
+  MemorySearchResult,
+  MemorySyncProgressUpdate,
+} from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb");
 
@@ -352,6 +352,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       searchStructuredMemory(structuredMemCollection(this.db, this.prefix), cleaned, queryVector, {
         maxResults: Math.max(3, Math.floor(maxResults / 3)),
         minScore,
+        filter: { agentId: this.agentId },
         numCandidates: mongoCfg.numCandidates,
         capabilities: this.capabilities,
         vectorIndexName: `${this.prefix}structured_mem_vector`,

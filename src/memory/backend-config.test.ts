@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../config/config.js";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { resolveMemoryBackendConfig } from "./backend-config.js";
 
 describe("resolveMemoryBackendConfig", () => {
@@ -163,7 +163,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb).toBeDefined();
     expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("openclaw");
-    expect(resolved.mongodb!.collectionPrefix).toBe("openclaw_");
+    expect(resolved.mongodb!.collectionPrefix).toBe("openclaw_main_");
     expect(resolved.mongodb!.deploymentProfile).toBe("atlas-default");
     expect(resolved.mongodb!.embeddingMode).toBe("automated");
     expect(resolved.mongodb!.fusionMethod).toBe("scoreFusion");

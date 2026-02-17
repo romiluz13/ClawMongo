@@ -16,6 +16,8 @@ const KNOWN_MODEL_DIMENSIONS: Record<string, number> = {
   "text-embedding-3-large": 3072,
   "text-embedding-ada-002": 1536,
 };
+import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
+import { parseDurationMs } from "../cli/parse-duration.js";
 import type { SessionSendPolicyConfig } from "../config/types.base.js";
 import type {
   MemoryBackend,
@@ -27,8 +29,6 @@ import type {
   MemoryQmdIndexPath,
   MemoryQmdSearchMode,
 } from "../config/types.memory.js";
-import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
-import { parseDurationMs } from "../cli/parse-duration.js";
 import { resolveUserPath } from "../utils.js";
 import { splitShellArgs } from "../utils/shell-argv.js";
 
@@ -334,7 +334,7 @@ export function resolveMemoryBackendConfig(params: {
       mongodb: {
         uri,
         database: mongoCfg?.database ?? "openclaw",
-        collectionPrefix: mongoCfg?.collectionPrefix ?? "openclaw_",
+        collectionPrefix: mongoCfg?.collectionPrefix ?? `openclaw_${sanitizeName(params.agentId)}_`,
         deploymentProfile,
         embeddingMode: mongoCfg?.embeddingMode ?? defaultEmbeddingMode,
         fusionMethod: mongoCfg?.fusionMethod ?? "scoreFusion",

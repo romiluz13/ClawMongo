@@ -339,9 +339,15 @@ export async function ensureStandardIndexes(
 
   // Structured Memory indexes
   const structured = structuredMemCollection(db, prefix);
+  // Migrate old unique index (type+key) to agent-scoped unique key.
+  try {
+    await structured.dropIndex("uq_structured_type_key");
+  } catch {
+    // Index may not exist — safe to ignore.
+  }
   await structured.createIndex(
-    { type: 1, key: 1 },
-    { name: "uq_structured_type_key", unique: true },
+    { agentId: 1, type: 1, key: 1 },
+    { name: "uq_structured_agent_type_key", unique: true },
   );
   applied++;
   await structured.createIndex({ type: 1, updatedAt: -1 }, { name: "idx_structured_type_updated" });
@@ -779,9 +785,9 @@ export async function detectCapabilities(db: Db): Promise<DetectedCapabilities> 
   // Check for search indexes on any collection (indicates mongot is running)
   try {
     const collections = await db.listCollections().toArray();
-    for (const col of collections.slice(0, 5)) {
+    for (const collectionInfo of collections.slice(0, 5)) {
       try {
-        await db.collection(col.name).listSearchIndexes().toArray();
+        await db.collection(collectionInfo.name).listSearchIndexes().toArray();
         // listSearchIndexes succeeded → mongot is available
         result.textSearch = true;
         result.vectorSearch = true;
