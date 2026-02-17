@@ -394,7 +394,7 @@ export async function ensureSearchIndexes(
   }
 
   if (profile === "community-bare") {
-    log.info("community-bare profile: skipping Atlas Search/Vector Search index creation");
+    log.info("community-bare profile: skipping MongoDB Search/Vector Search index creation");
     return { text: false, vector: false };
   }
 
@@ -402,7 +402,7 @@ export async function ensureSearchIndexes(
   let textCreated = false;
   let vectorCreated = false;
 
-  // Atlas Search (text) index
+  // MongoDB Search (text) index
   try {
     const textDef: Document = {
       mappings: {

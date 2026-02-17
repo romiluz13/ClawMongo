@@ -21,7 +21,7 @@ export type MemoryMongoDBConfig = {
   collectionPrefix?: string;
   /** Deployment profile. Default: "atlas-default" */
   deploymentProfile?: MemoryMongoDBDeploymentProfile;
-  /** Embedding mode. Default: "automated" for Atlas, "managed" for Community */
+  /** Embedding mode. Default: profile-based ("automated" for atlas-*; "managed" for community-*) */
   embeddingMode?: MemoryMongoDBEmbeddingMode;
   /** Hybrid search fusion method. Default: "scoreFusion" */
   fusionMethod?: MemoryMongoDBFusionMethod;

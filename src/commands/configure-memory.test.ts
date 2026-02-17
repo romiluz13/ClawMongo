@@ -60,7 +60,7 @@ describe("configureMemorySection", () => {
     expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(mockNote).toHaveBeenCalledWith(
-      expect.stringContaining("automated embeddings are enabled by default"),
+      expect.stringContaining("enables automated embeddings by default"),
       "Automated Embeddings",
     );
   });

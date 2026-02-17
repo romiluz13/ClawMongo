@@ -187,15 +187,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       memoryTtlDays: mongoCfg.memoryTtlDays,
     });
 
-    // F3: Warn when embeddingMode "automated" is used on community profiles
-    // (automated embedding requires Atlas with Voyage AI integration, not available on community)
-    const isCommunity =
-      mongoCfg.deploymentProfile === "community-mongot" ||
-      mongoCfg.deploymentProfile === "community-bare";
-    if (isCommunity && mongoCfg.embeddingMode === "automated") {
+    // community-bare has no mongot, so automated embedding is not supported there.
+    if (mongoCfg.deploymentProfile === "community-bare" && mongoCfg.embeddingMode === "automated") {
       log.warn(
-        `embeddingMode "automated" is not supported on community profile "${mongoCfg.deploymentProfile}". ` +
-          'Automated embedding requires Atlas with Voyage AI. Consider switching to embeddingMode: "managed".',
+        `embeddingMode "automated" is not supported on profile "${mongoCfg.deploymentProfile}" ` +
+          '(mongot is not available). Consider switching to embeddingMode: "managed".',
       );
     }
 

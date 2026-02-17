@@ -226,7 +226,7 @@ async function continueMongoDBSetup(
       {
         value: "atlas-default",
         label: "Atlas (standard)",
-        hint: "Full Atlas Search + Vector Search",
+        hint: "Full MongoDB Search + Vector Search",
       },
       {
         value: "atlas-m0",
@@ -288,7 +288,7 @@ async function continueMongoDBSetup(
     }
     await prompter.note(
       [
-        "Atlas profile detected: automated embeddings are enabled by default.",
+        "This deployment profile enables automated embeddings by default.",
         "You can ingest KB docs and run semantic search without configuring an external embedding API key.",
       ].join("\n"),
       "Automated Embeddings",
