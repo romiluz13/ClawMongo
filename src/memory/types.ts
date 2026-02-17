@@ -1,4 +1,4 @@
-export type MemorySource = "memory" | "sessions";
+export type MemorySource = "memory" | "sessions" | "kb" | "structured";
 
 export type MemorySearchResult = {
   path: string;
@@ -22,7 +22,7 @@ export type MemorySyncProgressUpdate = {
 };
 
 export type MemoryProviderStatus = {
-  backend: "builtin" | "qmd";
+  backend: "builtin" | "qmd" | "mongodb";
   provider: string;
   model?: string;
   requestedProvider?: string;
@@ -62,6 +62,11 @@ export interface MemorySearchManager {
   search(
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
+  ): Promise<MemorySearchResult[]>;
+  /** Direct KB search — optional, only available on MongoDB backend. */
+  searchKB?(
+    query: string,
+    opts?: { maxResults?: number; minScore?: number },
   ): Promise<MemorySearchResult[]>;
   readFile(params: {
     relPath: string;

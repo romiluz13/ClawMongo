@@ -245,6 +245,70 @@ memory: {
   parsed, the search manager logs a warning and returns the builtin provider
   (existing Markdown embeddings) until QMD recovers.
 
+### MongoDB memory backend
+
+Set `memory.backend = "mongodb"` to use MongoDB as the memory store.
+MongoDB provides scalable, server-based memory with full-text search,
+vector search, and hybrid retrieval. Requires MongoDB 8.0+.
+
+**Quick start**
+
+```json5
+{
+  memory: {
+    backend: "mongodb",
+    mongodb: {
+      uri: "mongodb+srv://user:pass@cluster.mongodb.net/",
+      deploymentProfile: "atlas-default",
+    },
+  },
+}
+```
+
+Or via environment:
+
+```bash
+export OPENCLAW_MONGODB_URI="mongodb+srv://user:pass@cluster.mongodb.net/"
+openclaw config set memory.backend mongodb
+```
+
+**Deployment profiles**
+
+| Profile            | When to use            | Search capabilities                    |
+| ------------------ | ---------------------- | -------------------------------------- |
+| `atlas-default`    | Atlas M10+             | Full: vector + keyword + hybrid fusion |
+| `atlas-m0`         | Atlas free tier        | Full, but limited to 3 search indexes  |
+| `community-mongot` | Self-hosted + mongot   | Full: vector + keyword + hybrid fusion |
+| `community-bare`   | Self-hosted, no mongot | Keyword only ($text fallback)          |
+
+**Search cascade**
+
+The MongoDB backend tries search methods in order of quality:
+
+1. **$scoreFusion** (8.2+, needs mongot) -- Normalized hybrid search
+2. **$rankFusion** (8.0+, needs mongot) -- Rank-based hybrid search
+3. **JS merge** -- Client-side merge of vector + keyword results
+4. **Vector only** -- $vectorSearch alone
+5. **Keyword only** -- $search with text operator
+6. **$text fallback** -- MongoDB built-in $text index (no mongot required)
+
+**Configuration reference**
+
+| Key                                | Type   | Default                 | Description                                              |
+| ---------------------------------- | ------ | ----------------------- | -------------------------------------------------------- |
+| `memory.mongodb.uri`               | string | `$OPENCLAW_MONGODB_URI` | Connection string                                        |
+| `memory.mongodb.database`          | string | `"openclaw"`            | Database name                                            |
+| `memory.mongodb.collectionPrefix`  | string | `"openclaw_"`           | Collection name prefix                                   |
+| `memory.mongodb.deploymentProfile` | string | `"atlas-default"`       | See profiles above                                       |
+| `memory.mongodb.embeddingMode`     | string | `"automated"`           | `"automated"` (Voyage AI) or `"managed"`                 |
+| `memory.mongodb.fusionMethod`      | string | `"scoreFusion"`         | Preferred: `"scoreFusion"`, `"rankFusion"`, `"js-merge"` |
+| `memory.mongodb.quantization`      | string | `"none"`                | Vector quantization: `"none"`, `"scalar"`, `"binary"`    |
+| `memory.mongodb.watchDebounceMs`   | number | `500`                   | File watcher debounce in ms                              |
+
+**Fallback behavior**: If MongoDB is unavailable at startup, OpenClaw silently
+falls back to the builtin SQLite manager (same pattern as QMD fallback). All
+MongoDB code is lazily imported via dynamic `import()` -- zero cost when not used.
+
 ### Additional memory paths
 
 If you want to index Markdown files outside the default workspace layout, add
@@ -396,11 +460,11 @@ But it can be weak at exact, high-signal tokens:
 
 - IDs (`a828e60`, `b3b9895a…`)
 - code symbols (`memorySearch.query.hybrid`)
-- error strings ("sqlite-vec unavailable")
+- error strings (“sqlite-vec unavailable”)
 
 BM25 (full-text) is the opposite: strong at exact tokens, weaker at paraphrases.
 Hybrid search is the pragmatic middle ground: **use both retrieval signals** so you get
-good results for both "natural language" queries and "needle in a haystack" queries.
+good results for both “natural language” queries and “needle in a haystack” queries.
 
 #### How we merge results (the current design)
 
@@ -423,142 +487,13 @@ Notes:
 
 - `vectorWeight` + `textWeight` is normalized to 1.0 in config resolution, so weights behave as percentages.
 - If embeddings are unavailable (or the provider returns a zero-vector), we still run BM25 and return keyword matches.
-- If FTS5 can't be created, we keep vector-only search (no hard failure).
+- If FTS5 can’t be created, we keep vector-only search (no hard failure).
 
-This isn't "IR-theory perfect", but it's simple, fast, and tends to improve recall/precision on real notes.
+This isn’t “IR-theory perfect”, but it’s simple, fast, and tends to improve recall/precision on real notes.
 If we want to get fancier later, common next steps are Reciprocal Rank Fusion (RRF) or score normalization
 (min/max or z-score) before mixing.
 
-#### Post-processing pipeline
-
-After merging vector and keyword scores, two optional post-processing stages
-refine the result list before it reaches the agent:
-
-```
-Vector + Keyword → Weighted Merge → Temporal Decay → Sort → MMR → Top-K Results
-```
-
-Both stages are **off by default** and can be enabled independently.
-
-#### MMR re-ranking (diversity)
-
-When hybrid search returns results, multiple chunks may contain similar or overlapping content.
-For example, searching for "home network setup" might return five nearly identical snippets
-from different daily notes that all mention the same router configuration.
-
-**MMR (Maximal Marginal Relevance)** re-ranks the results to balance relevance with diversity,
-ensuring the top results cover different aspects of the query instead of repeating the same information.
-
-How it works:
-
-1. Results are scored by their original relevance (vector + BM25 weighted score).
-2. MMR iteratively selects results that maximize: `λ × relevance − (1−λ) × max_similarity_to_selected`.
-3. Similarity between results is measured using Jaccard text similarity on tokenized content.
-
-The `lambda` parameter controls the trade-off:
-
-- `lambda = 1.0` → pure relevance (no diversity penalty)
-- `lambda = 0.0` → maximum diversity (ignores relevance)
-- Default: `0.7` (balanced, slight relevance bias)
-
-**Example — query: "home network setup"**
-
-Given these memory files:
-
-```
-memory/2026-02-10.md  → "Configured Omada router, set VLAN 10 for IoT devices"
-memory/2026-02-08.md  → "Configured Omada router, moved IoT to VLAN 10"
-memory/2026-02-05.md  → "Set up AdGuard DNS on 192.168.10.2"
-memory/network.md     → "Router: Omada ER605, AdGuard: 192.168.10.2, VLAN 10: IoT"
-```
-
-Without MMR — top 3 results:
-
-```
-1. memory/2026-02-10.md  (score: 0.92)  ← router + VLAN
-2. memory/2026-02-08.md  (score: 0.89)  ← router + VLAN (near-duplicate!)
-3. memory/network.md     (score: 0.85)  ← reference doc
-```
-
-With MMR (λ=0.7) — top 3 results:
-
-```
-1. memory/2026-02-10.md  (score: 0.92)  ← router + VLAN
-2. memory/network.md     (score: 0.85)  ← reference doc (diverse!)
-3. memory/2026-02-05.md  (score: 0.78)  ← AdGuard DNS (diverse!)
-```
-
-The near-duplicate from Feb 8 drops out, and the agent gets three distinct pieces of information.
-
-**When to enable:** If you notice `memory_search` returning redundant or near-duplicate snippets,
-especially with daily notes that often repeat similar information across days.
-
-#### Temporal decay (recency boost)
-
-Agents with daily notes accumulate hundreds of dated files over time. Without decay,
-a well-worded note from six months ago can outrank yesterday's update on the same topic.
-
-**Temporal decay** applies an exponential multiplier to scores based on the age of each result,
-so recent memories naturally rank higher while old ones fade:
-
-```
-decayedScore = score × e^(-λ × ageInDays)
-```
-
-where `λ = ln(2) / halfLifeDays`.
-
-With the default half-life of 30 days:
-
-- Today's notes: **100%** of original score
-- 7 days ago: **~84%**
-- 30 days ago: **50%**
-- 90 days ago: **12.5%**
-- 180 days ago: **~1.6%**
-
-**Evergreen files are never decayed:**
-
-- `MEMORY.md` (root memory file)
-- Non-dated files in `memory/` (e.g., `memory/projects.md`, `memory/network.md`)
-- These contain durable reference information that should always rank normally.
-
-**Dated daily files** (`memory/YYYY-MM-DD.md`) use the date extracted from the filename.
-Other sources (e.g., session transcripts) fall back to file modification time (`mtime`).
-
-**Example — query: "what's Rod's work schedule?"**
-
-Given these memory files (today is Feb 10):
-
-```
-memory/2025-09-15.md  → "Rod works Mon-Fri, standup at 10am, pairing at 2pm"  (148 days old)
-memory/2026-02-10.md  → "Rod has standup at 14:15, 1:1 with Zeb at 14:45"    (today)
-memory/2026-02-03.md  → "Rod started new team, standup moved to 14:15"        (7 days old)
-```
-
-Without decay:
-
-```
-1. memory/2025-09-15.md  (score: 0.91)  ← best semantic match, but stale!
-2. memory/2026-02-10.md  (score: 0.82)
-3. memory/2026-02-03.md  (score: 0.80)
-```
-
-With decay (halfLife=30):
-
-```
-1. memory/2026-02-10.md  (score: 0.82 × 1.00 = 0.82)  ← today, no decay
-2. memory/2026-02-03.md  (score: 0.80 × 0.85 = 0.68)  ← 7 days, mild decay
-3. memory/2025-09-15.md  (score: 0.91 × 0.03 = 0.03)  ← 148 days, nearly gone
-```
-
-The stale September note drops to the bottom despite having the best raw semantic match.
-
-**When to enable:** If your agent has months of daily notes and you find that old,
-stale information outranks recent context. A half-life of 30 days works well for
-daily-note-heavy workflows; increase it (e.g., 90 days) if you reference older notes frequently.
-
-#### Configuration
-
-Both features are configured under `memorySearch.query.hybrid`:
+Config:
 
 ```json5
 agents: {
@@ -569,29 +504,13 @@ agents: {
           enabled: true,
           vectorWeight: 0.7,
           textWeight: 0.3,
-          candidateMultiplier: 4,
-          // Diversity: reduce redundant results
-          mmr: {
-            enabled: true,    // default: false
-            lambda: 0.7       // 0 = max diversity, 1 = max relevance
-          },
-          // Recency: boost newer memories
-          temporalDecay: {
-            enabled: true,    // default: false
-            halfLifeDays: 30  // score halves every 30 days
-          }
+          candidateMultiplier: 4
         }
       }
     }
   }
 }
 ```
-
-You can enable either feature independently:
-
-- **MMR only** — useful when you have many similar notes but age doesn't matter.
-- **Temporal decay only** — useful when recency matters but your results are already diverse.
-- **Both** — recommended for agents with large, long-running daily note histories.
 
 ### Embedding cache
 
