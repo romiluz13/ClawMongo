@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -170,19 +171,19 @@ describe("ensureCollections", () => {
     // Validated collections: called with name + validator options (F15: chunks now validated)
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_chunks",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_knowledge_base",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_kb_chunks",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_structured_mem",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
   });
 
@@ -194,11 +195,11 @@ describe("ensureCollections", () => {
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_knowledge_base",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_kb_chunks",
-      expect.objectContaining({ validationAction: "warn" }),
+      expect.objectContaining({ validationAction: "error" }),
     );
     // Note: test_chunks is already existing in this test case
   });

@@ -1,7 +1,8 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
-import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { searchKB } from "./mongodb-kb-search.js";
+import type { DetectedCapabilities } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -11,6 +12,16 @@ function mockKBChunksCol(results: Document[] = []): Collection {
   return {
     aggregate: vi.fn(() => ({
       toArray: vi.fn(async () => results),
+    })),
+  } as unknown as Collection;
+}
+
+function mockKBDocsCol(ids: Array<string | number> = []): Collection {
+  return {
+    find: vi.fn(() => ({
+      limit: vi.fn(() => ({
+        toArray: vi.fn(async () => ids.map((_id) => ({ _id }))),
+      })),
     })),
   } as unknown as Collection;
 }
@@ -190,5 +201,48 @@ describe("searchKB", () => {
     // In automated mode, vector search uses query text instead of queryVector
     const aggregateCalls = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls;
     expect(aggregateCalls.length).toBeGreaterThan(0);
+  });
+
+  it("short-circuits when KB metadata filter resolves to no matching documents", async () => {
+    const col = mockKBChunksCol([
+      { path: "never.md", startLine: 1, endLine: 1, text: "nope", score: 0.9 },
+    ]);
+    const kbDocs = mockKBDocsCol([]);
+
+    const results = await searchKB(col, "vector", [0.1], {
+      maxResults: 5,
+      minScore: 0.1,
+      filter: { tags: ["missing"], category: "none", source: "file" },
+      kbDocs,
+      vectorIndexName: "test_kb_chunks_vector",
+      textIndexName: "test_kb_chunks_text",
+      capabilities: baseCapabilities,
+      embeddingMode: "managed",
+    });
+
+    expect(results).toHaveLength(0);
+    expect(col.aggregate).not.toHaveBeenCalled();
+  });
+
+  it("applies KB metadata filter to vector search stage", async () => {
+    const col = mockKBChunksCol([
+      { path: "filtered.md", startLine: 1, endLine: 3, text: "filtered", score: 0.8 },
+    ]);
+    const kbDocs = mockKBDocsCol(["doc-a", "doc-b"]);
+
+    await searchKB(col, "filtered", [0.2], {
+      maxResults: 5,
+      minScore: 0.1,
+      filter: { tags: ["docs"], category: "architecture", source: "file" },
+      kbDocs,
+      vectorIndexName: "test_kb_chunks_vector",
+      textIndexName: "test_kb_chunks_text",
+      capabilities: baseCapabilities,
+      embeddingMode: "managed",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const vsStage = pipeline[0].$vectorSearch;
+    expect(vsStage.filter).toEqual({ docId: { $in: ["doc-a", "doc-b"] } });
   });
 });

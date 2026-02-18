@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { MongoDBChangeStreamWatcher, type ChangeStreamCallback } from "./mongodb-change-stream.js";
@@ -117,6 +118,27 @@ describe("MongoDBChangeStreamWatcher", () => {
     expect(callbackArgs.length).toBe(1);
     expect(callbackArgs[0].paths).toContain("sessions/old.jsonl");
     expect(callbackArgs[0].operationType).toBe("delete");
+
+    await watcher.close();
+  });
+
+  it("exposes resume token on callback events", async () => {
+    const watcher = new MongoDBChangeStreamWatcher(mockCol, callback, 50);
+    await watcher.start();
+
+    const token = { _data: "825F..." };
+    mockStream.emit("change", {
+      _id: token,
+      operationType: "insert",
+      fullDocument: { path: "memory/resume.md" },
+      documentKey: { _id: "memory/resume.md:1:1" },
+    });
+
+    vi.advanceTimersByTime(100);
+
+    expect(callbackArgs.length).toBe(1);
+    expect(callbackArgs[0].resumeToken).toEqual(token);
+    expect(watcher.lastResumeToken).toEqual(token);
 
     await watcher.close();
   });
