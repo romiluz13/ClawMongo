@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2.0.0-rc.8",
+  "version": "2.0.0-rc.9",
   "description": "MongoDB memory backend for OpenClaw — ACID transactions, vector search, TTL, analytics, change streams",
   "keywords": [
     "ai-gateway",
