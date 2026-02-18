@@ -73,4 +73,26 @@ describe("startGatewayMemoryBackend", () => {
       'qmd memory startup initialization armed for agent "ops"',
     );
   });
+
+  it("runs startup sync for mongodb backend managers", async () => {
+    const sync = vi.fn(async () => {});
+    const cfg = {
+      agents: { list: [{ id: "main", default: true }] },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost:27017/test" } },
+    } as OpenClawConfig;
+    const log = { info: vi.fn(), warn: vi.fn() };
+    getMemorySearchManagerMock.mockResolvedValue({
+      manager: {
+        sync,
+      },
+    });
+
+    await startGatewayMemoryBackend({ cfg, log });
+
+    expect(sync).toHaveBeenCalledWith({ reason: "startup" });
+    expect(log.info).toHaveBeenCalledWith(
+      'mongodb memory startup initialization armed for agent "main"',
+    );
+    expect(log.warn).not.toHaveBeenCalled();
+  });
 });

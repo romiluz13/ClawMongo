@@ -119,6 +119,45 @@ describe("createKBSearchTool direct searchKB path", () => {
     expect(parsed.results[0].source).toBe("kb");
   });
 
+  it("forwards tags/category/source filters to direct searchKB()", async () => {
+    const searchKBMock = vi.fn().mockResolvedValue([]);
+    mockGetMemorySearchManager.mockResolvedValue({
+      manager: {
+        searchKB: searchKBMock,
+        search: vi.fn(),
+        status: () => ({ backend: "mongodb", provider: "test" }),
+      },
+      error: null,
+    });
+
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp" } },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+    } as OpenClawConfig;
+
+    const tool = createKBSearchTool({ config: cfg });
+    expect(tool).not.toBeNull();
+
+    await tool!.execute("call-filter", {
+      query: "vector indexing",
+      tags: ["docs", "api"],
+      category: "architecture",
+      source: "file",
+    });
+
+    expect(searchKBMock).toHaveBeenCalledWith(
+      "vector indexing",
+      expect.objectContaining({
+        maxResults: 5,
+        filter: {
+          tags: ["docs", "api"],
+          category: "architecture",
+          source: "file",
+        },
+      }),
+    );
+  });
+
   it("falls back to search() + filter when searchKB is not available", async () => {
     const mixedResults = [
       {

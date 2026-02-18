@@ -66,9 +66,8 @@ export function structuredMemCollection(db: Db, prefix: string): Collection {
 // ---------------------------------------------------------------------------
 
 // JSON Schema validators for MongoDB-native collections.
-// Uses $jsonSchema with validationAction: "warn" so invalid docs are still
-// inserted but produce a warning in the server logs, avoiding hard failures
-// for evolving schemas.
+// Uses $jsonSchema with validationAction: "error" so invalid docs are rejected
+// at write time, keeping persisted memory collections structurally consistent.
 
 const KB_SCHEMA: Document = {
   $jsonSchema: {
@@ -186,7 +185,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
         await db.createCollection(name, {
           validator,
           validationLevel: "moderate",
-          validationAction: "warn",
+          validationAction: "error",
         });
       } else {
         await db.createCollection(name);
@@ -199,7 +198,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
 /**
  * Apply JSON Schema validation to existing collections that were created
  * before validation was added. Idempotent — safe to call on every startup.
- * Uses validationAction: "warn" to avoid breaking existing data.
+ * Uses validationAction: "error" so invalid writes fail fast.
  */
 export async function ensureSchemaValidation(db: Db, prefix: string): Promise<void> {
   for (const [baseName, validator] of Object.entries(VALIDATED_COLLECTIONS)) {
@@ -209,7 +208,7 @@ export async function ensureSchemaValidation(db: Db, prefix: string): Promise<vo
         collMod: collName,
         validator,
         validationLevel: "moderate",
-        validationAction: "warn",
+        validationAction: "error",
       });
       log.info(`applied schema validation to ${collName}`);
     } catch (err) {

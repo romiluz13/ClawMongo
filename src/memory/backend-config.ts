@@ -324,9 +324,8 @@ export function resolveMemoryBackendConfig(params: {
     }
     const deploymentProfile: MemoryMongoDBDeploymentProfile =
       mongoCfg?.deploymentProfile ?? "atlas-default";
-    const isCommunity =
-      deploymentProfile === "community-mongot" || deploymentProfile === "community-bare";
-    const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode = isCommunity ? "managed" : "automated";
+    const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode =
+      deploymentProfile === "community-bare" ? "managed" : "automated";
 
     const result: ResolvedMemoryBackendConfig = {
       backend: "mongodb",

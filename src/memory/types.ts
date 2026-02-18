@@ -66,7 +66,11 @@ export interface MemorySearchManager {
   /** Direct KB search — optional, only available on MongoDB backend. */
   searchKB?(
     query: string,
-    opts?: { maxResults?: number; minScore?: number },
+    opts?: {
+      maxResults?: number;
+      minScore?: number;
+      filter?: { tags?: string[]; category?: string; source?: string };
+    },
   ): Promise<MemorySearchResult[]>;
   readFile(params: {
     relPath: string;

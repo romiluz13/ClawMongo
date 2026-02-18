@@ -152,16 +152,15 @@ describe("setupMemoryBackend", () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const config: OpenClawConfig = {};
     const prompter = createMockPrompter({
-      // 3rd select is embedding provider (triggered by community-mongot flow)
-      selectResponses: ["mongodb", "community-mongot", "voyage"],
-      textResponses: ["mongodb://localhost:27017/", "sk-test"],
+      selectResponses: ["mongodb", "community-mongot"],
+      textResponses: ["mongodb://localhost:27017/"],
     });
 
     await setupMemoryBackend(config, prompter);
 
     // The second select call should have initialValue "community-mongot"
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
-    expect(selectCalls.length).toBe(4); // backend, profile, embedding provider, kb-import
+    expect(selectCalls.length).toBe(3); // backend, profile, kb-import
     const profileSelectParams = selectCalls[1][0];
     expect(profileSelectParams.initialValue).toBe("community-mongot");
   });
@@ -239,7 +238,7 @@ describe("setupMemoryBackend", () => {
 
   it("sets embeddingMode to managed for community-mongot and prompts for vector search", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
-    const config: OpenClawConfig = {};
+    const config: OpenClawConfig = { memory: { mongodb: { embeddingMode: "managed" } } };
     // select: backend=mongodb, profile=community-mongot, provider=voyage
     // confirm: wantVectorSearch=true
     // text: URI, API key
@@ -299,7 +298,7 @@ describe("setupMemoryBackend", () => {
 
   it("saves local provider without API key prompt", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
-    const config: OpenClawConfig = {};
+    const config: OpenClawConfig = { memory: { mongodb: { embeddingMode: "managed" } } };
     const confirmResponses = [true];
     const prompter = createMockPrompter({
       selectResponses: ["mongodb", "community-mongot", "local"],
@@ -318,7 +317,7 @@ describe("setupMemoryBackend", () => {
 
   it("shows reminder when API key is left blank", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
-    const config: OpenClawConfig = {};
+    const config: OpenClawConfig = { memory: { mongodb: { embeddingMode: "managed" } } };
     const confirmResponses = [true];
     const prompter = createMockPrompter({
       selectResponses: ["mongodb", "community-mongot", "openai"],
@@ -341,7 +340,7 @@ describe("setupMemoryBackend", () => {
 
   it("skips vector search when user declines", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
-    const config: OpenClawConfig = {};
+    const config: OpenClawConfig = { memory: { mongodb: { embeddingMode: "managed" } } };
     const confirmResponses = [false];
     const prompter = createMockPrompter({
       selectResponses: ["mongodb", "community-mongot"],
@@ -451,10 +450,9 @@ describe("topology detection in wizard", () => {
     mockSuggestConnectionString.mockReturnValue("mongodb://localhost:27017/?replicaSet=rs0");
 
     const prompter = createMockPrompter({
-      selectResponses: ["mongodb", "community-mongot", "voyage"],
-      textResponses: ["mongodb://localhost:27017/", "sk-test"],
+      selectResponses: ["mongodb", "community-mongot"],
+      textResponses: ["mongodb://localhost:27017/"],
     });
-    prompter.confirm = vi.fn(async () => true) as WizardPrompter["confirm"];
 
     await setupMemoryBackend(config, prompter);
 
@@ -603,10 +601,9 @@ describe("topology detection in wizard", () => {
     mockSuggestConnectionString.mockReturnValue("mongodb://localhost:27017/?replicaSet=rs0");
 
     const prompter = createMockPrompter({
-      selectResponses: ["mongodb", "community-mongot", "voyage"],
-      textResponses: ["mongodb://localhost:27017/", "sk-test"],
+      selectResponses: ["mongodb", "community-mongot"],
+      textResponses: ["mongodb://localhost:27017/"],
     });
-    prompter.confirm = vi.fn(async () => true) as WizardPrompter["confirm"];
 
     const result = await setupMemoryBackend(config, prompter);
 

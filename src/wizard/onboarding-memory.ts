@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_AGENTS_FILENAME, DEFAULT_MEMORY_FILENAME } from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/config.js";
-import type { MemoryMongoDBDeploymentProfile } from "../config/types.memory.js";
+import type {
+  MemoryMongoDBDeploymentProfile,
+  MemoryMongoDBEmbeddingMode,
+} from "../config/types.memory.js";
 import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
 import type { WizardPrompter } from "./prompts.js";
 
@@ -143,12 +146,12 @@ async function continueMongoDBSetup(
   initialUri: string,
 ): Promise<OpenClawConfig> {
   let trimmedUri = initialUri;
-  const isAtlas = trimmedUri.includes(".mongodb.net");
+  const isMongoDBManagedUri = trimmedUri.includes(".mongodb.net");
 
   // --- Topology Detection (after URI, before profile selection) ---
   let detectedTier: import("../memory/mongodb-topology.js").DeploymentTier | undefined;
 
-  if (!isAtlas) {
+  if (!isMongoDBManagedUri) {
     try {
       const { MongoClient } = await import("mongodb");
       const testClient = new MongoClient(trimmedUri, {
@@ -208,7 +211,7 @@ async function continueMongoDBSetup(
 
   // Auto-suggest profile based on detected topology (or URI heuristic)
   const suggestedProfile: MemoryMongoDBDeploymentProfile = (() => {
-    if (isAtlas) {
+    if (isMongoDBManagedUri) {
       return "atlas-default";
     }
     if (detectedTier) {
@@ -225,12 +228,12 @@ async function continueMongoDBSetup(
     options: [
       {
         value: "atlas-default",
-        label: "Atlas (standard)",
+        label: "MongoDB Managed (standard)",
         hint: "Full MongoDB Search + Vector Search",
       },
       {
         value: "atlas-m0",
-        label: "Atlas (free tier M0)",
+        label: "MongoDB Managed (M0-like limit)",
         hint: "Limited to 3 search indexes total",
       },
       {
@@ -247,9 +250,11 @@ async function continueMongoDBSetup(
     initialValue: suggestedProfile,
   });
 
-  // Auto-set embeddingMode based on profile
-  const isCommunity = profile === "community-mongot" || profile === "community-bare";
-  const embeddingMode = isCommunity ? "managed" : "automated";
+  // Default to MongoDB-managed automated embeddings whenever mongot is available.
+  const existingEmbeddingMode = config.memory?.mongodb?.embeddingMode;
+  const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode =
+    profile === "community-bare" ? "managed" : "automated";
+  const embeddingMode = existingEmbeddingMode ?? defaultEmbeddingMode;
   const existingEnableChangeStreams = config.memory?.mongodb?.enableChangeStreams;
   const defaultEnableChangeStreams =
     detectedTier === "standalone"
@@ -277,7 +282,7 @@ async function continueMongoDBSetup(
     },
   };
 
-  if (!isCommunity) {
+  if (embeddingMode === "automated") {
     if (typeof existingEnableChangeStreams !== "boolean") {
       await prompter.note(
         enableChangeStreams
@@ -288,7 +293,7 @@ async function continueMongoDBSetup(
     }
     await prompter.note(
       [
-        "This deployment profile enables automated embeddings by default.",
+        "This deployment uses MongoDB automatic embeddings.",
         "You can ingest KB docs and run semantic search without configuring an external embedding API key.",
       ].join("\n"),
       "Automated Embeddings",
@@ -296,7 +301,6 @@ async function continueMongoDBSetup(
     return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
-  // community-bare: no mongot → text search only, no vector search possible
   if (profile === "community-bare") {
     if (typeof existingEnableChangeStreams !== "boolean") {
       await prompter.note(
@@ -316,7 +320,7 @@ async function continueMongoDBSetup(
     return offerKBImport(baseResult, prompter, isClawMongo, trimmedUri);
   }
 
-  // community-mongot: vector search available with managed embeddings
+  // Managed mode fallback: users can still supply their own embedding provider.
   if (typeof existingEnableChangeStreams !== "boolean") {
     await prompter.note(
       enableChangeStreams

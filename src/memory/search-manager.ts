@@ -1,12 +1,12 @@
 import type { OpenClawConfig } from "../config/config.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMongoDBConfig, ResolvedQmdConfig } from "./backend-config.js";
+import { resolveMemoryBackendConfig } from "./backend-config.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemorySearchManager,
   MemorySyncProgressUpdate,
 } from "./types.js";
-import { createSubsystemLogger } from "../logging/subsystem.js";
-import { resolveMemoryBackendConfig } from "./backend-config.js";
 
 const log = createSubsystemLogger("memory");
 const QMD_MANAGER_CACHE = new Map<string, MemorySearchManager>();
@@ -41,9 +41,14 @@ export async function getMemorySearchManager(params: {
         MONGODB_MANAGER_CACHE.set(cacheKey, manager);
         return { manager };
       }
+      const error = "mongodb memory manager initialization returned null";
+      log.warn(error);
+      return { manager: null, error };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.warn(`mongodb memory unavailable; falling back to builtin: ${message}`);
+      const error = `mongodb memory unavailable: ${message}`;
+      log.warn(error);
+      return { manager: null, error };
     }
   }
 

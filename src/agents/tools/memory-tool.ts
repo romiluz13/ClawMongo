@@ -263,7 +263,9 @@ function deriveChatTypeFromSessionKey(sessionKey?: string): "direct" | "group" |
 const KBSearchSchema = Type.Object({
   query: Type.String(),
   maxResults: Type.Optional(Type.Number()),
-  // TODO: Add tags/category filtering once searchKB supports direct filter params
+  tags: Type.Optional(Type.Array(Type.String())),
+  category: Type.Optional(Type.String()),
+  source: Type.Optional(Type.String()),
 });
 
 export function createKBSearchTool(options: {
@@ -289,11 +291,17 @@ export function createKBSearchTool(options: {
     label: "KB Search",
     name: "kb_search",
     description:
-      'Search the knowledge base for imported documents, FAQs, architecture specs, and reference materials. Returns matching snippets with source and relevance score. Use for factual/reference lookups when you need specific documentation rather than general memory recall. Example: kb_search({query: "API rate limiting policy"})',
+      'Search the knowledge base for imported documents, FAQs, architecture specs, and reference materials. Returns matching snippets with source and relevance score. Optional filters: tags, category, source. Use for factual/reference lookups when you need specific documentation rather than general memory recall. Example: kb_search({query: "API rate limiting policy", tags: ["docs"]})',
     parameters: KBSearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
       const maxResults = readNumberParam(params, "maxResults") ?? 5;
+      const category = readStringParam(params, "category");
+      const source = readStringParam(params, "source");
+      const tags =
+        params && typeof params === "object" && "tags" in params
+          ? ((params as Record<string, unknown>).tags as string[] | undefined)
+          : undefined;
 
       const { manager, error } = await getMemorySearchManager({ cfg, agentId });
       if (!manager) {
@@ -305,7 +313,14 @@ export function createKBSearchTool(options: {
         // Falls back to search() + filter for other backends
         let kbResults;
         if (manager.searchKB) {
-          kbResults = await manager.searchKB(query, { maxResults });
+          kbResults = await manager.searchKB(query, {
+            maxResults,
+            filter: {
+              ...(Array.isArray(tags) ? { tags } : {}),
+              ...(category ? { category } : {}),
+              ...(source ? { source } : {}),
+            },
+          });
         } else {
           const results = await manager.search(query, { maxResults });
           kbResults = results.filter((r) => r.source === "kb");

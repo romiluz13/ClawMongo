@@ -1,5 +1,5 @@
-import type { OpenClawConfig } from "../config/config.js";
 import { listAgentIds } from "../agents/agent-scope.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
 import { getMemorySearchManager } from "../memory/index.js";
 
@@ -10,17 +10,27 @@ export async function startGatewayMemoryBackend(params: {
   const agentIds = listAgentIds(params.cfg);
   for (const agentId of agentIds) {
     const resolved = resolveMemoryBackendConfig({ cfg: params.cfg, agentId });
-    if (resolved.backend !== "qmd" || !resolved.qmd) {
+    if (resolved.backend !== "qmd" && resolved.backend !== "mongodb") {
       continue;
     }
 
     const { manager, error } = await getMemorySearchManager({ cfg: params.cfg, agentId });
     if (!manager) {
       params.log.warn(
-        `qmd memory startup initialization failed for agent "${agentId}": ${error ?? "unknown error"}`,
+        `${resolved.backend} memory startup initialization failed for agent "${agentId}": ${error ?? "unknown error"}`,
       );
       continue;
     }
-    params.log.info?.(`qmd memory startup initialization armed for agent "${agentId}"`);
+    if (resolved.backend === "mongodb" && manager.sync) {
+      try {
+        await manager.sync({ reason: "startup" });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        params.log.warn(`mongodb memory startup sync failed for agent "${agentId}": ${message}`);
+      }
+    }
+    params.log.info?.(
+      `${resolved.backend} memory startup initialization armed for agent "${agentId}"`,
+    );
   }
 }

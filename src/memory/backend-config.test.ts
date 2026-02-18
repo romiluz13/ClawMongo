@@ -333,7 +333,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.changeStreamDebounceMs).toBe(1000);
   });
 
-  it("defaults embeddingMode to managed for community-mongot profile", () => {
+  it("defaults embeddingMode to automated for community-mongot profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -345,7 +345,7 @@ describe("resolveMemoryBackendConfig", () => {
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(resolved.mongodb!.embeddingMode).toBe("automated");
   });
 
   it("defaults embeddingMode to managed for community-bare profile", () => {

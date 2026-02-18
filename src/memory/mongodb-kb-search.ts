@@ -1,9 +1,9 @@
 import type { Collection, Document } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
-import type { DetectedCapabilities } from "./mongodb-schema.js";
-import type { MemorySearchResult } from "./types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { buildVectorSearchStage, MONGODB_MAX_NUM_CANDIDATES } from "./mongodb-search.js";
+import type { MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:kb-search");
 
@@ -22,6 +22,62 @@ function toKBSearchResult(doc: Document): MemorySearchResult {
   };
 }
 
+function normalizeKBFilter(raw?: {
+  tags?: string[];
+  category?: string;
+  source?: string;
+}): { tags?: string[]; category?: string; source?: string } | null {
+  if (!raw) {
+    return null;
+  }
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.map((tag) => tag.trim()).filter((tag) => tag.length > 0)
+    : [];
+  const category = raw.category?.trim();
+  const source = raw.source?.trim();
+  if (tags.length === 0 && !category && !source) {
+    return null;
+  }
+  return {
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(category ? { category } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+async function resolveKBChunkFilter(params: {
+  kbDocs?: Collection;
+  filter?: { tags?: string[]; category?: string; source?: string };
+}): Promise<Document | undefined> {
+  const normalized = normalizeKBFilter(params.filter);
+  if (!normalized) {
+    return undefined;
+  }
+  if (!params.kbDocs) {
+    log.warn("KB filter provided but kb document collection is unavailable; ignoring filter");
+    return undefined;
+  }
+
+  const kbDocFilter: Document = {};
+  if (normalized.tags?.length) {
+    kbDocFilter.tags = { $all: normalized.tags };
+  }
+  if (normalized.category) {
+    kbDocFilter.category = normalized.category;
+  }
+  if (normalized.source) {
+    kbDocFilter["source.type"] = normalized.source;
+  }
+
+  // Keep this bounded to avoid oversized $in filters.
+  const docs = await params.kbDocs
+    .find(kbDocFilter, { projection: { _id: 1 } })
+    .limit(10_000)
+    .toArray();
+  const docIds = docs.map((doc) => String(doc._id));
+  return { docId: { $in: docIds } };
+}
+
 // ---------------------------------------------------------------------------
 // KB Search
 // ---------------------------------------------------------------------------
@@ -34,6 +90,7 @@ export async function searchKB(
     maxResults: number;
     minScore: number;
     filter?: { tags?: string[]; category?: string; source?: string };
+    kbDocs?: Collection;
     vectorIndexName: string;
     textIndexName: string;
     capabilities: DetectedCapabilities;
@@ -47,6 +104,14 @@ export async function searchKB(
       : queryVector != null && opts.capabilities.vectorSearch;
 
   const canText = opts.capabilities.textSearch;
+  const chunkFilter = await resolveKBChunkFilter({
+    kbDocs: opts.kbDocs,
+    filter: opts.filter,
+  });
+  const filteredDocIds = (chunkFilter as { docId?: { $in?: string[] } } | undefined)?.docId?.$in;
+  if (Array.isArray(filteredDocIds) && filteredDocIds.length === 0) {
+    return [];
+  }
   const numCandidates = Math.min(
     opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     MONGODB_MAX_NUM_CANDIDATES,
@@ -62,6 +127,7 @@ export async function searchKB(
         indexName: opts.vectorIndexName,
         numCandidates,
         limit: opts.maxResults,
+        filter: chunkFilter,
       });
 
       if (vsStage) {
@@ -80,6 +146,7 @@ export async function searchKB(
                         },
                       },
                     },
+                    ...(chunkFilter ? [{ $match: chunkFilter }] : []),
                     { $limit: opts.maxResults * 4 },
                   ],
                 },
@@ -122,6 +189,7 @@ export async function searchKB(
         indexName: opts.vectorIndexName,
         numCandidates,
         limit: opts.maxResults,
+        filter: chunkFilter,
       });
 
       if (vsStage) {
@@ -165,6 +233,7 @@ export async function searchKB(
             },
           },
         },
+        ...(chunkFilter ? [{ $match: chunkFilter }] : []),
         { $limit: opts.maxResults * 4 },
         {
           $project: {
@@ -193,6 +262,9 @@ export async function searchKB(
   // Last resort: basic $text index search
   try {
     const filter: Document = { $text: { $search: query } };
+    if (chunkFilter) {
+      Object.assign(filter, chunkFilter);
+    }
     const docs = await kbChunks
       .aggregate([
         { $match: filter },

@@ -54,10 +54,17 @@ const fallbackManager = {
 };
 
 const mockMemoryIndexGet = vi.fn(async () => fallbackManager);
+const mockMongoDBManagerCreate = vi.hoisted(() => vi.fn());
 
 vi.mock("./qmd-manager.js", () => ({
   QmdMemoryManager: {
     create: vi.fn(async () => mockPrimary),
+  },
+}));
+
+vi.mock("./mongodb-manager.js", () => ({
+  MongoDBMemoryManager: {
+    create: mockMongoDBManagerCreate,
   },
 }));
 
@@ -76,6 +83,13 @@ type SearchManager = NonNullable<SearchManagerResult["manager"]>;
 function createQmdCfg(agentId: string) {
   return {
     memory: { backend: "qmd", qmd: {} },
+    agents: { list: [{ id: agentId, default: true, workspace: "/tmp/workspace" }] },
+  } as const;
+}
+
+function createMongoCfg(agentId: string) {
+  return {
+    memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost:27017/test" } },
     agents: { list: [{ id: agentId, default: true, workspace: "/tmp/workspace" }] },
   } as const;
 }
@@ -112,6 +126,8 @@ beforeEach(() => {
   fallbackManager.close.mockClear();
   mockMemoryIndexGet.mockReset();
   mockMemoryIndexGet.mockResolvedValue(fallbackManager);
+  mockMongoDBManagerCreate.mockReset();
+  mockMongoDBManagerCreate.mockResolvedValue(null);
   QmdMemoryManager.create.mockClear();
 });
 
@@ -218,5 +234,29 @@ describe("getMemorySearchManager caching", () => {
     mockMemoryIndexGet.mockRejectedValueOnce(new Error("No API key found for provider openai"));
 
     await expect(firstManager.search("hello")).rejects.toThrow("qmd query failed");
+  });
+});
+
+describe("getMemorySearchManager mongodb backend", () => {
+  it("does not fall back to builtin when mongodb manager creation fails", async () => {
+    const cfg = createMongoCfg("mongo-main");
+    mockMongoDBManagerCreate.mockRejectedValueOnce(new Error("connect timeout"));
+
+    const result = await getMemorySearchManager({ cfg, agentId: "mongo-main" });
+
+    expect(result.manager).toBeNull();
+    expect(result.error).toContain("mongodb memory unavailable");
+    expect(mockMemoryIndexGet).not.toHaveBeenCalled();
+  });
+
+  it("returns error when mongodb manager returns null", async () => {
+    const cfg = createMongoCfg("mongo-main-null");
+    mockMongoDBManagerCreate.mockResolvedValueOnce(null);
+
+    const result = await getMemorySearchManager({ cfg, agentId: "mongo-main-null" });
+
+    expect(result.manager).toBeNull();
+    expect(result.error).toContain("initialization returned null");
+    expect(mockMemoryIndexGet).not.toHaveBeenCalled();
   });
 });

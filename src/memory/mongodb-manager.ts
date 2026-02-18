@@ -14,6 +14,7 @@ import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
+  kbCollection,
   chunksCollection,
   detectCapabilities,
   ensureCollections,
@@ -38,6 +39,7 @@ import type {
 } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb");
+const CHANGE_STREAM_RESUME_TOKEN_META_KEY = "change_stream_resume_token";
 
 // ---------------------------------------------------------------------------
 // Result dedup utility — exported for testing and reuse
@@ -252,14 +254,25 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Opt-in: Change Streams for cross-instance sync (requires replica set)
     if (mongoCfg.enableChangeStreams) {
+      const persistedResumeToken = await manager.loadPersistedChangeStreamResumeToken();
       const csWatcher = new MongoDBChangeStreamWatcher(
         chunksCollection(db, prefix),
-        () => {
+        (event) => {
           manager.dirty = true;
+          if (event.resumeToken !== undefined && event.resumeToken !== null) {
+            void manager.persistChangeStreamResumeToken(event.resumeToken);
+          }
         },
         mongoCfg.changeStreamDebounceMs,
       );
-      const started = await csWatcher.start();
+      let started = await csWatcher.start(persistedResumeToken ?? undefined);
+      if (!started && persistedResumeToken) {
+        log.warn("change stream resume failed with persisted token; retrying from latest position");
+        started = await csWatcher.start();
+        if (started) {
+          await manager.clearPersistedChangeStreamResumeToken();
+        }
+      }
       if (started) {
         manager.changeStreamWatcher = csWatcher;
         log.info("change stream watcher enabled for cross-instance sync");
@@ -289,11 +302,17 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       return [];
     }
 
-    // Trigger sync if dirty
+    // Keep searches strongly fresh when the index is marked dirty.
     if (this.dirty) {
-      void this.sync({ reason: "search" }).catch((err) => {
-        log.warn(`sync on search failed: ${String(err)}`);
-      });
+      try {
+        await this.sync({ reason: "search" });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`memory sync failed before search: ${msg}`, { cause: err });
+      }
+    }
+    if (this.dirty) {
+      throw new Error("memory index is still dirty after sync");
     }
 
     const mongoCfg = this.config.mongodb!;
@@ -340,6 +359,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         textIndexName: `${this.prefix}kb_chunks_text`,
         capabilities: this.capabilities,
         embeddingMode: mongoCfg.embeddingMode,
+        kbDocs: kbCollection(this.db, this.prefix),
       }).catch((err) => {
         log.warn(`KB search failed: ${String(err)}`);
         return [] as MemorySearchResult[];
@@ -391,7 +411,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
   async searchKB(
     query: string,
-    opts?: { maxResults?: number; minScore?: number },
+    opts?: {
+      maxResults?: number;
+      minScore?: number;
+      filter?: { tags?: string[]; category?: string; source?: string };
+    },
   ): Promise<MemorySearchResult[]> {
     const cleaned = query.trim();
     if (!cleaned) {
@@ -416,11 +440,13 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     return searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
       maxResults,
       minScore,
+      filter: opts?.filter,
       numCandidates: mongoCfg.numCandidates,
       vectorIndexName: `${this.prefix}kb_chunks_vector`,
       textIndexName: `${this.prefix}kb_chunks_text`,
       capabilities: this.capabilities,
       embeddingMode: mongoCfg.embeddingMode,
+      kbDocs: kbCollection(this.db, this.prefix),
     });
   }
 
@@ -613,6 +639,48 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`sync failed: ${msg}`);
+      throw err instanceof Error ? err : new Error(msg);
+    }
+  }
+
+  private async loadPersistedChangeStreamResumeToken(): Promise<unknown> {
+    try {
+      const meta = metaCollection(this.db, this.prefix);
+      const doc = await meta.findOne({
+        _id: CHANGE_STREAM_RESUME_TOKEN_META_KEY,
+      } as Record<string, unknown>);
+      if (!doc || !("token" in doc)) {
+        return null;
+      }
+      return (doc as Record<string, unknown>).token ?? null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`failed to load persisted change stream resume token: ${msg}`);
+      return null;
+    }
+  }
+
+  private async persistChangeStreamResumeToken(token: unknown): Promise<void> {
+    try {
+      const meta = metaCollection(this.db, this.prefix);
+      await meta.updateOne(
+        { _id: CHANGE_STREAM_RESUME_TOKEN_META_KEY } as Record<string, unknown>,
+        { $set: { token, updatedAt: new Date() } },
+        { upsert: true },
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`failed to persist change stream resume token: ${msg}`);
+    }
+  }
+
+  private async clearPersistedChangeStreamResumeToken(): Promise<void> {
+    try {
+      const meta = metaCollection(this.db, this.prefix);
+      await meta.deleteOne({ _id: CHANGE_STREAM_RESUME_TOKEN_META_KEY } as Record<string, unknown>);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`failed to clear stale change stream resume token: ${msg}`);
     }
   }
 
@@ -812,6 +880,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Close the change stream watcher
     if (this.changeStreamWatcher) {
+      const token = this.changeStreamWatcher.lastResumeToken;
+      if (token !== undefined && token !== null) {
+        await this.persistChangeStreamResumeToken(token);
+      }
       try {
         await this.changeStreamWatcher.close();
       } catch {

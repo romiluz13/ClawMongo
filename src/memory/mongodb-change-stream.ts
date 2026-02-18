@@ -12,6 +12,7 @@ export type ChangeStreamCallback = (event: {
   operationType: string;
   paths: string[];
   timestamp: Date;
+  resumeToken?: unknown;
 }) => void;
 
 /**
@@ -29,9 +30,7 @@ export class MongoDBChangeStreamWatcher {
   private closed = false;
   /**
    * F21: Last resume token for reconnection after restart.
-   * NOTE (v1): Token is held in-memory only — not persisted to the meta collection.
-   * On process restart the token is lost and events since shutdown are missed.
-   * The manager can call `lastResumeToken` on shutdown to persist externally.
+   * The manager can persist this token externally across restarts.
    */
   private _lastResumeToken: unknown = null;
 
@@ -155,6 +154,7 @@ export class MongoDBChangeStreamWatcher {
         operationType: opType,
         paths,
         timestamp: new Date(),
+        resumeToken: this._lastResumeToken,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
