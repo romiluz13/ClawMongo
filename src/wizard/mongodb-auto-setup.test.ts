@@ -86,7 +86,7 @@ describe("attemptAutoSetup", () => {
     mockAutoStartMongoDB.mockResolvedValue({
       success: true,
       tier: "fullstack",
-      uri: "mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0",
+      uri: "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true",
     });
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);

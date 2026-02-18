@@ -56,11 +56,11 @@ docker compose -f docker/mongodb/docker-compose.mongodb.yml --profile standalone
 
 ## Connection Strings
 
-| Tier       | Connection String                                                        |
-| ---------- | ------------------------------------------------------------------------ |
-| standalone | `mongodb://localhost:27017`                                              |
-| replicaset | `mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0` |
-| fullstack  | `mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0` |
+| Tier       | Connection String                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| standalone | `mongodb://localhost:27017/openclaw`                                                                   |
+| replicaset | `mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true` |
+| fullstack  | `mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true` |
 
 ## Environment Variables
 

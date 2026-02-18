@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0-rc.10
+
+### Changes
+
+- Version alignment with core OpenClaw release numbers.
+
 ## 2.0.0-rc.9
 
 ### Changes

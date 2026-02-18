@@ -2,6 +2,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execDocker, execDockerRaw, dockerContainerState } from "../agents/sandbox/docker.js";
+import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
 const log = createSubsystemLogger("docker:mongodb");
@@ -83,47 +84,61 @@ export type ExistingMongoDBResult = {
   isDocker?: boolean;
 };
 
+function existingMongoCandidateUris(port: number): string[] {
+  return [
+    // Standalone/default local install (no auth).
+    `mongodb://localhost:${port}/openclaw`,
+    // ClawMongo Docker replica set/fullstack defaults.
+    `mongodb://admin:admin@localhost:${port}/openclaw?authSource=admin&replicaSet=rs0&directConnection=true`,
+    // Fallback for auth-enabled deployments without replicaSet in URI.
+    `mongodb://admin:admin@localhost:${port}/?authSource=admin&directConnection=true`,
+  ];
+}
+
 /**
  * Try to connect to MongoDB at localhost:27017 to detect existing instances.
  * Uses 5-second timeout. Returns connected=true if MongoDB is already running.
  * This should be called BEFORE attempting Docker auto-start.
  */
 export async function detectExistingMongoDB(port = 27017): Promise<ExistingMongoDBResult> {
-  const uri = `mongodb://localhost:${port}/openclaw`;
-  try {
-    const { MongoClient } = await import("mongodb");
-    const client = new MongoClient(uri, {
-      serverSelectionTimeoutMS: 5_000,
-      connectTimeoutMS: 5_000,
-    });
+  const { MongoClient } = await import("mongodb");
+  for (const uri of existingMongoCandidateUris(port)) {
     try {
-      await client.connect();
-      await client.db().admin().command({ ping: 1 });
-
-      // Check if it's running in Docker
-      let isDocker = false;
+      const client = new MongoClient(uri, {
+        serverSelectionTimeoutMS: 5_000,
+        connectTimeoutMS: 5_000,
+      });
       try {
-        const state = await dockerContainerState("clawmongo-mongod");
-        isDocker = state.running;
-      } catch {
-        // Not a Docker container or Docker not available
-      }
-      if (!isDocker) {
+        await client.connect();
+        await client.db().admin().command({ ping: 1 });
+
+        // Check if it's running in Docker
+        let isDocker = false;
         try {
-          const state = await dockerContainerState("clawmongo-mongod-standalone");
+          const state = await dockerContainerState("clawmongo-mongod");
           isDocker = state.running;
         } catch {
-          // Not a Docker container
+          // Not a Docker container or Docker not available
         }
-      }
+        if (!isDocker) {
+          try {
+            const state = await dockerContainerState("clawmongo-mongod-standalone");
+            isDocker = state.running;
+          } catch {
+            // Not a Docker container
+          }
+        }
 
-      return { connected: true, uri, isDocker };
-    } finally {
-      await client.close().catch(() => {});
+        return { connected: true, uri, isDocker };
+      } finally {
+        await client.close().catch(() => {});
+      }
+    } catch {
+      // Try the next URI candidate.
     }
-  } catch {
-    return { connected: false };
   }
+
+  return { connected: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -157,10 +172,19 @@ export async function isPortInUse(port: number): Promise<boolean> {
 
 /**
  * Get absolute path to docker-compose.mongodb.yml.
- * Resolves relative to the package root (../../docker/mongodb/...).
+ * Resolves from the detected package root so global npm installs work.
  */
 export function getComposeFilePath(): string {
-  // src/docker/mongodb-docker.ts -> ../../docker/mongodb/docker-compose.mongodb.yml
+  const packageRoot = resolveOpenClawPackageRootSync({
+    moduleUrl: import.meta.url,
+    argv1: process.argv[1],
+    cwd: process.cwd(),
+  });
+  if (packageRoot) {
+    return path.join(packageRoot, "docker", "mongodb", "docker-compose.mongodb.yml");
+  }
+
+  // Fallback for unusual execution contexts.
   return path.resolve(__dirname, "..", "..", "docker", "mongodb", "docker-compose.mongodb.yml");
 }
 
@@ -270,8 +294,10 @@ const TIER_CONTAINERS: Record<ComposeTier, string[]> = {
 };
 
 const TIER_URIS: Record<ComposeTier, string> = {
-  fullstack: "mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0",
-  replicaset: "mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0",
+  fullstack:
+    "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true",
+  replicaset:
+    "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true",
   standalone: "mongodb://localhost:27017/openclaw",
 };
 

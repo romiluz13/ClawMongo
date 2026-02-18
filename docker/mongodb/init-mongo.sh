@@ -28,7 +28,7 @@ echo "Creating mongotUser..."
 INIT_SCRIPT=$(mktemp /tmp/init-mongo-XXXXXX.js)
 cat > "$INIT_SCRIPT" << 'ENDOFSCRIPT'
 const adminDb = db.getSiblingDB('admin');
-const mongotPwd = _getEnv('MONGOT_PASSWORD');
+const mongotPwd = process.env.MONGOT_PASSWORD || 'mongotPassword';
 try {
   adminDb.createUser({
     user: 'mongotUser',
@@ -53,7 +53,7 @@ echo "Creating clawmongo admin user..."
 ADMIN_SCRIPT=$(mktemp /tmp/init-admin-XXXXXX.js)
 cat > "$ADMIN_SCRIPT" << 'ENDOFSCRIPT'
 const openclawDb = db.getSiblingDB('openclaw');
-const adminPwd = _getEnv('ADMIN_PASSWORD');
+const adminPwd = process.env.ADMIN_PASSWORD || 'admin';
 try {
   openclawDb.createUser({
     user: 'clawmongo',

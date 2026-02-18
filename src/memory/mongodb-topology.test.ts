@@ -161,11 +161,24 @@ describe("suggestConnectionString", () => {
       "mongodb://admin:admin@localhost:27017/?authSource=admin",
     );
     expect(suggestion).toContain("replicaSet=rs0");
+    expect(suggestion).toContain("directConnection=true");
   });
 
-  it("does not modify URI if replicaSet already present", async () => {
+  it("adds directConnection for local replica set URIs when missing", async () => {
     const { suggestConnectionString } = await import("./mongodb-topology.js");
     const uri = "mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0";
+    const suggestion = suggestConnectionString(
+      { isReplicaSet: true, hasMongot: true, serverVersion: "8.2.0", replicaSetName: "rs0" },
+      uri,
+    );
+    expect(suggestion).toContain("replicaSet=rs0");
+    expect(suggestion).toContain("directConnection=true");
+  });
+
+  it("keeps URI unchanged when replicaSet and directConnection already present", async () => {
+    const { suggestConnectionString } = await import("./mongodb-topology.js");
+    const uri =
+      "mongodb://admin:admin@localhost:27017/?authSource=admin&replicaSet=rs0&directConnection=true";
     const suggestion = suggestConnectionString(
       { isReplicaSet: true, hasMongot: true, serverVersion: "8.2.0", replicaSetName: "rs0" },
       uri,

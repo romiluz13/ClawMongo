@@ -1,5 +1,4 @@
 import type { ComposeTier } from "../docker/mongodb-docker.js";
-import type { WizardPrompter } from "./prompts.js";
 import {
   checkDockerEnvironment,
   detectExistingMongoDB,
@@ -9,6 +8,7 @@ import {
   isPortInUse,
 } from "../docker/mongodb-docker.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { WizardPrompter } from "./prompts.js";
 
 const log = createSubsystemLogger("wizard:mongo-auto");
 
@@ -103,6 +103,12 @@ export async function attemptAutoSetup(prompter: WizardPrompter): Promise<AutoSe
         source: "docker-existing",
       };
     }
+    return {
+      success: false,
+      reason:
+        "Found running ClawMongo containers, but could not connect automatically.\n" +
+        "If you changed credentials, enter the full MongoDB URI manually.",
+    };
   }
 
   // 4. Check port 27017 is free

@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/googlechat",
-  "version": "2.0.0-rc.9",
+  "version": "2.0.0-rc.10",
   "private": true,
   "description": "OpenClaw Google Chat channel plugin",
   "type": "module",

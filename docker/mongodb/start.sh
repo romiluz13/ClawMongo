@@ -41,7 +41,7 @@ case "${1:-fullstack}" in
     docker compose -f "$COMPOSE_FILE" --profile replicaset up -d
     echo ""
     echo -e "${GREEN}MongoDB replica set is starting on port ${MONGODB_PORT:-27017}${NC}"
-    echo "Connection string: mongodb://admin:${ADMIN_PASSWORD:-admin}@localhost:${MONGODB_PORT:-27017}/?authSource=admin&replicaSet=rs0"
+    echo "Connection string: mongodb://admin:${ADMIN_PASSWORD:-admin}@localhost:${MONGODB_PORT:-27017}/openclaw?authSource=admin&replicaSet=rs0&directConnection=true"
     echo ""
     echo "Features available:"
     echo "  - ACID transactions (withTransaction)"
@@ -61,7 +61,7 @@ case "${1:-fullstack}" in
     echo "  mongod: port ${MONGODB_PORT:-27017}"
     echo "  mongot: gRPC port ${MONGOT_GRPC_PORT:-27028}, health port ${MONGOT_HEALTH_PORT:-8080}"
     echo ""
-    echo "Connection string: mongodb://admin:${ADMIN_PASSWORD:-admin}@localhost:${MONGODB_PORT:-27017}/?authSource=admin&replicaSet=rs0"
+    echo "Connection string: mongodb://admin:${ADMIN_PASSWORD:-admin}@localhost:${MONGODB_PORT:-27017}/openclaw?authSource=admin&replicaSet=rs0&directConnection=true"
     echo ""
     echo "Features available:"
     echo "  - ACID transactions (withTransaction)"

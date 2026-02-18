@@ -4,10 +4,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockExecDocker = vi.hoisted(() => vi.fn());
 const mockExecDockerRaw = vi.hoisted(() => vi.fn());
 const mockDockerContainerState = vi.hoisted(() => vi.fn());
+const mockResolveOpenClawPackageRootSync = vi.hoisted(() => vi.fn());
 vi.mock("../agents/sandbox/docker.js", () => ({
   execDocker: mockExecDocker,
   execDockerRaw: mockExecDockerRaw,
   dockerContainerState: mockDockerContainerState,
+}));
+
+vi.mock("../infra/openclaw-root.js", () => ({
+  resolveOpenClawPackageRootSync: mockResolveOpenClawPackageRootSync,
 }));
 
 // Mock mongodb driver
@@ -23,8 +28,8 @@ const mockMongoClientDbFn = vi.hoisted(() =>
 
 vi.mock("mongodb", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock requires constructor pattern
-  const MockMongoClient: any = function (this: Record<string, unknown>) {
-    this.connect = mockMongoClientConnectFn;
+  const MockMongoClient: any = function (this: Record<string, unknown>, uri: string) {
+    this.connect = () => mockMongoClientConnectFn(uri);
     this.close = mockMongoClientCloseFn;
     this.db = mockMongoClientDbFn;
   };
@@ -117,6 +122,7 @@ describe("checkDockerEnvironment", () => {
 describe("detectExistingMongoDB", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveOpenClawPackageRootSync.mockReturnValue(null);
     mockMongoClientConnectFn.mockResolvedValue(undefined);
     mockMongoClientCloseFn.mockResolvedValue(undefined);
     mockDockerContainerState.mockResolvedValue({ exists: false, running: false });
@@ -134,6 +140,22 @@ describe("detectExistingMongoDB", () => {
     mockMongoClientConnectFn.mockRejectedValue(new Error("connection refused"));
     const result = await detectExistingMongoDB();
     expect(result.connected).toBe(false);
+  });
+
+  it("falls back to authenticated URI when unauthenticated URI fails", async () => {
+    const { detectExistingMongoDB } = await import("./mongodb-docker.js");
+    mockMongoClientConnectFn.mockImplementation(async (uri: string) => {
+      if (uri === "mongodb://localhost:27017/openclaw") {
+        throw new Error("authentication failed");
+      }
+      return undefined;
+    });
+
+    const result = await detectExistingMongoDB();
+    expect(result.connected).toBe(true);
+    expect(result.uri).toContain("authSource=admin");
+    expect(result.uri).toContain("replicaSet=rs0");
+    expect(result.uri).toContain("directConnection=true");
   });
 
   it("detects Docker container when clawmongo-mongod is running", async () => {
@@ -197,10 +219,22 @@ describe("isPortInUse", () => {
 // ---------------------------------------------------------------------------
 
 describe("getComposeFilePath", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveOpenClawPackageRootSync.mockReturnValue(null);
+  });
+
   it("resolves to docker/mongodb/docker-compose.mongodb.yml relative to package root", async () => {
     const { getComposeFilePath } = await import("./mongodb-docker.js");
     const filePath = getComposeFilePath();
     expect(filePath).toContain("docker/mongodb/docker-compose.mongodb.yml");
+  });
+
+  it("prefers resolved package root when available", async () => {
+    mockResolveOpenClawPackageRootSync.mockReturnValue("/tmp/clawmongo");
+    const { getComposeFilePath } = await import("./mongodb-docker.js");
+    const filePath = getComposeFilePath();
+    expect(filePath).toBe("/tmp/clawmongo/docker/mongodb/docker-compose.mongodb.yml");
   });
 });
 

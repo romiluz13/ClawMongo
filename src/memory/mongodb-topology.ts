@@ -12,6 +12,10 @@ export type MongoTopology = {
 
 export type DeploymentTier = "standalone" | "replicaset" | "fullstack";
 
+function isLocalConnectionHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
 /**
  * Detect the MongoDB deployment topology by probing the server.
  * Safe to call on any MongoDB version/edition - all probes use try/catch.
@@ -82,11 +86,22 @@ export function suggestConnectionString(topology: MongoTopology, currentUri: str
     return currentUri;
   }
 
-  // Check if replicaSet is already in the URI
   try {
     const url = new URL(currentUri);
+    let changed = false;
+
     if (!url.searchParams.has("replicaSet") && topology.replicaSetName) {
       url.searchParams.set("replicaSet", topology.replicaSetName);
+      changed = true;
+    }
+
+    // Local Docker replica set hostnames are not resolvable from host DNS.
+    if (isLocalConnectionHost(url.hostname) && !url.searchParams.has("directConnection")) {
+      url.searchParams.set("directConnection", "true");
+      changed = true;
+    }
+
+    if (changed) {
       return url.toString();
     }
   } catch {
