@@ -3,9 +3,14 @@ import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { retryEmbedding, type EmbeddingStatus } from "./mongodb-embedding-retry.js";
+import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection } from "./mongodb-schema.js";
-import { buildVectorSearchStage, MONGODB_MAX_NUM_CANDIDATES } from "./mongodb-search.js";
+import {
+  buildVectorSearchStage,
+  MONGODB_MAX_NUM_CANDIDATES,
+  type SearchExplainOptions,
+} from "./mongodb-search.js";
 import type { MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:structured");
@@ -146,6 +151,7 @@ export async function searchStructuredMemory(
     vectorIndexName: string;
     embeddingMode: MemoryMongoDBEmbeddingMode;
     numCandidates?: number;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const minScore = opts.minScore ?? 0.1;
@@ -202,6 +208,22 @@ export async function searchStructuredMemory(
           },
         ];
 
+        if (opts.explain?.enabled) {
+          try {
+            const cursor = collection.aggregate(pipeline) as unknown as {
+              explain?: (verbosity?: string) => Promise<unknown>;
+            };
+            if (typeof cursor.explain === "function") {
+              const explained = await cursor.explain("executionStats");
+              opts.explain.onArtifact?.({
+                artifactType: "vectorExplain",
+                summary: { source: "structured", ...summarizeExplain(explained) },
+                ...(opts.explain.deep ? { rawExplain: explained } : {}),
+              });
+            }
+          } catch {}
+        }
+
         const docs = await collection.aggregate(pipeline).toArray();
         const results = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
         if (results.length > 0) {
@@ -246,6 +268,12 @@ export async function searchStructuredMemory(
         { $limit: opts.maxResults },
       ])
       .toArray();
+    if (opts.explain?.enabled) {
+      opts.explain.onArtifact?.({
+        artifactType: "searchExplain",
+        summary: { source: "structured", method: "$text" },
+      });
+    }
     return docs.map(toStructuredResult).filter((r) => r.score >= minScore);
   } catch {
     log.warn("structured memory $text search fallback failed; returning empty results");

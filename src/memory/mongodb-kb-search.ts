@@ -1,8 +1,13 @@
 import type { Collection, Document } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
-import { buildVectorSearchStage, MONGODB_MAX_NUM_CANDIDATES } from "./mongodb-search.js";
+import {
+  buildVectorSearchStage,
+  MONGODB_MAX_NUM_CANDIDATES,
+  type SearchExplainOptions,
+} from "./mongodb-search.js";
 import type { MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:kb-search");
@@ -96,6 +101,7 @@ export async function searchKB(
     capabilities: DetectedCapabilities;
     embeddingMode: MemoryMongoDBEmbeddingMode;
     numCandidates?: number;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const canVector =
@@ -167,6 +173,22 @@ export async function searchKB(
           },
         ];
 
+        if (opts.explain?.enabled) {
+          try {
+            const cursor = kbChunks.aggregate(pipeline) as unknown as {
+              explain?: (verbosity?: string) => Promise<unknown>;
+            };
+            if (typeof cursor.explain === "function") {
+              const explained = await cursor.explain("executionStats");
+              opts.explain.onArtifact?.({
+                artifactType: "fusionExplain",
+                summary: { source: "kb", method: "rankFusion", ...summarizeExplain(explained) },
+                ...(opts.explain.deep ? { rawExplain: explained } : {}),
+              });
+            }
+          } catch {}
+        }
+
         const docs = await kbChunks.aggregate(pipeline).toArray();
         const results = docs.map(toKBSearchResult).filter((r) => r.score >= opts.minScore);
         if (results.length > 0) {
@@ -209,6 +231,22 @@ export async function searchKB(
           },
         ];
 
+        if (opts.explain?.enabled) {
+          try {
+            const cursor = kbChunks.aggregate(pipeline) as unknown as {
+              explain?: (verbosity?: string) => Promise<unknown>;
+            };
+            if (typeof cursor.explain === "function") {
+              const explained = await cursor.explain("executionStats");
+              opts.explain.onArtifact?.({
+                artifactType: "vectorExplain",
+                summary: { source: "kb", ...summarizeExplain(explained) },
+                ...(opts.explain.deep ? { rawExplain: explained } : {}),
+              });
+            }
+          } catch {}
+        }
+
         const docs = await kbChunks.aggregate(pipeline).toArray();
         const results = docs.map(toKBSearchResult).filter((r) => r.score >= opts.minScore);
         if (results.length > 0) {
@@ -231,6 +269,7 @@ export async function searchKB(
             compound: {
               must: [{ text: { query, path: "text" } }],
             },
+            ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
           },
         },
         ...(chunkFilter ? [{ $match: chunkFilter }] : []),
@@ -244,11 +283,40 @@ export async function searchKB(
             text: 1,
             docId: 1,
             score: { $meta: "searchScore" },
+            ...(opts.explain?.includeScoreDetails
+              ? { scoreDetails: { $meta: "searchScoreDetails" } }
+              : {}),
           },
         },
       ];
 
+      if (opts.explain?.enabled) {
+        try {
+          const cursor = kbChunks.aggregate(pipeline) as unknown as {
+            explain?: (verbosity?: string) => Promise<unknown>;
+          };
+          if (typeof cursor.explain === "function") {
+            const explained = await cursor.explain("executionStats");
+            opts.explain.onArtifact?.({
+              artifactType: "searchExplain",
+              summary: { source: "kb", ...summarizeExplain(explained) },
+              ...(opts.explain.deep ? { rawExplain: explained } : {}),
+            });
+          }
+        } catch {}
+      }
+
       const docs = await kbChunks.aggregate(pipeline).toArray();
+      if (opts.explain?.enabled && opts.explain.includeScoreDetails) {
+        const scoreDetailSample = docs.find((doc) => doc.scoreDetails != null)?.scoreDetails;
+        if (scoreDetailSample) {
+          opts.explain.onArtifact?.({
+            artifactType: "scoreDetails",
+            summary: { source: "kb", available: true },
+            ...(opts.explain.deep ? { rawExplain: scoreDetailSample } : {}),
+          });
+        }
+      }
       return docs
         .map(toKBSearchResult)
         .filter((r) => r.score >= opts.minScore)

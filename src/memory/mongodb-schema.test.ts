@@ -14,6 +14,9 @@ import {
   kbCollection,
   kbChunksCollection,
   structuredMemCollection,
+  relevanceRunsCollection,
+  relevanceArtifactsCollection,
+  relevanceRegressionsCollection,
 } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -101,6 +104,24 @@ describe("collection helpers", () => {
     structuredMemCollection(db, "oc_");
     expect(db.collection).toHaveBeenCalledWith("oc_structured_mem");
   });
+
+  it("relevanceRunsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    relevanceRunsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_relevance_runs");
+  });
+
+  it("relevanceArtifactsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    relevanceArtifactsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_relevance_artifacts");
+  });
+
+  it("relevanceRegressionsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    relevanceRegressionsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_relevance_regressions");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -160,10 +181,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 7 collections when none exist", async () => {
+  it("creates all 10 collections when none exist", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(7);
+    expect(db.createCollection).toHaveBeenCalledTimes(10);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -185,12 +206,24 @@ describe("ensureCollections", () => {
       "test_structured_mem",
       expect.objectContaining({ validationAction: "error" }),
     );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_runs",
+      expect.objectContaining({ validationAction: "error" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_artifacts",
+      expect.objectContaining({ validationAction: "error" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_regressions",
+      expect.objectContaining({ validationAction: "error" }),
+    );
   });
 
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(5);
+    expect(db.createCollection).toHaveBeenCalledTimes(8);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -199,6 +232,18 @@ describe("ensureCollections", () => {
     );
     expect(db.createCollection).toHaveBeenCalledWith(
       "test_kb_chunks",
+      expect.objectContaining({ validationAction: "error" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_runs",
+      expect.objectContaining({ validationAction: "error" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_artifacts",
+      expect.objectContaining({ validationAction: "error" }),
+    );
+    expect(db.createCollection).toHaveBeenCalledWith(
+      "test_relevance_regressions",
       expect.objectContaining({ validationAction: "error" }),
     );
     // Note: test_chunks is already existing in this test case
@@ -213,6 +258,9 @@ describe("ensureCollections", () => {
       "oc_knowledge_base",
       "oc_kb_chunks",
       "oc_structured_mem",
+      "oc_relevance_runs",
+      "oc_relevance_artifacts",
+      "oc_relevance_regressions",
     ]);
     await ensureCollections(db, "oc_");
     expect(db.createCollection).not.toHaveBeenCalled();
@@ -243,14 +291,27 @@ describe("ensureStandardIndexes", () => {
     const structured = db.collection("test_structured_mem") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
+    const relevanceRuns = db.collection("test_relevance_runs") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const relevanceArtifacts = db.collection("test_relevance_artifacts") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const relevanceRegressions = db.collection("test_relevance_regressions") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
 
-    // 4 chunk (F17: removed idx_chunks_source) + 2 cache + 5 KB (F10: +source_path) + 3 KB chunks + 5 structured = 19
-    expect(count).toBe(19);
+    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 5 structured + 3 relevance_runs +
+    // 2 relevance_artifacts + 2 relevance_regressions = 26
+    expect(count).toBe(26);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
     expect(kbChunks.createIndex).toHaveBeenCalledTimes(3);
     expect(structured.createIndex).toHaveBeenCalledTimes(5);
+    expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
+    expect(relevanceArtifacts.createIndex).toHaveBeenCalledTimes(2);
+    expect(relevanceRegressions.createIndex).toHaveBeenCalledTimes(2);
   });
 
   it("creates $text index on text field for community-bare fallback", async () => {
@@ -386,11 +447,37 @@ describe("ensureStandardIndexes", () => {
     expect(cache.dropIndex).toHaveBeenCalledWith("idx_cache_ttl");
   });
 
-  it("index count reduced by 1 after F17 idx_chunks_source removal, +1 for F10 source_path", async () => {
+  it("index count includes relevance telemetry indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // F17: removed idx_chunks_source (-1), F10: added idx_kb_source_path (+1) = net 0 from 19
-    expect(count).toBe(19);
+    expect(count).toBe(26);
+  });
+
+  it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_", { relevanceRetentionDays: 14 });
+
+    const relevanceRuns = db.collection("test_relevance_runs") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const relevanceArtifacts = db.collection("test_relevance_artifacts") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+
+    const relRunsTtl = relevanceRuns.createIndex.mock.calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_relruns_ttl",
+    );
+    const relArtifactsTtl = relevanceArtifacts.createIndex.mock.calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_relart_ttl",
+    );
+    expect(relRunsTtl).toBeDefined();
+    expect(relArtifactsTtl).toBeDefined();
   });
 
   it("creates unique composite index on embedding_cache", async () => {

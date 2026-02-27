@@ -62,6 +62,40 @@ export type MemoryMongoDBConfig = {
     /** Hours between automatic re-import of autoImportPaths. Default: 24. Set 0 to disable. */
     autoRefreshHours?: number;
   };
+  /** Explain-driven relevance settings */
+  relevance?: {
+    /** Master switch for relevance diagnostics + telemetry. Default: true */
+    enabled?: boolean;
+    telemetry?: {
+      /** Enable always-on sampling telemetry. Default: true */
+      enabled?: boolean;
+      /** Base sampling rate for explain telemetry. Default: 0.01 */
+      baseSampleRate?: number;
+      /** Adaptive controller settings. */
+      adaptive?: {
+        /** Enable adaptive escalation. Default: true */
+        enabled?: boolean;
+        /** Max sampling rate during degradation. Default: 0.10 */
+        maxSampleRate?: number;
+        /** Minimum recent sample count to evaluate degradation. Default: 200 */
+        minWindowSize?: number;
+      };
+      /** Persist raw explain payloads. Default: true */
+      persistRawExplain?: boolean;
+      /** Query privacy mode. Default: "redacted-hash" */
+      queryPrivacyMode?: "redacted-hash" | "raw" | "none";
+    };
+    retention?: {
+      /** TTL in days for relevance runs/artifacts. Default: 14 */
+      days?: number;
+    };
+    benchmark?: {
+      /** Enable benchmark commands and regression persistence. Default: true */
+      enabled?: boolean;
+      /** Dataset path for relevance benchmark. Default: ~/.openclaw/relevance/golden.jsonl */
+      datasetPath?: string;
+    };
+  };
 };
 export type MemoryCitationsMode = "auto" | "on" | "off";
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";

@@ -30,6 +30,74 @@ type MemoryCommandOptions = {
 
 type MemoryManager = NonNullable<MemorySearchManagerResult["manager"]>;
 
+type RelevanceSourceScope = "all" | "memory" | "kb" | "structured";
+
+type RelevanceCapableManager = MemoryManager & {
+  relevanceExplain: (params: {
+    query: string;
+    sourceScope?: RelevanceSourceScope;
+    sessionKey?: string;
+    maxResults?: number;
+    minScore?: number;
+    deep?: boolean;
+  }) => Promise<{
+    runId?: string;
+    latencyMs: number;
+    sourceScope: RelevanceSourceScope;
+    health: "ok" | "degraded" | "insufficient-data";
+    fallbackPath?: string;
+    sampleRate: number;
+    artifacts: Array<{
+      artifactType: "searchExplain" | "vectorExplain" | "fusionExplain" | "scoreDetails" | "trace";
+      summary: Record<string, unknown>;
+      rawExplain?: unknown;
+      compression?: "none";
+    }>;
+    results: Awaited<ReturnType<MemoryManager["search"]>>;
+  }>;
+  relevanceBenchmark: (params?: {
+    datasetPath?: string;
+    maxResults?: number;
+    minScore?: number;
+  }) => Promise<{
+    datasetVersion: string;
+    cases: number;
+    hitRate: number;
+    emptyRate: number;
+    avgTopScore: number;
+    p95LatencyMs: number;
+    regressions: Array<{
+      metricName: string;
+      baseline: number;
+      current: number;
+      delta: number;
+      severity: "low" | "medium" | "high";
+    }>;
+  }>;
+  relevanceReport: (params?: { windowMs?: number }) => Promise<{
+    health: "ok" | "degraded" | "insufficient-data";
+    runs: number;
+    sampledRuns: number;
+    emptyRate: number;
+    avgTopScore: number;
+    fallbackRate: number;
+    lastRegressionAt?: string;
+    profileCapabilities: {
+      textExplain: boolean;
+      vectorExplain: boolean;
+      fusionExplain: boolean;
+    };
+  }>;
+  relevanceSampleRate: () => {
+    enabled: boolean;
+    current: number;
+    base: number;
+    max: number;
+    windowSize: number;
+    degradedSignals: number;
+  };
+};
+
 type MemorySourceName = "memory" | "sessions";
 
 type SourceScan = {
@@ -81,6 +149,15 @@ function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): st
 
 function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] {
   return normalizeExtraMemoryPaths(workspaceDir, extraPaths).map((entry) => shortenHomePath(entry));
+}
+
+function hasRelevanceCapability(manager: MemoryManager): manager is RelevanceCapableManager {
+  return (
+    typeof (manager as Partial<RelevanceCapableManager>).relevanceExplain === "function" &&
+    typeof (manager as Partial<RelevanceCapableManager>).relevanceBenchmark === "function" &&
+    typeof (manager as Partial<RelevanceCapableManager>).relevanceReport === "function" &&
+    typeof (manager as Partial<RelevanceCapableManager>).relevanceSampleRate === "function"
+  );
 }
 
 async function checkReadableFile(pathname: string): Promise<{ exists: boolean; issue?: string }> {
@@ -429,6 +506,50 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         lines.push(`  ${accent(entry.source)} ${muted("·")} ${muted(counts)}`);
       }
     }
+    const relevance =
+      status.custom &&
+      typeof status.custom === "object" &&
+      "relevance" in status.custom &&
+      status.custom.relevance &&
+      typeof status.custom.relevance === "object"
+        ? (status.custom.relevance as {
+            enabled?: boolean;
+            telemetry?: { state?: string };
+            sampleRate?: { current?: number };
+            health?: string;
+            lastRegressionAt?: string;
+            profileCapabilities?: {
+              textExplain?: boolean;
+              vectorExplain?: boolean;
+              fusionExplain?: boolean;
+            };
+          })
+        : null;
+    if (relevance) {
+      lines.push(label("Relevance"));
+      lines.push(`  ${label("enabled")} ${relevance.enabled ? success("yes") : muted("no")}`);
+      lines.push(`  ${label("telemetry")} ${info(relevance.telemetry?.state ?? "unknown")}`);
+      lines.push(
+        `  ${label("sample rate")} ${info(
+          typeof relevance.sampleRate?.current === "number"
+            ? relevance.sampleRate.current.toFixed(4)
+            : "n/a",
+        )}`,
+      );
+      lines.push(`  ${label("health")} ${info(relevance.health ?? "unknown")}`);
+      if (relevance.lastRegressionAt) {
+        lines.push(`  ${label("last regression")} ${info(relevance.lastRegressionAt)}`);
+      }
+      if (relevance.profileCapabilities) {
+        lines.push(
+          `  ${label("capabilities")} ${info(
+            `textExplain=${Boolean(relevance.profileCapabilities.textExplain)} ` +
+              `vectorExplain=${Boolean(relevance.profileCapabilities.vectorExplain)} ` +
+              `fusionExplain=${Boolean(relevance.profileCapabilities.fusionExplain)}`,
+          )}`,
+        );
+      }
+    }
     if (status.fallback) {
       lines.push(`${label("Fallback")} ${warn(status.fallback.from)}`);
     }
@@ -709,6 +830,225 @@ async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
   }
 }
 
+function parseWindowMs(raw?: string): number {
+  const value = raw?.trim();
+  if (!value) {
+    return 24 * 60 * 60 * 1000;
+  }
+  if (value === "24h") {
+    return 24 * 60 * 60 * 1000;
+  }
+  if (value === "7d") {
+    return 7 * 24 * 60 * 60 * 1000;
+  }
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) {
+    return 24 * 60 * 60 * 1000;
+  }
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return 24 * 60 * 60 * 1000;
+  }
+  if (unit === "s") {
+    return amount * 1000;
+  }
+  if (unit === "m") {
+    return amount * 60 * 1000;
+  }
+  if (unit === "h") {
+    return amount * 60 * 60 * 1000;
+  }
+  return amount * 24 * 60 * 60 * 1000;
+}
+
+async function runRelevanceExplain(
+  query: string,
+  opts: MemoryCommandOptions & {
+    source?: RelevanceSourceScope;
+    sessionKey?: string;
+    maxResults?: number;
+    minScore?: number;
+    deep?: boolean;
+  },
+): Promise<void> {
+  const cfg = loadConfig();
+  const agentId = resolveAgent(cfg, opts.agent);
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager({ cfg, agentId, purpose: "default" }),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: async (manager) => {
+      if (!hasRelevanceCapability(manager)) {
+        defaultRuntime.error("Relevance diagnostics are available only on MongoDB backend.");
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const result = await manager.relevanceExplain({
+          query,
+          sourceScope: opts.source ?? "all",
+          sessionKey: opts.sessionKey,
+          maxResults: opts.maxResults,
+          minScore: opts.minScore,
+          deep: Boolean(opts.deep),
+        });
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        defaultRuntime.log(`Relevance explain (${agentId})`);
+        defaultRuntime.log(`  runId: ${result.runId ?? "n/a"}`);
+        defaultRuntime.log(`  source: ${result.sourceScope}`);
+        defaultRuntime.log(`  health: ${result.health}`);
+        defaultRuntime.log(`  sampleRate: ${result.sampleRate.toFixed(4)}`);
+        defaultRuntime.log(`  latencyMs: ${result.latencyMs}`);
+        if (result.fallbackPath) {
+          defaultRuntime.log(`  fallbackPath: ${result.fallbackPath}`);
+        }
+        defaultRuntime.log(`  artifacts: ${result.artifacts.length}`);
+        defaultRuntime.log(`  results: ${result.results.length}`);
+      } catch (err) {
+        defaultRuntime.error(`Relevance explain failed: ${formatErrorMessage(err)}`);
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
+async function runRelevanceBenchmark(
+  opts: MemoryCommandOptions & { dataset?: string; maxResults?: number; minScore?: number },
+): Promise<void> {
+  const cfg = loadConfig();
+  const agentId = resolveAgent(cfg, opts.agent);
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager({ cfg, agentId, purpose: "default" }),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: async (manager) => {
+      if (!hasRelevanceCapability(manager)) {
+        defaultRuntime.error("Relevance benchmark is available only on MongoDB backend.");
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const result = await manager.relevanceBenchmark({
+          datasetPath: opts.dataset,
+          maxResults: opts.maxResults,
+          minScore: opts.minScore,
+        });
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        defaultRuntime.log(`Relevance benchmark (${agentId})`);
+        defaultRuntime.log(`  datasetVersion: ${result.datasetVersion}`);
+        defaultRuntime.log(`  cases: ${result.cases}`);
+        defaultRuntime.log(`  hitRate: ${(result.hitRate * 100).toFixed(2)}%`);
+        defaultRuntime.log(`  emptyRate: ${(result.emptyRate * 100).toFixed(2)}%`);
+        defaultRuntime.log(`  avgTopScore: ${result.avgTopScore.toFixed(4)}`);
+        defaultRuntime.log(`  p95LatencyMs: ${result.p95LatencyMs.toFixed(2)}`);
+        if (result.regressions.length > 0) {
+          defaultRuntime.log("  regressions:");
+          for (const regression of result.regressions) {
+            defaultRuntime.log(
+              `    - ${regression.metricName}: baseline=${regression.baseline.toFixed(4)} current=${regression.current.toFixed(4)} delta=${regression.delta.toFixed(4)} severity=${regression.severity}`,
+            );
+          }
+        }
+      } catch (err) {
+        defaultRuntime.error(`Relevance benchmark failed: ${formatErrorMessage(err)}`);
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
+async function runRelevanceReport(opts: MemoryCommandOptions & { window?: string }): Promise<void> {
+  const cfg = loadConfig();
+  const agentId = resolveAgent(cfg, opts.agent);
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager({ cfg, agentId, purpose: "default" }),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: async (manager) => {
+      if (!hasRelevanceCapability(manager)) {
+        defaultRuntime.error("Relevance report is available only on MongoDB backend.");
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        const report = await manager.relevanceReport({ windowMs: parseWindowMs(opts.window) });
+        if (opts.json) {
+          defaultRuntime.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        defaultRuntime.log(`Relevance report (${agentId})`);
+        defaultRuntime.log(`  health: ${report.health}`);
+        defaultRuntime.log(`  runs: ${report.runs}`);
+        defaultRuntime.log(`  sampledRuns: ${report.sampledRuns}`);
+        defaultRuntime.log(`  emptyRate: ${(report.emptyRate * 100).toFixed(2)}%`);
+        defaultRuntime.log(`  avgTopScore: ${report.avgTopScore.toFixed(4)}`);
+        defaultRuntime.log(`  fallbackRate: ${(report.fallbackRate * 100).toFixed(2)}%`);
+        if (report.lastRegressionAt) {
+          defaultRuntime.log(`  lastRegressionAt: ${report.lastRegressionAt}`);
+        }
+        defaultRuntime.log(
+          `  capabilities: textExplain=${report.profileCapabilities.textExplain} vectorExplain=${report.profileCapabilities.vectorExplain} fusionExplain=${report.profileCapabilities.fusionExplain}`,
+        );
+      } catch (err) {
+        defaultRuntime.error(`Relevance report failed: ${formatErrorMessage(err)}`);
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
+async function runRelevanceSampleRate(opts: MemoryCommandOptions): Promise<void> {
+  const cfg = loadConfig();
+  const agentId = resolveAgent(cfg, opts.agent);
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager({ cfg, agentId, purpose: "default" }),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: async (manager) => {
+      if (!hasRelevanceCapability(manager)) {
+        defaultRuntime.error("Relevance sample-rate is available only on MongoDB backend.");
+        process.exitCode = 1;
+        return;
+      }
+      const state = manager.relevanceSampleRate();
+      if (opts.json) {
+        defaultRuntime.log(JSON.stringify(state, null, 2));
+        return;
+      }
+      defaultRuntime.log(`Relevance sample rate (${agentId})`);
+      defaultRuntime.log(`  enabled: ${state.enabled}`);
+      defaultRuntime.log(`  current: ${state.current.toFixed(4)}`);
+      defaultRuntime.log(`  base: ${state.base.toFixed(4)}`);
+      defaultRuntime.log(`  max: ${state.max.toFixed(4)}`);
+      defaultRuntime.log(`  windowSize: ${state.windowSize}`);
+      defaultRuntime.log(`  degradedSignals: ${state.degradedSignals}`);
+    },
+  });
+}
+
 export function registerMemoryCli(program: Command) {
   const memory = program
     .command("memory")
@@ -720,10 +1060,14 @@ export function registerMemoryCli(program: Command) {
           ["openclaw memory status", "Show index and provider status."],
           ["openclaw memory index --force", "Force a full reindex."],
           [
+            'openclaw memory relevance explain --query "deployment notes" --deep',
+            "Run explain-driven relevance diagnostics for one query.",
+          ],
+          [
             "openclaw memory smoke",
             "Run MongoDB memory smoke checks (sync + write/read + retrieval).",
           ],
-          ['openclaw memory search --query "deployment notes"', "Search indexed memory entries."],
+          ['openclaw memory search "deployment notes"', "Search indexed memory entries."],
           ["openclaw memory status --json", "Output machine-readable JSON."],
         ])}\n\n${theme.muted("Docs:")} ${formatDocsLink("/cli/memory", "docs.openclaw.ai/cli/memory")}\n`,
     );
@@ -947,6 +1291,86 @@ export function registerMemoryCli(program: Command) {
         });
       },
     );
+
+  const relevance = memory
+    .command("relevance")
+    .description("Explain-driven relevance diagnostics and telemetry");
+
+  relevance
+    .command("explain")
+    .description("Run explain diagnostics for a single query")
+    .requiredOption("--query <text>", "Query text")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--source <scope>", "Scope: all|memory|kb|structured", "all")
+    .option("--session-key <key>", "Session key override")
+    .option("--max-results <n>", "Max results", (value: string) => Number(value))
+    .option("--min-score <n>", "Minimum score", (value: string) => Number(value))
+    .option("--deep", "Include raw explain artifacts")
+    .option("--json", "Print JSON")
+    .action(
+      async (
+        opts: MemoryCommandOptions & {
+          query: string;
+          source?: string;
+          sessionKey?: string;
+          maxResults?: number;
+          minScore?: number;
+          deep?: boolean;
+        },
+      ) => {
+        const sourceScope = (opts.source ?? "all").trim() as RelevanceSourceScope;
+        if (!["all", "memory", "kb", "structured"].includes(sourceScope)) {
+          defaultRuntime.error(
+            `Invalid --source value "${opts.source}". Expected one of: all, memory, kb, structured.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        await runRelevanceExplain(opts.query, {
+          ...opts,
+          source: sourceScope,
+        });
+      },
+    );
+
+  relevance
+    .command("benchmark")
+    .description("Run relevance benchmark dataset and persist regressions")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--dataset <path>", "Dataset JSONL path")
+    .option("--max-results <n>", "Max results", (value: string) => Number(value))
+    .option("--min-score <n>", "Minimum score", (value: string) => Number(value))
+    .option("--json", "Print JSON")
+    .action(
+      async (
+        opts: MemoryCommandOptions & {
+          dataset?: string;
+          maxResults?: number;
+          minScore?: number;
+        },
+      ) => {
+        await runRelevanceBenchmark(opts);
+      },
+    );
+
+  relevance
+    .command("report")
+    .description("Show relevance telemetry report for a time window")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--window <range>", "Window: 24h|7d|<number><s|m|h|d>", "24h")
+    .option("--json", "Print JSON")
+    .action(async (opts: MemoryCommandOptions & { window?: string }) => {
+      await runRelevanceReport(opts);
+    });
+
+  relevance
+    .command("sample-rate")
+    .description("Print current adaptive relevance telemetry sample rate")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--json", "Print JSON")
+    .action(async (opts: MemoryCommandOptions) => {
+      await runRelevanceSampleRate(opts);
+    });
 
   memory
     .command("smoke")

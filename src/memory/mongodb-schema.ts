@@ -61,6 +61,18 @@ export function structuredMemCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "structured_mem");
 }
 
+export function relevanceRunsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "relevance_runs");
+}
+
+export function relevanceArtifactsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "relevance_artifacts");
+}
+
+export function relevanceRegressionsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "relevance_regressions");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -153,11 +165,75 @@ const CHUNKS_SCHEMA: Document = {
   },
 };
 
+const RELEVANCE_RUNS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["runId", "agentId", "ts", "sourceScope", "latencyMs", "status"],
+    properties: {
+      runId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      ts: { bsonType: "date" },
+      queryHash: { bsonType: "string" },
+      queryRedacted: { bsonType: "string" },
+      sourceScope: { enum: ["all", "memory", "kb", "structured"] },
+      profile: { bsonType: "string" },
+      capabilities: { bsonType: "object" },
+      latencyMs: { bsonType: "number" },
+      topK: { bsonType: "number" },
+      hitSources: { bsonType: "array", items: { bsonType: "string" } },
+      fallbackPath: { bsonType: "string" },
+      status: { enum: ["ok", "degraded", "insufficient-data"] },
+      sampleRate: { bsonType: "double" },
+      sampled: { bsonType: "bool" },
+    },
+  },
+};
+
+const RELEVANCE_ARTIFACTS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["runId", "artifactType", "summary", "ts"],
+    properties: {
+      runId: { bsonType: "string" },
+      artifactType: {
+        enum: ["searchExplain", "vectorExplain", "fusionExplain", "scoreDetails", "trace"],
+      },
+      summary: { bsonType: "object" },
+      rawExplain: {},
+      rawSizeBytes: { bsonType: "number" },
+      compression: { bsonType: "string" },
+      ts: { bsonType: "date" },
+    },
+  },
+};
+
+const RELEVANCE_REGRESSIONS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["regressionId", "agentId", "ts", "metricName", "current", "severity"],
+    properties: {
+      regressionId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      ts: { bsonType: "date" },
+      datasetVersion: { bsonType: "string" },
+      metricName: { bsonType: "string" },
+      baseline: { bsonType: "double" },
+      current: { bsonType: "double" },
+      delta: { bsonType: "double" },
+      severity: { enum: ["low", "medium", "high"] },
+      failingCases: { bsonType: "array", items: { bsonType: "object" } },
+    },
+  },
+};
+
 const VALIDATED_COLLECTIONS: Record<string, Document> = {
   chunks: CHUNKS_SCHEMA,
   knowledge_base: KB_SCHEMA,
   kb_chunks: KB_CHUNKS_SCHEMA,
   structured_mem: STRUCTURED_MEM_SCHEMA,
+  relevance_runs: RELEVANCE_RUNS_SCHEMA,
+  relevance_artifacts: RELEVANCE_ARTIFACTS_SCHEMA,
+  relevance_regressions: RELEVANCE_REGRESSIONS_SCHEMA,
 };
 
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
@@ -175,6 +251,9 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "knowledge_base",
     "kb_chunks",
     "structured_mem",
+    "relevance_runs",
+    "relevance_artifacts",
+    "relevance_regressions",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -229,7 +308,11 @@ export async function ensureSchemaValidation(db: Db, prefix: string): Promise<vo
 export async function ensureStandardIndexes(
   db: Db,
   prefix: string,
-  ttlOpts?: { embeddingCacheTtlDays?: number; memoryTtlDays?: number },
+  ttlOpts?: {
+    embeddingCacheTtlDays?: number;
+    memoryTtlDays?: number;
+    relevanceRetentionDays?: number;
+  },
 ): Promise<number> {
   let applied = 0;
 
@@ -357,6 +440,78 @@ export async function ensureStandardIndexes(
   applied++;
   // $text index on structured_mem for text search fallback
   await structured.createIndex({ value: "text", context: "text" }, { name: "idx_structured_text" });
+  applied++;
+
+  // Explain-driven relevance telemetry indexes
+  const relevanceRuns = relevanceRunsCollection(db, prefix);
+  await relevanceRuns.createIndex({ agentId: 1, ts: -1 }, { name: "idx_relruns_agent_ts" });
+  applied++;
+  await relevanceRuns.createIndex({ queryHash: 1, ts: -1 }, { name: "idx_relruns_query_ts" });
+  applied++;
+  if (ttlOpts?.relevanceRetentionDays && ttlOpts.relevanceRetentionDays > 0) {
+    try {
+      await relevanceRuns.dropIndex("idx_relruns_ts");
+    } catch {
+      // Index may not exist — safe to ignore
+    }
+    await relevanceRuns.createIndex(
+      { ts: 1 },
+      {
+        name: "idx_relruns_ttl",
+        expireAfterSeconds: ttlOpts.relevanceRetentionDays * 24 * 60 * 60,
+      },
+    );
+    applied++;
+  } else {
+    try {
+      await relevanceRuns.dropIndex("idx_relruns_ttl");
+    } catch {
+      // Index may not exist — safe to ignore
+    }
+    await relevanceRuns.createIndex({ ts: 1 }, { name: "idx_relruns_ts" });
+    applied++;
+  }
+
+  const relevanceArtifacts = relevanceArtifactsCollection(db, prefix);
+  await relevanceArtifacts.createIndex(
+    { runId: 1, artifactType: 1 },
+    { name: "idx_relart_run_type" },
+  );
+  applied++;
+  if (ttlOpts?.relevanceRetentionDays && ttlOpts.relevanceRetentionDays > 0) {
+    try {
+      await relevanceArtifacts.dropIndex("idx_relart_ts");
+    } catch {
+      // Index may not exist — safe to ignore
+    }
+    await relevanceArtifacts.createIndex(
+      { ts: 1 },
+      {
+        name: "idx_relart_ttl",
+        expireAfterSeconds: ttlOpts.relevanceRetentionDays * 24 * 60 * 60,
+      },
+    );
+    applied++;
+  } else {
+    try {
+      await relevanceArtifacts.dropIndex("idx_relart_ttl");
+    } catch {
+      // Index may not exist — safe to ignore
+    }
+    await relevanceArtifacts.createIndex({ ts: 1 }, { name: "idx_relart_ts" });
+    applied++;
+  }
+
+  const relevanceRegressions = relevanceRegressionsCollection(db, prefix);
+  await relevanceRegressions.createIndex(
+    { agentId: 1, ts: -1, severity: 1 },
+    { name: "idx_relreg_agent_ts_severity" },
+  );
+  applied++;
+  await relevanceRegressions.createIndex(
+    { datasetVersion: 1, metricName: 1, ts: -1 },
+    { name: "idx_relreg_dataset_metric_ts" },
+  );
   applied++;
 
   log.info(`ensured ${applied} standard indexes`);

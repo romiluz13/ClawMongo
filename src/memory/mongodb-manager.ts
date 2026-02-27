@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
@@ -12,6 +13,15 @@ import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
+import {
+  MongoDBRelevanceRuntime,
+  type RelevanceArtifact,
+  type RelevanceBenchmarkResult,
+  type RelevanceHealth,
+  type RelevanceReport,
+  type RelevanceSampleState,
+  type RelevanceSourceScope,
+} from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
   kbCollection,
@@ -27,6 +37,11 @@ import {
   structuredMemCollection,
 } from "./mongodb-schema.js";
 import { mongoSearch } from "./mongodb-search.js";
+import type {
+  SearchExplainOptions,
+  SearchExplainTraceArtifact,
+  SearchTraceEvent,
+} from "./mongodb-search.js";
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
@@ -72,6 +87,13 @@ export function hasWriteCapability(manager: MemorySearchManager): manager is Mon
   return "writeStructuredMemory" in manager;
 }
 
+/** Type guard: checks if a MemorySearchManager supports relevance diagnostics. */
+export function hasRelevanceCapability(
+  manager: MemorySearchManager,
+): manager is MongoDBMemoryManager {
+  return "relevanceExplain" in manager;
+}
+
 /** Redact credentials from a MongoDB connection string for safe logging. */
 function redactMongoURI(uri: string): string {
   try {
@@ -107,6 +129,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private watcher: FSWatcher | null = null;
   private watchTimer: NodeJS.Timeout | null = null;
   private changeStreamWatcher: MongoDBChangeStreamWatcher | null = null;
+  private relevance: MongoDBRelevanceRuntime | null = null;
   private closed = false;
   private dirty = true;
   private fileCount = 0;
@@ -122,6 +145,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     capabilities: DetectedCapabilities;
     config: ResolvedMemoryBackendConfig;
     embeddingProvider: EmbeddingProvider | null;
+    relevance?: MongoDBRelevanceRuntime | null;
   }) {
     this.client = params.client;
     this.db = params.db;
@@ -132,6 +156,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.capabilities = params.capabilities;
     this.config = params.config;
     this.embeddingProvider = params.embeddingProvider;
+    this.relevance = params.relevance ?? null;
   }
 
   // ---------------------------------------------------------------------------
@@ -187,6 +212,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     await ensureStandardIndexes(db, prefix, {
       embeddingCacheTtlDays: mongoCfg.embeddingCacheTtlDays,
       memoryTtlDays: mongoCfg.memoryTtlDays,
+      relevanceRetentionDays: mongoCfg.relevance.retention.days,
     });
 
     // community-bare has no mongot, so automated embedding is not supported there.
@@ -237,6 +263,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       }
     }
 
+    let relevance: MongoDBRelevanceRuntime | null = null;
+    try {
+      if (mongoCfg.relevance.enabled) {
+        relevance = new MongoDBRelevanceRuntime(db, prefix, params.agentId, mongoCfg, capabilities);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`relevance runtime initialization failed: ${msg}`);
+    }
+
     const manager = new MongoDBMemoryManager({
       client,
       db,
@@ -247,6 +283,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       capabilities,
       config: params.resolved,
       embeddingProvider,
+      relevance,
     });
 
     // Start watching memory files for changes
@@ -318,6 +355,25 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const mongoCfg = this.config.mongodb!;
     const maxResults = opts?.maxResults ?? 10;
     const minScore = opts?.minScore ?? 0.1;
+    const startedAt = Date.now();
+    const sampled = this.relevance?.shouldSample() ?? false;
+    const explainArtifacts: RelevanceArtifact[] = [];
+    const traceEvents: SearchTraceEvent[] = [];
+    const explainOpts: SearchExplainOptions | undefined = sampled
+      ? {
+          enabled: true,
+          deep: false,
+          includeScoreDetails: true,
+          onArtifact: (artifact: SearchExplainTraceArtifact) => {
+            explainArtifacts.push({
+              artifactType: artifact.artifactType,
+              summary: artifact.summary,
+              rawExplain: artifact.rawExplain,
+              compression: "none",
+            });
+          },
+        }
+      : undefined;
 
     // In managed mode, generate query embedding using the application's provider.
     // In automated mode, MongoDB generates the query embedding via Voyage AI at
@@ -349,6 +405,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         vectorWeight: 0.7,
         textWeight: 0.3,
         embeddingMode: mongoCfg.embeddingMode,
+        explain: explainOpts,
+        onTrace: (event) => {
+          traceEvents.push(event);
+        },
       }),
       // KB chunks — .catch(() => []) per existing pattern
       searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
@@ -360,6 +420,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         capabilities: this.capabilities,
         embeddingMode: mongoCfg.embeddingMode,
         kbDocs: kbCollection(this.db, this.prefix),
+        explain: explainOpts,
       }).catch((err) => {
         log.warn(`KB search failed: ${String(err)}`);
         return [] as MemorySearchResult[];
@@ -373,6 +434,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         capabilities: this.capabilities,
         vectorIndexName: `${this.prefix}structured_mem_vector`,
         embeddingMode: mongoCfg.embeddingMode,
+        explain: explainOpts,
       }).catch((err) => {
         log.warn(`structured memory search failed: ${String(err)}`);
         return [] as MemorySearchResult[];
@@ -401,8 +463,337 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     if (dedupCount > 0) {
       log.debug(`search dedup: removed ${dedupCount} duplicate result(s)`);
     }
+    const finalResults = deduped.slice(0, maxResults);
+    const successfulTrace = [...traceEvents].toReversed().find((event) => event.ok);
+    const fallbackPath =
+      successfulTrace && successfulTrace.method !== mongoCfg.fusionMethod
+        ? `${mongoCfg.fusionMethod}->${successfulTrace.method}`
+        : undefined;
+    const health = this.relevance?.evaluateHealth(finalResults, fallbackPath) ?? "ok";
+    this.relevance?.recordSignal(finalResults, fallbackPath);
 
-    return deduped.slice(0, maxResults);
+    if (sampled && this.relevance) {
+      explainArtifacts.push({
+        artifactType: "trace",
+        summary: {
+          requestedFusionMethod: mongoCfg.fusionMethod,
+          fallbackPath,
+          events: traceEvents,
+          topScore: finalResults[0]?.score ?? 0,
+          resultCount: finalResults.length,
+        },
+      });
+      void this.relevance
+        .persistRun({
+          query: cleaned,
+          sourceScope: "all",
+          latencyMs: Date.now() - startedAt,
+          topK: maxResults,
+          hitSources: Array.from(new Set(finalResults.map((result) => result.source))),
+          fallbackPath,
+          status: health,
+          sampled,
+          sampleRate: this.relevance.getSampleState().current,
+          artifacts: explainArtifacts,
+          diagnosticMode: false,
+        })
+        .catch((err) => {
+          this.relevance?.logTelemetryFailure(err);
+        });
+    }
+
+    return finalResults;
+  }
+
+  async relevanceExplain(params: {
+    query: string;
+    sourceScope?: RelevanceSourceScope;
+    sessionKey?: string;
+    maxResults?: number;
+    minScore?: number;
+    deep?: boolean;
+  }): Promise<{
+    runId?: string;
+    latencyMs: number;
+    sourceScope: RelevanceSourceScope;
+    health: RelevanceHealth;
+    fallbackPath?: string;
+    sampleRate: number;
+    artifacts: RelevanceArtifact[];
+    results: MemorySearchResult[];
+  }> {
+    if (!this.relevance) {
+      throw new Error("relevance runtime is unavailable");
+    }
+    const sourceScope = params.sourceScope ?? "all";
+    const maxResults = params.maxResults ?? 10;
+    const minScore = params.minScore ?? 0.1;
+    const startedAt = Date.now();
+    const query = params.query.trim();
+    if (!query) {
+      return {
+        latencyMs: 0,
+        sourceScope,
+        health: "insufficient-data",
+        sampleRate: this.relevance.getSampleState().current,
+        artifacts: [],
+        results: [],
+      };
+    }
+
+    let queryVector: number[] | null = null;
+    const mongoCfg = this.config.mongodb!;
+    if (mongoCfg.embeddingMode === "managed" && this.embeddingProvider) {
+      try {
+        queryVector = await this.embeddingProvider.embedQuery(query);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`relevance explain query embedding failed: ${msg}`);
+      }
+    }
+
+    const artifacts: RelevanceArtifact[] = [];
+    const traces: SearchTraceEvent[] = [];
+    const explainOpts: SearchExplainOptions = {
+      enabled: true,
+      deep: Boolean(params.deep),
+      includeScoreDetails: true,
+      onArtifact: (artifact) => {
+        artifacts.push({
+          artifactType: artifact.artifactType,
+          summary: artifact.summary,
+          rawExplain: artifact.rawExplain,
+          compression: "none",
+        });
+      },
+    };
+
+    let mergedResults: MemorySearchResult[] = [];
+    if (sourceScope === "memory") {
+      mergedResults = await mongoSearch(
+        chunksCollection(this.db, this.prefix),
+        query,
+        queryVector,
+        {
+          maxResults,
+          minScore,
+          numCandidates: mongoCfg.numCandidates,
+          sessionKey: params.sessionKey,
+          fusionMethod: mongoCfg.fusionMethod,
+          capabilities: this.capabilities,
+          vectorIndexName: `${this.prefix}chunks_vector`,
+          textIndexName: `${this.prefix}chunks_text`,
+          vectorWeight: 0.7,
+          textWeight: 0.3,
+          embeddingMode: mongoCfg.embeddingMode,
+          explain: explainOpts,
+          onTrace: (event) => traces.push(event),
+        },
+      );
+    } else if (sourceScope === "kb") {
+      mergedResults = await searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
+        maxResults,
+        minScore,
+        numCandidates: mongoCfg.numCandidates,
+        vectorIndexName: `${this.prefix}kb_chunks_vector`,
+        textIndexName: `${this.prefix}kb_chunks_text`,
+        capabilities: this.capabilities,
+        embeddingMode: mongoCfg.embeddingMode,
+        kbDocs: kbCollection(this.db, this.prefix),
+        explain: explainOpts,
+      });
+    } else if (sourceScope === "structured") {
+      mergedResults = await searchStructuredMemory(
+        structuredMemCollection(this.db, this.prefix),
+        query,
+        queryVector,
+        {
+          maxResults,
+          minScore,
+          filter: { agentId: this.agentId },
+          numCandidates: mongoCfg.numCandidates,
+          capabilities: this.capabilities,
+          vectorIndexName: `${this.prefix}structured_mem_vector`,
+          embeddingMode: mongoCfg.embeddingMode,
+          explain: explainOpts,
+        },
+      );
+    } else {
+      const [legacyResults, kbResults, structuredResults] = await Promise.all([
+        mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+          maxResults,
+          minScore,
+          numCandidates: mongoCfg.numCandidates,
+          sessionKey: params.sessionKey,
+          fusionMethod: mongoCfg.fusionMethod,
+          capabilities: this.capabilities,
+          vectorIndexName: `${this.prefix}chunks_vector`,
+          textIndexName: `${this.prefix}chunks_text`,
+          vectorWeight: 0.7,
+          textWeight: 0.3,
+          embeddingMode: mongoCfg.embeddingMode,
+          explain: explainOpts,
+          onTrace: (event) => traces.push(event),
+        }),
+        searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
+          maxResults: Math.max(3, Math.floor(maxResults / 3)),
+          minScore,
+          numCandidates: mongoCfg.numCandidates,
+          vectorIndexName: `${this.prefix}kb_chunks_vector`,
+          textIndexName: `${this.prefix}kb_chunks_text`,
+          capabilities: this.capabilities,
+          embeddingMode: mongoCfg.embeddingMode,
+          kbDocs: kbCollection(this.db, this.prefix),
+          explain: explainOpts,
+        }).catch(() => [] as MemorySearchResult[]),
+        searchStructuredMemory(structuredMemCollection(this.db, this.prefix), query, queryVector, {
+          maxResults: Math.max(3, Math.floor(maxResults / 3)),
+          minScore,
+          filter: { agentId: this.agentId },
+          numCandidates: mongoCfg.numCandidates,
+          capabilities: this.capabilities,
+          vectorIndexName: `${this.prefix}structured_mem_vector`,
+          embeddingMode: mongoCfg.embeddingMode,
+          explain: explainOpts,
+        }).catch(() => [] as MemorySearchResult[]),
+      ]);
+      const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
+      const normalizedLegacy = normalizeSearchResults(legacyResults, legacyMethod);
+      const normalizedKb = normalizeSearchResults(kbResults, "kb");
+      const normalizedStructured = normalizeSearchResults(structuredResults, "structured");
+      const merged = [...normalizedLegacy, ...normalizedKb, ...normalizedStructured].toSorted(
+        (a, b) => b.score - a.score,
+      );
+      mergedResults = deduplicateSearchResults(merged).slice(0, maxResults);
+    }
+
+    const successfulTrace = [...traces].toReversed().find((event) => event.ok);
+    const fallbackPath =
+      successfulTrace && successfulTrace.method !== mongoCfg.fusionMethod
+        ? `${mongoCfg.fusionMethod}->${successfulTrace.method}`
+        : undefined;
+    const health = this.relevance.evaluateHealth(mergedResults, fallbackPath);
+    this.relevance.recordSignal(mergedResults, fallbackPath);
+    artifacts.push({
+      artifactType: "trace",
+      summary: {
+        sourceScope,
+        requestedFusionMethod: mongoCfg.fusionMethod,
+        fallbackPath,
+        events: traces,
+        topScore: mergedResults[0]?.score ?? 0,
+        resultCount: mergedResults.length,
+      },
+    });
+
+    const latencyMs = Date.now() - startedAt;
+    let runId: string | undefined;
+    try {
+      runId = await this.relevance.persistRun({
+        query,
+        sourceScope,
+        latencyMs,
+        topK: maxResults,
+        hitSources: Array.from(new Set(mergedResults.map((result) => result.source))),
+        fallbackPath,
+        status: health,
+        sampled: true,
+        sampleRate: this.relevance.getSampleState().current,
+        artifacts,
+        diagnosticMode: true,
+      });
+    } catch (err) {
+      this.relevance.logTelemetryFailure(err);
+    }
+
+    return {
+      runId,
+      latencyMs,
+      sourceScope,
+      health,
+      fallbackPath,
+      sampleRate: this.relevance.getSampleState().current,
+      artifacts,
+      results: mergedResults,
+    };
+  }
+
+  async relevanceBenchmark(params?: {
+    datasetPath?: string;
+    maxResults?: number;
+    minScore?: number;
+  }): Promise<RelevanceBenchmarkResult> {
+    if (!this.relevance) {
+      throw new Error("relevance runtime is unavailable");
+    }
+    const mongoCfg = this.config.mongodb!;
+    if (!mongoCfg.relevance.benchmark.enabled) {
+      throw new Error("relevance benchmark is disabled by configuration");
+    }
+    const datasetPath = params?.datasetPath ?? mongoCfg.relevance.benchmark.datasetPath;
+    const cases = await this.relevance.loadBenchmarkDataset(datasetPath);
+    const evaluations: Array<{
+      empty: boolean;
+      topScore: number;
+      latencyMs: number;
+      pass: boolean;
+    }> = [];
+
+    for (const entry of cases) {
+      const run = await this.relevanceExplain({
+        query: entry.query,
+        sourceScope: entry.sourceScope ?? "all",
+        maxResults: params?.maxResults ?? 10,
+        minScore: params?.minScore ?? 0.1,
+        deep: false,
+      });
+      const summary = MongoDBRelevanceRuntime.buildCaseSummary(run.results, run.latencyMs);
+      const expectedSources = entry.expectedSources ?? [];
+      const sourcePass = expectedSources.every((source) => summary.hitSources.includes(source));
+      const scorePass =
+        typeof entry.minTopScore === "number" ? summary.topScore >= entry.minTopScore : true;
+      evaluations.push({
+        empty: summary.empty,
+        topScore: summary.topScore,
+        latencyMs: summary.latencyMs,
+        pass: !summary.empty && sourcePass && scorePass,
+      });
+    }
+
+    const metrics = MongoDBRelevanceRuntime.summarizeBenchmarkCases(evaluations);
+    const datasetVersion = createHash("sha256")
+      .update(JSON.stringify(cases.map((entry) => entry.query)))
+      .digest("hex")
+      .slice(0, 16);
+    const regressions = await this.relevance.persistRegression(datasetVersion, metrics);
+    return {
+      datasetVersion,
+      cases: cases.length,
+      ...metrics,
+      regressions,
+    };
+  }
+
+  async relevanceReport(params?: { windowMs?: number }): Promise<RelevanceReport> {
+    if (!this.relevance) {
+      throw new Error("relevance runtime is unavailable");
+    }
+    const windowMs = params?.windowMs ?? 24 * 60 * 60 * 1000;
+    return await this.relevance.buildReport(windowMs);
+  }
+
+  relevanceSampleRate(): RelevanceSampleState {
+    if (!this.relevance) {
+      return {
+        enabled: false,
+        current: 0,
+        base: 0,
+        max: 0,
+        windowSize: 0,
+        degradedSignals: 0,
+      };
+    }
+    return this.relevance.getSampleState();
   }
 
   // ---------------------------------------------------------------------------
@@ -569,6 +960,33 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         database: mongoCfg.database,
         collectionPrefix: mongoCfg.collectionPrefix,
         quantization: mongoCfg.quantization,
+        relevance: this.relevance
+          ? {
+              enabled: mongoCfg.relevance.enabled,
+              telemetry: {
+                state:
+                  mongoCfg.relevance.enabled && mongoCfg.relevance.telemetry.enabled
+                    ? "enabled"
+                    : "disabled",
+              },
+              sampleRate: {
+                current: this.relevance.getSampleState().current,
+              },
+              health: this.relevance.getCurrentHealth(),
+              lastRegressionAt: undefined,
+              profileCapabilities: this.relevance.getProfileCapabilities(),
+            }
+          : {
+              enabled: false,
+              telemetry: { state: "disabled" },
+              sampleRate: { current: 0 },
+              health: "insufficient-data",
+              profileCapabilities: {
+                textExplain: false,
+                vectorExplain: false,
+                fusionExplain: false,
+              },
+            },
       },
     };
   }

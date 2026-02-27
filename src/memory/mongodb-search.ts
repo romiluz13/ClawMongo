@@ -2,10 +2,50 @@ import type { Collection, Document } from "mongodb";
 import type { MemoryMongoDBFusionMethod } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mergeHybridResultsMongoDB } from "./mongodb-hybrid.js";
+import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import type { MemorySearchResult, MemorySource } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:search");
+
+export type SearchExplainTraceArtifact = {
+  artifactType: "searchExplain" | "vectorExplain" | "fusionExplain" | "scoreDetails" | "trace";
+  summary: Record<string, unknown>;
+  rawExplain?: unknown;
+};
+
+export type SearchExplainOptions = {
+  enabled: boolean;
+  deep?: boolean;
+  includeScoreDetails?: boolean;
+  onArtifact?: (artifact: SearchExplainTraceArtifact) => void;
+};
+
+export type SearchTraceEvent = {
+  event: "method";
+  method: "scoreFusion" | "rankFusion" | "js-merge" | "vector" | "keyword" | "$text";
+  ok: boolean;
+  message?: string;
+};
+
+async function captureAggregateExplain(
+  collection: Collection,
+  pipeline: Document[],
+): Promise<unknown> {
+  try {
+    const cursor = collection.aggregate(pipeline) as unknown as {
+      explain?: (verbosity?: string) => Promise<unknown>;
+    };
+    if (typeof cursor.explain !== "function") {
+      return null;
+    }
+    return await cursor.explain("executionStats");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.debug(`aggregate explain capture failed: ${message}`);
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -101,6 +141,7 @@ export async function vectorSearch(
     queryText?: string;
     embeddingMode?: "automated" | "managed";
     numCandidates?: number;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const filter: Document = {};
@@ -139,6 +180,17 @@ export async function vectorSearch(
     },
   ];
 
+  if (opts.explain?.enabled) {
+    const explained = await captureAggregateExplain(collection, pipeline);
+    if (explained) {
+      opts.explain.onArtifact?.({
+        artifactType: "vectorExplain",
+        summary: summarizeExplain(explained),
+        ...(opts.explain.deep ? { rawExplain: explained } : {}),
+      });
+    }
+  }
+
   const docs = await collection.aggregate(pipeline).toArray();
   const results = docs.map((doc) => toSearchResult(doc, "memory"));
   return filterByScore(results, opts.minScore);
@@ -156,6 +208,7 @@ export async function keywordSearch(
     minScore: number;
     sessionKey?: string;
     indexName: string;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const filterClauses: Document[] = [];
@@ -172,6 +225,7 @@ export async function keywordSearch(
           must: [{ text: { query, path: "text" } }],
           ...(filterClauses.length > 0 ? { filter: filterClauses } : {}),
         },
+        ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
       },
     },
     { $limit: opts.maxResults * 4 },
@@ -184,11 +238,35 @@ export async function keywordSearch(
         text: 1,
         source: 1,
         score: { $meta: "searchScore" },
+        ...(opts.explain?.includeScoreDetails
+          ? { scoreDetails: { $meta: "searchScoreDetails" } }
+          : {}),
       },
     },
   ];
 
+  if (opts.explain?.enabled) {
+    const explained = await captureAggregateExplain(collection, pipeline);
+    if (explained) {
+      opts.explain.onArtifact?.({
+        artifactType: "searchExplain",
+        summary: summarizeExplain(explained),
+        ...(opts.explain.deep ? { rawExplain: explained } : {}),
+      });
+    }
+  }
+
   const docs = await collection.aggregate(pipeline).toArray();
+  if (opts.explain?.enabled && opts.explain.includeScoreDetails) {
+    const scoreDetailSample = docs.find((doc) => doc.scoreDetails != null)?.scoreDetails;
+    if (scoreDetailSample) {
+      opts.explain.onArtifact?.({
+        artifactType: "scoreDetails",
+        summary: { available: true },
+        ...(opts.explain.deep ? { rawExplain: scoreDetailSample } : {}),
+      });
+    }
+  }
   const results = docs.map((doc) => toSearchResult(doc, "memory")).slice(0, opts.maxResults);
   return filterByScore(results, opts.minScore);
 }
@@ -211,6 +289,7 @@ export async function hybridSearchScoreFusion(
     textWeight: number;
     embeddingMode?: "automated" | "managed";
     numCandidates?: number;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
@@ -282,6 +361,17 @@ export async function hybridSearchScoreFusion(
     },
   ];
 
+  if (opts.explain?.enabled) {
+    const explained = await captureAggregateExplain(collection, pipeline);
+    if (explained) {
+      opts.explain.onArtifact?.({
+        artifactType: "fusionExplain",
+        summary: { method: "scoreFusion", ...summarizeExplain(explained) },
+        ...(opts.explain.deep ? { rawExplain: explained } : {}),
+      });
+    }
+  }
+
   const docs = await collection.aggregate(pipeline).toArray();
   const results = docs.map((doc) => toSearchResult(doc, "memory"));
   return filterByScore(results, opts.minScore);
@@ -305,6 +395,7 @@ export async function hybridSearchRankFusion(
     textWeight: number;
     embeddingMode?: "automated" | "managed";
     numCandidates?: number;
+    explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
   const sourceFilter: Document = {};
@@ -374,6 +465,17 @@ export async function hybridSearchRankFusion(
     },
   ];
 
+  if (opts.explain?.enabled) {
+    const explained = await captureAggregateExplain(collection, pipeline);
+    if (explained) {
+      opts.explain.onArtifact?.({
+        artifactType: "fusionExplain",
+        summary: { method: "rankFusion", ...summarizeExplain(explained) },
+        ...(opts.explain.deep ? { rawExplain: explained } : {}),
+      });
+    }
+  }
+
   const docs = await collection.aggregate(pipeline).toArray();
   const results = docs.map((doc) => toSearchResult(doc, "memory"));
   return filterByScore(results, opts.minScore);
@@ -418,6 +520,8 @@ export async function mongoSearch(
     vectorWeight?: number;
     textWeight?: number;
     embeddingMode?: "automated" | "managed";
+    explain?: SearchExplainOptions;
+    onTrace?: (event: SearchTraceEvent) => void;
   },
 ): Promise<MemorySearchResult[]> {
   const vectorWeight = opts.vectorWeight ?? 0.7;
@@ -448,9 +552,12 @@ export async function mongoSearch(
     // Try $scoreFusion (only if user wants it and server supports it)
     if (opts.fusionMethod === "scoreFusion" && opts.capabilities.scoreFusion) {
       try {
-        return await hybridSearchScoreFusion(collection, query, queryVector, searchOpts);
+        const results = await hybridSearchScoreFusion(collection, query, queryVector, searchOpts);
+        opts.onTrace?.({ event: "method", method: "scoreFusion", ok: true });
+        return results;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        opts.onTrace?.({ event: "method", method: "scoreFusion", ok: false, message: msg });
         log.warn(`$scoreFusion failed, trying $rankFusion fallback: ${msg}`);
       }
     }
@@ -458,9 +565,12 @@ export async function mongoSearch(
     // Try $rankFusion (if user wants it, or as fallback from scoreFusion)
     if (opts.fusionMethod !== "js-merge" && opts.capabilities.rankFusion) {
       try {
-        return await hybridSearchRankFusion(collection, query, queryVector, searchOpts);
+        const results = await hybridSearchRankFusion(collection, query, queryVector, searchOpts);
+        opts.onTrace?.({ event: "method", method: "rankFusion", ok: true });
+        return results;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        opts.onTrace?.({ event: "method", method: "rankFusion", ok: false, message: msg });
         log.warn(`$rankFusion failed, trying separate queries + JS merge: ${msg}`);
       }
     }
@@ -475,6 +585,7 @@ export async function mongoSearch(
         }),
         keywordSearch(collection, query, { ...searchOpts, indexName: opts.textIndexName }),
       ]);
+      opts.onTrace?.({ event: "method", method: "js-merge", ok: true });
       return hybridSearchJSFallback(vResults, kResults, {
         maxResults: opts.maxResults,
         vectorWeight,
@@ -482,6 +593,7 @@ export async function mongoSearch(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      opts.onTrace?.({ event: "method", method: "js-merge", ok: false, message: msg });
       log.warn(`hybrid JS merge failed: ${msg}`);
     }
   }
@@ -489,13 +601,16 @@ export async function mongoSearch(
   // Vector-only fallback
   if (canVector) {
     try {
-      return await vectorSearch(collection, queryVector, {
+      const results = await vectorSearch(collection, queryVector, {
         ...searchOpts,
         indexName: opts.vectorIndexName,
         queryText: query,
       });
+      opts.onTrace?.({ event: "method", method: "vector", ok: true });
+      return results;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      opts.onTrace?.({ event: "method", method: "vector", ok: false, message: msg });
       log.warn(`vector search failed: ${msg}`);
     }
   }
@@ -503,12 +618,15 @@ export async function mongoSearch(
   // Keyword-only fallback
   if (opts.capabilities.textSearch) {
     try {
-      return await keywordSearch(collection, query, {
+      const results = await keywordSearch(collection, query, {
         ...searchOpts,
         indexName: opts.textIndexName,
       });
+      opts.onTrace?.({ event: "method", method: "keyword", ok: true });
+      return results;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      opts.onTrace?.({ event: "method", method: "keyword", ok: false, message: msg });
       log.warn(`keyword search failed: ${msg}`);
     }
   }
@@ -538,10 +656,13 @@ export async function mongoSearch(
         { $limit: opts.maxResults },
       ])
       .toArray();
+    opts.onTrace?.({ event: "method", method: "$text", ok: true });
     return docs
       .map((doc: Document) => toSearchResult(doc, "memory"))
       .filter((r: MemorySearchResult) => r.score >= opts.minScore);
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    opts.onTrace?.({ event: "method", method: "$text", ok: false, message });
     log.warn("$text search fallback also failed; returning empty results");
     return [];
   }

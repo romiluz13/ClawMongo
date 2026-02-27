@@ -401,4 +401,82 @@ describe("memory cli", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Memory smoke failed (main)."));
     expect(process.exitCode).toBe(1);
   });
+
+  it("runs relevance explain command", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const close = vi.fn(async () => {});
+    const relevanceExplain = vi.fn(async () => ({
+      runId: "run-1",
+      latencyMs: 11,
+      sourceScope: "kb" as const,
+      health: "ok" as const,
+      sampleRate: 0.01,
+      artifacts: [],
+      results: [],
+    }));
+    mockManager({
+      relevanceExplain,
+      relevanceBenchmark: vi.fn(),
+      relevanceReport: vi.fn(),
+      relevanceSampleRate: vi.fn(),
+      close,
+    });
+
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    await runMemoryCli(["relevance", "explain", "--query", "release notes", "--source", "kb"]);
+
+    expect(relevanceExplain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "release notes",
+        sourceScope: "kb",
+      }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Relevance explain (main)"));
+    expect(close).toHaveBeenCalled();
+  });
+
+  it("fails relevance explain when source is invalid", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const error = vi.spyOn(defaultRuntime, "error").mockImplementation(() => {});
+
+    await runMemoryCli(["relevance", "explain", "--query", "release notes", "--source", "bad"]);
+
+    expect(getMemorySearchManager).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('Invalid --source value "bad"'));
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("runs relevance report command", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const close = vi.fn(async () => {});
+    const relevanceReport = vi.fn(async () => ({
+      health: "ok" as const,
+      runs: 10,
+      sampledRuns: 2,
+      emptyRate: 0.1,
+      avgTopScore: 0.8,
+      fallbackRate: 0.05,
+      profileCapabilities: {
+        textExplain: true,
+        vectorExplain: true,
+        fusionExplain: false,
+      },
+    }));
+    mockManager({
+      relevanceExplain: vi.fn(),
+      relevanceBenchmark: vi.fn(),
+      relevanceReport,
+      relevanceSampleRate: vi.fn(),
+      close,
+    });
+
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    await runMemoryCli(["relevance", "report", "--window", "7d"]);
+
+    expect(relevanceReport).toHaveBeenCalledWith(
+      expect.objectContaining({ windowMs: 7 * 24 * 60 * 60 * 1000 }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Relevance report (main)"));
+    expect(close).toHaveBeenCalled();
+  });
 });

@@ -129,6 +129,44 @@ const MemoryMongoDBSchema = z
       })
       .strict()
       .optional(),
+    relevance: z
+      .object({
+        enabled: z.boolean().optional(),
+        telemetry: z
+          .object({
+            enabled: z.boolean().optional(),
+            baseSampleRate: z.number().min(0).max(1).optional(),
+            adaptive: z
+              .object({
+                enabled: z.boolean().optional(),
+                maxSampleRate: z.number().min(0).max(1).optional(),
+                minWindowSize: z.number().int().positive().optional(),
+              })
+              .strict()
+              .optional(),
+            persistRawExplain: z.boolean().optional(),
+            queryPrivacyMode: z
+              .union([z.literal("redacted-hash"), z.literal("raw"), z.literal("none")])
+              .optional(),
+          })
+          .strict()
+          .optional(),
+        retention: z
+          .object({
+            days: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
+        benchmark: z
+          .object({
+            enabled: z.boolean().optional(),
+            datasetPath: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .optional();

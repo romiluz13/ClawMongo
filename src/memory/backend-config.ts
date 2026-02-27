@@ -58,6 +58,27 @@ export type ResolvedMongoDBConfig = {
     maxDocumentSize: number;
     autoRefreshHours: number;
   };
+  relevance: {
+    enabled: boolean;
+    telemetry: {
+      enabled: boolean;
+      baseSampleRate: number;
+      adaptive: {
+        enabled: boolean;
+        maxSampleRate: number;
+        minWindowSize: number;
+      };
+      persistRawExplain: boolean;
+      queryPrivacyMode: "redacted-hash" | "raw" | "none";
+    };
+    retention: {
+      days: number;
+    };
+    benchmark: {
+      enabled: boolean;
+      datasetPath: string;
+    };
+  };
 };
 
 export type ResolvedMemoryBackendConfig = {
@@ -136,6 +157,7 @@ const DEFAULT_QMD_SCOPE: SessionSendPolicyConfig = {
     },
   ],
 };
+const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -435,8 +457,62 @@ export function resolveMemoryBackendConfig(params: {
               ? mongoCfg.kb.autoRefreshHours
               : 24,
         },
+        relevance: {
+          enabled: mongoCfg?.relevance?.enabled !== false,
+          telemetry: {
+            enabled: mongoCfg?.relevance?.telemetry?.enabled !== false,
+            baseSampleRate:
+              typeof mongoCfg?.relevance?.telemetry?.baseSampleRate === "number" &&
+              Number.isFinite(mongoCfg.relevance.telemetry.baseSampleRate)
+                ? Math.min(1, Math.max(0, mongoCfg.relevance.telemetry.baseSampleRate))
+                : 0.01,
+            adaptive: {
+              enabled: mongoCfg?.relevance?.telemetry?.adaptive?.enabled !== false,
+              maxSampleRate:
+                typeof mongoCfg?.relevance?.telemetry?.adaptive?.maxSampleRate === "number" &&
+                Number.isFinite(mongoCfg.relevance.telemetry.adaptive.maxSampleRate)
+                  ? Math.min(1, Math.max(0, mongoCfg.relevance.telemetry.adaptive.maxSampleRate))
+                  : 0.1,
+              minWindowSize:
+                typeof mongoCfg?.relevance?.telemetry?.adaptive?.minWindowSize === "number" &&
+                Number.isFinite(mongoCfg.relevance.telemetry.adaptive.minWindowSize) &&
+                mongoCfg.relevance.telemetry.adaptive.minWindowSize > 0
+                  ? Math.floor(mongoCfg.relevance.telemetry.adaptive.minWindowSize)
+                  : 200,
+            },
+            persistRawExplain: mongoCfg?.relevance?.telemetry?.persistRawExplain !== false,
+            queryPrivacyMode:
+              mongoCfg?.relevance?.telemetry?.queryPrivacyMode === "raw" ||
+              mongoCfg?.relevance?.telemetry?.queryPrivacyMode === "none"
+                ? mongoCfg.relevance.telemetry.queryPrivacyMode
+                : "redacted-hash",
+          },
+          retention: {
+            days:
+              typeof mongoCfg?.relevance?.retention?.days === "number" &&
+              Number.isFinite(mongoCfg.relevance.retention.days) &&
+              mongoCfg.relevance.retention.days > 0
+                ? Math.floor(mongoCfg.relevance.retention.days)
+                : 14,
+          },
+          benchmark: {
+            enabled: mongoCfg?.relevance?.benchmark?.enabled !== false,
+            datasetPath:
+              typeof mongoCfg?.relevance?.benchmark?.datasetPath === "string" &&
+              mongoCfg.relevance.benchmark.datasetPath.trim().length > 0
+                ? resolveUserPath(mongoCfg.relevance.benchmark.datasetPath.trim())
+                : resolveUserPath(DEFAULT_RELEVANCE_DATASET),
+          },
+        },
       },
     };
+    if (
+      result.mongodb!.relevance.telemetry.adaptive.maxSampleRate <
+      result.mongodb!.relevance.telemetry.baseSampleRate
+    ) {
+      result.mongodb!.relevance.telemetry.adaptive.maxSampleRate =
+        result.mongodb!.relevance.telemetry.baseSampleRate;
+    }
 
     // F22: numDimensions validation warning — check if configured dimensions
     // match known model dimensions for the default embedding model

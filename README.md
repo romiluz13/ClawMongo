@@ -1,4 +1,4 @@
-# 🦞 OpenClaw — Personal AI Assistant
+# 🦞 ClawMongo — MongoDB-First OpenClaw
 
 <p align="center">
     <picture>
@@ -12,23 +12,80 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/openclaw/openclaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/openclaw/openclaw/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
-  <a href="https://github.com/openclaw/openclaw/releases"><img src="https://img.shields.io/github/v/release/openclaw/openclaw?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
+  <a href="https://github.com/romiluz13/ClawMongo/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/romiluz13/ClawMongo/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
+  <a href="https://github.com/romiluz13/ClawMongo/releases"><img src="https://img.shields.io/github/v/release/romiluz13/ClawMongo?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
   <a href="https://discord.gg/clawd"><img src="https://img.shields.io/discord/1456350064065904867?label=Discord&logo=discord&logoColor=white&color=5865F2&style=for-the-badge" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
 </p>
 
-**OpenClaw** is a _personal AI assistant_ you run on your own devices.
+**ClawMongo** is a MongoDB-first fork of **OpenClaw**.
+It keeps OpenClaw's agentic runtime, channels, orchestration, tools, and skills while moving durable memory and knowledge retrieval into MongoDB.
+
+**OpenClaw** is still the product foundation you run on your own devices.
 It answers you on the channels you already use (WhatsApp, Telegram, Slack, Discord, Google Chat, Signal, iMessage, Microsoft Teams, WebChat), plus extension channels like BlueBubbles, Matrix, Zalo, and Zalo Personal. It can speak and listen on macOS/iOS/Android, and can render a live Canvas you control. The Gateway is just the control plane — the product is the assistant.
 
 If you want a personal, single-user assistant that feels local, fast, and always-on, this is it.
 
-[Website](https://openclaw.ai) · [Docs](https://docs.openclaw.ai) · [DeepWiki](https://deepwiki.com/openclaw/openclaw) · [Getting Started](https://docs.openclaw.ai/start/getting-started) · [Updating](https://docs.openclaw.ai/install/updating) · [Showcase](https://docs.openclaw.ai/start/showcase) · [FAQ](https://docs.openclaw.ai/start/faq) · [Wizard](https://docs.openclaw.ai/start/wizard) · [Nix](https://github.com/openclaw/nix-openclaw) · [Docker](https://docs.openclaw.ai/install/docker) · [Discord](https://discord.gg/clawd)
+[ClawMongo Repo](https://github.com/romiluz13/ClawMongo) · [OpenClaw Website](https://openclaw.ai) · [OpenClaw Docs](https://docs.openclaw.ai) · [DeepWiki](https://deepwiki.com/openclaw/openclaw) · [Getting Started](https://docs.openclaw.ai/start/getting-started) · [Updating](https://docs.openclaw.ai/install/updating) · [Showcase](https://docs.openclaw.ai/start/showcase) · [FAQ](https://docs.openclaw.ai/start/faq) · [Wizard](https://docs.openclaw.ai/start/wizard) · [Nix](https://github.com/openclaw/nix-openclaw) · [Docker](https://docs.openclaw.ai/install/docker) · [Discord](https://discord.gg/clawd)
 
-Preferred setup: run the onboarding wizard (`openclaw onboard`) in your terminal.
+Preferred setup: run the onboarding wizard (`clawmongo onboard`) in your terminal.
 The wizard guides you step by step through setting up the gateway, workspace, channels, and skills. The CLI wizard is the recommended path and works on **macOS, Linux, and Windows (via WSL2; strongly recommended)**.
 Works with npm, pnpm, or bun.
 New install? Start here: [Getting started](https://docs.openclaw.ai/start/getting-started)
+`openclaw` is still shipped as an alias to `clawmongo` for compatibility.
+
+## Why ClawMongo Is Different
+
+ClawMongo keeps the OpenClaw agent experience but upgrades memory into a real data system:
+
+- **MongoDB as canonical runtime memory**: session recall, KB chunks, and structured memory are queryable, indexable, and durable.
+- **Automatic embeddings mode**: with `memory.mongodb.embeddingMode = "automated"`, semantic retrieval works without adding a separate embedding pipeline.
+- **Managed embeddings mode**: in local/community setups, ClawMongo can generate embeddings with local/OpenAI/Gemini/Voyage providers.
+- **Change streams for freshness**: cross-instance sync can update retrieval state in near real-time when replica set features are available.
+- **Hybrid retrieval by design**: results merge from memory chunks, KB chunks, and structured memory with score/rank fusion.
+- **Operational controls**: TTL, pool sizing, index management, sync probes, and memory status are first-class.
+
+### Why Move From Default OpenClaw Memory
+
+OpenClaw's default memory approach is good for local, lightweight usage. It becomes a bottleneck when teams push beyond personal notes.
+
+| Problem in default/local memory workflows              | What ClawMongo changes                                                    |
+| ------------------------------------------------------ | ------------------------------------------------------------------------- |
+| Recall quality drops as corpus size grows              | Uses indexed lexical + vector + hybrid retrieval paths                    |
+| Sync and consistency are hard across multiple runtimes | Uses one canonical backend with explicit write/read semantics             |
+| Hard to reason about retrieval regressions             | Adds explain-driven diagnostics (`memory relevance *`) and telemetry      |
+| Business KB ingestion becomes ad-hoc file operations   | Treats KB ingestion/chunking/search as database-backed workflows          |
+| Operational visibility is limited                      | Adds status, sampling state, retention, and benchmark/regression surfaces |
+
+Decision rule:
+
+- If your workload is one user + small memory files, default OpenClaw memory can be enough.
+- If your workload is team-scale knowledge, long-running agents, or retrieval quality SLOs, ClawMongo is the practical path.
+
+### Markdown and MongoDB Ownership (No Conflicts)
+
+| Keep in Markdown (source of truth)            | Keep in MongoDB (source of truth)                               | Why                                                                                                  |
+| --------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `SOUL.md`, `AGENTS.md`, `BOOT.md`, `SKILL.md` | Runtime memory chunks, KB docs/chunks, structured memory writes | Identity/policy instructions stay human-authored and auditable; runtime recall stays query-optimized |
+| Human operator notes and guardrails           | Imported business knowledge bases and long corpora              | Large knowledge should be indexed/retrievable, not manually maintained as flat files                 |
+| Prompting/process docs                        | Search indexes, embeddings, retrieval metadata                  | Retrieval infra belongs in the database layer, not instruction files                                 |
+
+If you export MongoDB data into `.md` for readability, treat it as a projection, not canonical state.
+
+### Retrieval and Write Flow
+
+```text
+Inbound event
+  -> routing/policy checks
+  -> durable write (MongoDB)
+  -> optional enrichment (chunking/embeddings)
+  -> retrieval query fans out to:
+       1) memory chunks
+       2) KB chunks
+       3) structured memory
+  -> fused ranking
+  -> response
+```
 
 **Subscriptions (OAuth):**
 
@@ -47,10 +104,10 @@ Model note: while any model is supported, I strongly recommend **Anthropic Pro/M
 Runtime: **Node ≥22**.
 
 ```bash
-npm install -g openclaw@latest
-# or: pnpm add -g openclaw@latest
+npm install -g @romiluz/clawmongo@latest
+# or: pnpm add -g @romiluz/clawmongo@latest
 
-openclaw onboard --install-daemon
+clawmongo onboard --install-daemon
 ```
 
 The wizard installs the Gateway daemon (launchd/systemd user service) so it stays running.
@@ -62,18 +119,18 @@ Runtime: **Node ≥22**.
 Full beginner guide (auth, pairing, channels): [Getting started](https://docs.openclaw.ai/start/getting-started)
 
 ```bash
-openclaw onboard --install-daemon
+clawmongo onboard --install-daemon
 
-openclaw gateway --port 18789 --verbose
+clawmongo gateway --port 18789 --verbose
 
 # Send a message
-openclaw message send --to +1234567890 --message "Hello from OpenClaw"
+clawmongo message send --to +1234567890 --message "Hello from ClawMongo"
 
 # Talk to the assistant (optionally deliver back to any connected channel: WhatsApp/Telegram/Slack/Discord/Google Chat/Signal/iMessage/BlueBubbles/Microsoft Teams/Matrix/Zalo/Zalo Personal/WebChat)
-openclaw agent --message "Ship checklist" --thinking high
+clawmongo agent --message "Ship checklist" --thinking high
 ```
 
-Upgrading? [Updating guide](https://docs.openclaw.ai/install/updating) (and run `openclaw doctor`).
+Upgrading? [Updating guide](https://docs.openclaw.ai/install/updating) (and run `clawmongo doctor`).
 
 ## Development channels
 
@@ -81,7 +138,7 @@ Upgrading? [Updating guide](https://docs.openclaw.ai/install/updating) (and run 
 - **beta**: prerelease tags (`vYYYY.M.D-beta.N`), npm dist-tag `beta` (macOS app may be missing).
 - **dev**: moving head of `main`, npm dist-tag `dev` (when published).
 
-Switch channels (git + npm): `openclaw update --channel stable|beta|dev`.
+Switch channels (git + npm): `clawmongo update --channel stable|beta|dev`.
 Details: [Development channels](https://docs.openclaw.ai/install/development-channels).
 
 ## From source (development)
@@ -89,34 +146,34 @@ Details: [Development channels](https://docs.openclaw.ai/install/development-cha
 Prefer `pnpm` for builds from source. Bun is optional for running TypeScript directly.
 
 ```bash
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
+git clone https://github.com/romiluz13/ClawMongo.git
+cd ClawMongo
 
 pnpm install
 pnpm ui:build # auto-installs UI deps on first run
 pnpm build
 
-pnpm openclaw onboard --install-daemon
+pnpm clawmongo onboard --install-daemon
 
 # Dev loop (auto-reload on TS changes)
 pnpm gateway:watch
 ```
 
-Note: `pnpm openclaw ...` runs TypeScript directly (via `tsx`). `pnpm build` produces `dist/` for running via Node / the packaged `openclaw` binary.
+Note: `pnpm clawmongo ...` runs TypeScript directly (via `tsx`). `pnpm build` produces `dist/` for running via Node / the packaged `clawmongo` binary.
 
 ## Security defaults (DM access)
 
-OpenClaw connects to real messaging surfaces. Treat inbound DMs as **untrusted input**.
+ClawMongo connects to real messaging surfaces. Treat inbound DMs as **untrusted input**.
 
 Full security guide: [Security](https://docs.openclaw.ai/gateway/security)
 
 Default behavior on Telegram/WhatsApp/Signal/iMessage/Microsoft Teams/Discord/Google Chat/Slack:
 
 - **DM pairing** (`dmPolicy="pairing"` / `channels.discord.dmPolicy="pairing"` / `channels.slack.dmPolicy="pairing"`; legacy: `channels.discord.dm.policy`, `channels.slack.dm.policy`): unknown senders receive a short pairing code and the bot does not process their message.
-- Approve with: `openclaw pairing approve <channel> <code>` (then the sender is added to a local allowlist store).
+- Approve with: `clawmongo pairing approve <channel> <code>` (then the sender is added to a local allowlist store).
 - Public inbound DMs require an explicit opt-in: set `dmPolicy="open"` and include `"*"` in the channel allowlist (`allowFrom` / `channels.discord.allowFrom` / `channels.slack.allowFrom`; legacy: `channels.discord.dm.allowFrom`, `channels.slack.dm.allowFrom`).
 
-Run `openclaw doctor` to surface risky/misconfigured DM policies.
+Run `clawmongo doctor` to surface risky/misconfigured DM policies.
 
 ## Highlights
 
@@ -131,7 +188,7 @@ Run `openclaw doctor` to surface risky/misconfigured DM policies.
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=openclaw/openclaw&type=date&legend=top-left)](https://www.star-history.com/#openclaw/openclaw&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=romiluz13/ClawMongo&type=date&legend=top-left)](https://www.star-history.com/#romiluz13/ClawMongo&type=date&legend=top-left)
 
 ## Everything we built so far
 

@@ -168,6 +168,19 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.embeddingMode).toBe("automated");
     expect(resolved.mongodb!.fusionMethod).toBe("scoreFusion");
     expect(resolved.mongodb!.quantization).toBe("none");
+    expect(resolved.mongodb!.relevance.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.baseSampleRate).toBe(0.01);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.maxSampleRate).toBe(0.1);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.minWindowSize).toBe(200);
+    expect(resolved.mongodb!.relevance.telemetry.persistRawExplain).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.queryPrivacyMode).toBe("redacted-hash");
+    expect(resolved.mongodb!.relevance.retention.days).toBe(14);
+    expect(resolved.mongodb!.relevance.benchmark.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.benchmark.datasetPath).toContain(
+      ".openclaw/relevance/golden.jsonl",
+    );
   });
 
   it("resolves mongodb with custom config values", () => {
@@ -194,6 +207,51 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.embeddingMode).toBe("managed");
     expect(resolved.mongodb!.fusionMethod).toBe("rankFusion");
     expect(resolved.mongodb!.quantization).toBe("scalar");
+  });
+
+  it("resolves mongodb relevance config overrides", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb+srv://atlas.example.com",
+          relevance: {
+            enabled: false,
+            telemetry: {
+              enabled: true,
+              baseSampleRate: 0.05,
+              adaptive: {
+                enabled: true,
+                maxSampleRate: 0.2,
+                minWindowSize: 500,
+              },
+              persistRawExplain: false,
+              queryPrivacyMode: "raw",
+            },
+            retention: { days: 21 },
+            benchmark: {
+              enabled: false,
+              datasetPath: "~/datasets/relevance-golden.jsonl",
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.relevance.enabled).toBe(false);
+    expect(resolved.mongodb!.relevance.telemetry.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.baseSampleRate).toBe(0.05);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.enabled).toBe(true);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.maxSampleRate).toBe(0.2);
+    expect(resolved.mongodb!.relevance.telemetry.adaptive.minWindowSize).toBe(500);
+    expect(resolved.mongodb!.relevance.telemetry.persistRawExplain).toBe(false);
+    expect(resolved.mongodb!.relevance.telemetry.queryPrivacyMode).toBe("raw");
+    expect(resolved.mongodb!.relevance.retention.days).toBe(21);
+    expect(resolved.mongodb!.relevance.benchmark.enabled).toBe(false);
+    expect(resolved.mongodb!.relevance.benchmark.datasetPath).toContain(
+      "datasets/relevance-golden.jsonl",
+    );
   });
 
   it("resolves mongodb URI from OPENCLAW_MONGODB_URI env var", () => {

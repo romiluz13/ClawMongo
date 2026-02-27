@@ -321,22 +321,47 @@ The MongoDB backend tries search methods in order of quality:
 
 **Configuration reference**
 
-| Key                                | Type   | Default                 | Description                                              |
-| ---------------------------------- | ------ | ----------------------- | -------------------------------------------------------- |
-| `memory.mongodb.uri`               | string | `$OPENCLAW_MONGODB_URI` | Connection string                                        |
-| `memory.mongodb.database`          | string | `"openclaw"`            | Database name                                            |
-| `memory.mongodb.collectionPrefix`  | string | `"openclaw_<agentId>_"` | Collection name prefix                                   |
-| `memory.mongodb.deploymentProfile` | string | `"atlas-default"`       | See profiles above                                       |
-| `memory.mongodb.embeddingMode`     | string | profile-aware           | `"automated"` (Voyage AI) or `"managed"`                 |
-| `memory.mongodb.fusionMethod`      | string | `"scoreFusion"`         | Preferred: `"scoreFusion"`, `"rankFusion"`, `"js-merge"` |
-| `memory.mongodb.quantization`      | string | `"none"`                | Vector quantization: `"none"`, `"scalar"`, `"binary"`    |
-| `memory.mongodb.watchDebounceMs`   | number | `500`                   | File watcher debounce in ms                              |
+| Key                                                         | Type    | Default                                | Description                                                  |
+| ----------------------------------------------------------- | ------- | -------------------------------------- | ------------------------------------------------------------ |
+| `memory.mongodb.uri`                                        | string  | `$OPENCLAW_MONGODB_URI`                | Connection string                                            |
+| `memory.mongodb.database`                                   | string  | `"openclaw"`                           | Database name                                                |
+| `memory.mongodb.collectionPrefix`                           | string  | `"openclaw_<agentId>_"`                | Collection name prefix                                       |
+| `memory.mongodb.deploymentProfile`                          | string  | `"atlas-default"`                      | See profiles above                                           |
+| `memory.mongodb.embeddingMode`                              | string  | profile-aware                          | `"automated"` (Voyage AI) or `"managed"`                     |
+| `memory.mongodb.fusionMethod`                               | string  | `"scoreFusion"`                        | Preferred: `"scoreFusion"`, `"rankFusion"`, `"js-merge"`     |
+| `memory.mongodb.quantization`                               | string  | `"none"`                               | Vector quantization: `"none"`, `"scalar"`, `"binary"`        |
+| `memory.mongodb.watchDebounceMs`                            | number  | `500`                                  | File watcher debounce in ms                                  |
+| `memory.mongodb.relevance.enabled`                          | boolean | `true`                                 | Enable relevance diagnostics + telemetry runtime             |
+| `memory.mongodb.relevance.telemetry.enabled`                | boolean | `true`                                 | Enable background sampling telemetry                         |
+| `memory.mongodb.relevance.telemetry.baseSampleRate`         | number  | `0.01`                                 | Base sampling rate for explain telemetry                     |
+| `memory.mongodb.relevance.telemetry.adaptive.maxSampleRate` | number  | `0.10`                                 | Max sample rate when degraded signals are detected           |
+| `memory.mongodb.relevance.telemetry.persistRawExplain`      | boolean | `true`                                 | Persist raw explain payloads on degraded/diagnostic runs     |
+| `memory.mongodb.relevance.telemetry.queryPrivacyMode`       | string  | `"redacted-hash"`                      | Query persistence mode: `"redacted-hash"`, `"raw"`, `"none"` |
+| `memory.mongodb.relevance.retention.days`                   | number  | `14`                                   | TTL retention for relevance runs and explain artifacts       |
+| `memory.mongodb.relevance.benchmark.datasetPath`            | string  | `"~/.openclaw/relevance/golden.jsonl"` | Benchmark dataset for `memory relevance benchmark`           |
 
 **Availability behavior**: If MongoDB is selected and unavailable, OpenClaw logs
 an initialization failure for the MongoDB backend and does not silently switch
 to builtin memory. Choose a different backend explicitly in config if you want
 builtin behavior. All MongoDB code is lazily imported via dynamic `import()` --
 zero cost when not used.
+
+### Explain-driven relevance
+
+MongoDB memory includes explain-driven relevance analysis for lexical, vector, and
+hybrid retrieval paths:
+
+- On-demand diagnostics:
+  - `openclaw memory relevance explain --query <text>`
+  - `openclaw memory relevance benchmark`
+  - `openclaw memory relevance report`
+  - `openclaw memory relevance sample-rate`
+- Always-on low-rate telemetry with adaptive sampling.
+- Graceful degradation:
+  - Explain failures never block retrieval.
+  - Unsupported explain stages are skipped with fallback paths recorded in telemetry.
+
+See [Memory CLI](/cli/memory) for command details.
 
 ### Additional memory paths
 
