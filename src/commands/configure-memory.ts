@@ -515,6 +515,7 @@ async function offerKBImportConfigure(
   );
 
   if (wantImport !== "import") {
+    noteMongoMemorySmokeCommand(isClawMongo);
     return config;
   }
 
@@ -607,8 +608,10 @@ async function offerKBImportConfigure(
 
   // Store autoImportPaths in config only when import succeeded
   if (!importSucceeded) {
+    noteMongoMemorySmokeCommand(isClawMongo);
     return config;
   }
+  noteMongoMemorySmokeCommand(isClawMongo);
   return {
     ...config,
     memory: {
@@ -622,6 +625,19 @@ async function offerKBImportConfigure(
       },
     },
   };
+}
+
+function noteMongoMemorySmokeCommand(isClawMongo: boolean): void {
+  const cliName = isClawMongo ? "clawmongo" : "openclaw";
+  note(
+    [
+      "Validate MongoDB memory setup before production use:",
+      formatCliCommand(`${cliName} memory smoke --agent main`),
+      "",
+      "This checks backend selection, sync, structured-memory write/read, and retrieval.",
+    ].join("\n"),
+    "MongoDB Smoke Check",
+  );
 }
 
 function redactUri(uri: string): string {

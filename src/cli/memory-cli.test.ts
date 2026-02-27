@@ -1,12 +1,13 @@
-import { Command } from "commander";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const getMemorySearchManager = vi.fn();
 const loadConfig = vi.fn(() => ({}));
 const resolveDefaultAgentId = vi.fn(() => "main");
+const resolveMemoryBackendConfig = vi.fn(() => ({ backend: "mongodb" }));
 
 vi.mock("../memory/index.js", () => ({
   getMemorySearchManager,
@@ -20,9 +21,15 @@ vi.mock("../agents/agent-scope.js", () => ({
   resolveDefaultAgentId,
 }));
 
+vi.mock("../memory/backend-config.js", () => ({
+  resolveMemoryBackendConfig,
+}));
+
 afterEach(async () => {
   vi.restoreAllMocks();
   getMemorySearchManager.mockReset();
+  resolveMemoryBackendConfig.mockReset();
+  resolveMemoryBackendConfig.mockReturnValue({ backend: "mongodb" });
   process.exitCode = undefined;
   const { setVerbose } = await import("../globals.js");
   setVerbose(false);
@@ -310,6 +317,88 @@ describe("memory cli", () => {
     expect(search).toHaveBeenCalled();
     expect(close).toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Memory search failed: boom"));
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("runs memory smoke checks successfully", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const close = vi.fn(async () => {});
+    const sync = vi.fn(async () => {});
+    const writeStructuredMemory = vi.fn(async () => ({ upserted: true, id: "1" }));
+    const search = vi.fn(async () => [
+      {
+        path: "structured/custom.md",
+        startLine: 1,
+        endLine: 1,
+        score: 0.91,
+        snippet: "clawmongo smoke marker smoke-123",
+        source: "structured",
+      },
+    ]);
+    mockManager({
+      sync,
+      writeStructuredMemory,
+      search,
+      status: () => ({ backend: "mongodb" }),
+      close,
+    });
+
+    const log = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+    await runMemoryCli(["smoke"]);
+
+    expect(sync).toHaveBeenCalledWith({ reason: "smoke" });
+    expect(writeStructuredMemory).toHaveBeenCalled();
+    expect(search).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Memory smoke passed (main)."));
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("fails memory smoke when backend is not mongodb", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    resolveMemoryBackendConfig.mockReturnValueOnce({ backend: "builtin" });
+
+    const error = vi.spyOn(defaultRuntime, "error").mockImplementation(() => {});
+    await runMemoryCli(["smoke"]);
+
+    expect(getMemorySearchManager).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('Memory smoke failed (main): memory backend is "builtin"'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("fails memory smoke when retrieval cannot find the written marker", async () => {
+    const { defaultRuntime } = await import("../runtime.js");
+    const close = vi.fn(async () => {});
+    const sync = vi.fn(async () => {});
+    const writeStructuredMemory = vi.fn(async () => ({ upserted: true, id: "1" }));
+    const search = vi.fn(async () => [
+      {
+        path: "memory/2026-01-01.md",
+        startLine: 1,
+        endLine: 1,
+        score: 0.12,
+        snippet: "no marker here",
+        source: "memory",
+      },
+    ]);
+    mockManager({
+      sync,
+      writeStructuredMemory,
+      search,
+      status: () => ({ backend: "mongodb" }),
+      close,
+    });
+
+    const error = vi.spyOn(defaultRuntime, "error").mockImplementation(() => {});
+    await runMemoryCli(["smoke"]);
+
+    expect(sync).toHaveBeenCalledWith({ reason: "smoke" });
+    expect(writeStructuredMemory).toHaveBeenCalled();
+    expect(search).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("Memory smoke failed (main)."));
     expect(process.exitCode).toBe(1);
   });
 });

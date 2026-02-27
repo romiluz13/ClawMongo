@@ -230,6 +230,74 @@ jobs:
             ${{ env.OPENCLAW_VITEST_REPORT_DIR }}
             ${{ runner.temp }}/vitest-slowest.md
 
+  mongodb-integration:
+    needs: [docs-scope, changed-scope, check]
+    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    services:
+      mongodb:
+        image: mongo:8.2
+        ports:
+          - 27117:27117
+        options: >-
+          --health-cmd "mongosh --quiet --port 27117 --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+        command:
+          - mongod
+          - --replSet
+          - rs0
+          - --bind_ip_all
+          - --port
+          - "27117"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup Node environment
+        uses: ./.github/actions/setup-node-env
+        with:
+          install-bun: "false"
+
+      - name: Initialize MongoDB replica set
+        run: |
+          set -euo pipefail
+          cid="${{ job.services.mongodb.id }}"
+          for i in {1..30}; do
+            if docker exec "$cid" mongosh --quiet --port 27117 --eval 'db.adminCommand({ ping: 1 }).ok' | grep -q '^1$'; then
+              break
+            fi
+            sleep 2
+          done
+
+          docker exec "$cid" mongosh --quiet --port 27117 --eval '
+            try {
+              rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "localhost:27117" }] });
+            } catch (e) {
+              if (!String(e).includes("already initialized")) throw e;
+            }
+          '
+
+          for i in {1..30}; do
+            state="$(docker exec "$cid" mongosh --quiet --port 27117 --eval 'try { rs.status().myState } catch (e) { 0 }' | tail -n 1 | tr -d '\r')"
+            if [ "$state" = "1" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "MongoDB replica set did not become primary in time." >&2
+          docker logs "$cid" || true
+          exit 1
+
+      - name: Run MongoDB E2E integration suite
+        env:
+          MONGODB_TEST_URI: mongodb://localhost:27117/?replicaSet=rs0
+        run: pnpm vitest run --config vitest.e2e.config.ts src/memory/mongodb-e2e.e2e.test.ts
+
   # Types, lint, and format check.
   check:
     name: "check"

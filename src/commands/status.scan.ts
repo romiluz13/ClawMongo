@@ -1,5 +1,3 @@
-import type { MemoryProviderStatus } from "../memory/types.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { withProgress } from "../cli/progress.js";
 import { loadConfig } from "../config/config.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
@@ -9,7 +7,9 @@ import { collectChannelStatusIssues } from "../infra/channels-status-issues.js";
 import { resolveOsSummary } from "../infra/os-summary.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
 import { getMemorySearchManager } from "../memory/index.js";
+import type { MemoryProviderStatus } from "../memory/types.js";
 import { runExec } from "../process/exec.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { buildChannelsTable } from "./status-all/channels.js";
 import { getAgentLocalStatuses } from "./status.agent-local.js";
 import { pickGatewaySelfPresence, resolveGatewayProbeAuth } from "./status.gateway-probe.js";
@@ -56,6 +56,7 @@ export type StatusScanResult = {
   channels: Awaited<ReturnType<typeof buildChannelsTable>>;
   summary: Awaited<ReturnType<typeof getStatusSummary>>;
   memory: MemoryStatusSnapshot | null;
+  memoryError: string | null;
   memoryPlugin: MemoryPluginStatus;
 };
 
@@ -150,25 +151,34 @@ export async function scanStatus(
 
       progress.setLabel("Checking memory…");
       const memoryPlugin = resolveMemoryPluginStatus(cfg);
-      const memory = await (async (): Promise<MemoryStatusSnapshot | null> => {
+      const memoryCheck = await (async (): Promise<{
+        memory: MemoryStatusSnapshot | null;
+        error: string | null;
+      }> => {
         if (!memoryPlugin.enabled) {
-          return null;
+          return { memory: null, error: null };
         }
         if (memoryPlugin.slot !== "memory-core") {
-          return null;
+          return { memory: null, error: null };
         }
         const agentId = agentStatus.defaultId ?? "main";
-        const { manager } = await getMemorySearchManager({ cfg, agentId, purpose: "status" });
+        const { manager, error } = await getMemorySearchManager({
+          cfg,
+          agentId,
+          purpose: "status",
+        });
         if (!manager) {
-          return null;
+          return { memory: null, error: error ?? "memory manager unavailable" };
         }
         try {
           await manager.probeVectorAvailability();
         } catch {}
         const status = manager.status();
         await manager.close?.().catch(() => {});
-        return { agentId, ...status };
+        return { memory: { agentId, ...status }, error: null };
       })();
+      const memory = memoryCheck.memory;
+      const memoryError = memoryCheck.error;
       progress.tick();
 
       progress.setLabel("Reading sessions…");
@@ -196,6 +206,7 @@ export async function scanStatus(
         channels,
         summary,
         memory,
+        memoryError,
         memoryPlugin,
       };
     },

@@ -1,5 +1,5 @@
 ---
-summary: "CLI reference for `openclaw memory` (status/index/search)"
+summary: "CLI reference for `openclaw memory` (status/index/search/smoke)"
 read_when:
   - You want to index or search semantic memory
   - You’re debugging memory availability or indexing
@@ -26,6 +26,7 @@ openclaw memory status --deep --index --verbose
 openclaw memory index
 openclaw memory index --verbose
 openclaw memory search "release checklist"
+openclaw memory smoke
 openclaw memory status --agent main
 openclaw memory index --agent main --verbose
 ```
@@ -43,3 +44,4 @@ Notes:
 - `memory status --deep --index` runs a reindex if the store is dirty.
 - `memory index --verbose` prints per-phase details (provider, model, sources, batch activity).
 - `memory status` includes any extra paths configured via `memorySearch.extraPaths`.
+- `memory smoke` validates MongoDB memory end-to-end (backend selection, sync, write/read, retrieval).

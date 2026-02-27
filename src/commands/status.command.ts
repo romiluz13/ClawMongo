@@ -1,11 +1,10 @@
-import type { HeartbeatEventPayload } from "../infra/heartbeat-events.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { formatCliCommand } from "../cli/command-format.js";
 import { withProgress } from "../cli/progress.js";
 import { resolveGatewayPort } from "../config/config.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import { info } from "../globals.js";
 import { formatTimeAgo } from "../infra/format-time/format-relative.ts";
+import type { HeartbeatEventPayload } from "../infra/heartbeat-events.js";
 import { formatUsageReportLines, loadProviderUsageSummary } from "../infra/provider-usage.js";
 import {
   formatUpdateChannelLabel,
@@ -19,6 +18,7 @@ import {
   resolveMemoryVectorState,
   type Tone,
 } from "../memory/status-format.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { runSecurityAudit } from "../security/audit.js";
 import { renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
@@ -79,6 +79,7 @@ export async function statusCommand(
     channels,
     summary,
     memory,
+    memoryError,
     memoryPlugin,
   } = scan;
 
@@ -152,6 +153,7 @@ export async function statusCommand(
           updateChannel: channelInfo.channel,
           updateChannelSource: channelInfo.source,
           memory,
+          memoryError,
           memoryPlugin,
           gateway: {
             mode: gatewayMode,
@@ -317,6 +319,9 @@ export async function statusCommand(
       if (memoryPlugin.slot && memoryPlugin.slot !== "memory-core") {
         return `enabled (${slot})`;
       }
+      if (memoryError) {
+        return warn(`degraded (${shortenText(memoryError, 96)})`);
+      }
       return muted(`enabled (${slot}) · unavailable`);
     }
     const parts: string[] = [];
@@ -344,8 +349,8 @@ export async function statusCommand(
     }
     const cache = memory.cache;
     if (cache) {
-      const summary = resolveMemoryCacheSummary(cache);
-      parts.push(colorByTone(summary.tone, summary.text));
+      const cacheSummary = resolveMemoryCacheSummary(cache);
+      parts.push(colorByTone(cacheSummary.tone, cacheSummary.text));
     }
     return parts.join(" · ");
   })();

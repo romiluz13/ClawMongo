@@ -57,6 +57,21 @@ describe("version resolution", () => {
     });
   });
 
+  it("accepts clawmongo package name when resolving version", async () => {
+    await withTempDir(async (root) => {
+      await fs.mkdir(path.join(root, "dist", "plugin-sdk"), { recursive: true });
+      await fs.writeFile(
+        path.join(root, "package.json"),
+        JSON.stringify({ name: "@romiluz/clawmongo", version: "3.4.5" }),
+        "utf-8",
+      );
+
+      const moduleUrl = moduleUrlFrom(root, "dist/plugin-sdk/index.js");
+      expect(readVersionFromPackageJsonForModuleUrl(moduleUrl)).toBe("3.4.5");
+      expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("3.4.5");
+    });
+  });
+
   it("falls back to build-info when package metadata is unavailable", async () => {
     await withTempDir(async (root) => {
       await fs.mkdir(path.join(root, "dist", "plugin-sdk"), { recursive: true });

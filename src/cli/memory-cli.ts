@@ -1,13 +1,14 @@
-import type { Command } from "commander";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Command } from "commander";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
+import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
 import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
 import { defaultRuntime } from "../runtime.js";
@@ -513,6 +514,201 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
   }
 }
 
+type MemorySmokeResult = {
+  agentId: string;
+  backend: string;
+  statusBackend?: string;
+  sync: "ok" | "skipped" | "failed";
+  writeReadRoundtrip: "ok" | "failed";
+  retrieval: "ok" | "failed";
+  details: string[];
+};
+
+async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
+  setVerbose(Boolean(opts.verbose));
+  const cfg = loadConfig();
+  const agentId = resolveAgent(cfg, opts.agent);
+  const details: string[] = [];
+
+  let resolvedBackend: ReturnType<typeof resolveMemoryBackendConfig>;
+  try {
+    resolvedBackend = resolveMemoryBackendConfig({ cfg, agentId });
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    const result: MemorySmokeResult = {
+      agentId,
+      backend: "unknown",
+      sync: "failed",
+      writeReadRoundtrip: "failed",
+      retrieval: "failed",
+      details: [`backend resolution failed: ${message}`],
+    };
+    if (opts.json) {
+      defaultRuntime.log(JSON.stringify(result, null, 2));
+    } else {
+      defaultRuntime.error(`Memory smoke failed (${agentId}): ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  if (resolvedBackend.backend !== "mongodb") {
+    const message = `memory backend is "${resolvedBackend.backend}", expected "mongodb"`;
+    const result: MemorySmokeResult = {
+      agentId,
+      backend: resolvedBackend.backend,
+      sync: "failed",
+      writeReadRoundtrip: "failed",
+      retrieval: "failed",
+      details: [message],
+    };
+    if (opts.json) {
+      defaultRuntime.log(JSON.stringify(result, null, 2));
+    } else {
+      defaultRuntime.error(`Memory smoke failed (${agentId}): ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const lookup = await getMemorySearchManager({ cfg, agentId, purpose: "default" });
+  if (!lookup.manager) {
+    const message = lookup.error ?? "mongodb memory manager unavailable";
+    const result: MemorySmokeResult = {
+      agentId,
+      backend: resolvedBackend.backend,
+      sync: "failed",
+      writeReadRoundtrip: "failed",
+      retrieval: "failed",
+      details: [message],
+    };
+    if (opts.json) {
+      defaultRuntime.log(JSON.stringify(result, null, 2));
+    } else {
+      defaultRuntime.error(`Memory smoke failed (${agentId}): ${message}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+
+  const manager = lookup.manager;
+  const statusBackend = manager.status().backend;
+  if (statusBackend !== "mongodb") {
+    const message = `runtime memory backend is "${statusBackend}", expected "mongodb"`;
+    const result: MemorySmokeResult = {
+      agentId,
+      backend: resolvedBackend.backend,
+      statusBackend,
+      sync: "failed",
+      writeReadRoundtrip: "failed",
+      retrieval: "failed",
+      details: [message],
+    };
+    if (opts.json) {
+      defaultRuntime.log(JSON.stringify(result, null, 2));
+    } else {
+      defaultRuntime.error(`Memory smoke failed (${agentId}): ${message}`);
+    }
+    await manager.close?.().catch(() => {});
+    process.exitCode = 1;
+    return;
+  }
+
+  let sync: MemorySmokeResult["sync"] = "skipped";
+  let writeReadRoundtrip: MemorySmokeResult["writeReadRoundtrip"] = "failed";
+  let retrieval: MemorySmokeResult["retrieval"] = "failed";
+
+  try {
+    if (manager.sync) {
+      await manager.sync({ reason: "smoke" });
+      sync = "ok";
+      details.push("sync ok");
+    } else {
+      details.push("sync skipped (backend does not expose sync)");
+    }
+
+    const writer = manager as MemoryManager & {
+      writeStructuredMemory?: (entry: {
+        type: string;
+        key: string;
+        value: string;
+        context?: string;
+        confidence?: number;
+      }) => Promise<{ upserted: boolean; id: string }>;
+    };
+    if (typeof writer.writeStructuredMemory !== "function") {
+      throw new Error("runtime manager missing structured memory write capability");
+    }
+
+    const marker = `smoke-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const payload = `clawmongo smoke marker ${marker}`;
+    await writer.writeStructuredMemory({
+      type: "custom",
+      key: marker,
+      value: payload,
+      context: "memory smoke validation",
+      confidence: 1,
+    });
+    writeReadRoundtrip = "ok";
+    details.push(`write ok (${marker})`);
+
+    const results = await manager.search(marker, { maxResults: 5, minScore: 0 });
+    const matched = results.some(
+      (result) =>
+        result.snippet.includes(marker) ||
+        result.snippet.includes(payload) ||
+        result.snippet.includes("clawmongo smoke marker") ||
+        result.path.includes(marker),
+    );
+    if (!matched) {
+      throw new Error("retrieval check failed: marker not found in memory search results");
+    }
+    retrieval = "ok";
+    details.push("retrieval ok");
+  } catch (err) {
+    const message = formatErrorMessage(err);
+    details.push(message);
+    if (sync === "ok" && writeReadRoundtrip === "ok") {
+      retrieval = "failed";
+    } else if (sync === "ok") {
+      writeReadRoundtrip = "failed";
+      retrieval = "failed";
+    } else {
+      sync = "failed";
+      writeReadRoundtrip = "failed";
+      retrieval = "failed";
+    }
+    process.exitCode = 1;
+  } finally {
+    await manager.close?.().catch(() => {});
+  }
+
+  const result: MemorySmokeResult = {
+    agentId,
+    backend: resolvedBackend.backend,
+    statusBackend,
+    sync,
+    writeReadRoundtrip,
+    retrieval,
+    details,
+  };
+  if (opts.json) {
+    defaultRuntime.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (process.exitCode === 1) {
+    defaultRuntime.error(`Memory smoke failed (${agentId}).`);
+    for (const detail of details) {
+      defaultRuntime.error(`  - ${detail}`);
+    }
+    return;
+  }
+  defaultRuntime.log(`Memory smoke passed (${agentId}).`);
+  for (const detail of details) {
+    defaultRuntime.log(`  - ${detail}`);
+  }
+}
+
 export function registerMemoryCli(program: Command) {
   const memory = program
     .command("memory")
@@ -523,6 +719,10 @@ export function registerMemoryCli(program: Command) {
         `\n${theme.heading("Examples:")}\n${formatHelpExamples([
           ["openclaw memory status", "Show index and provider status."],
           ["openclaw memory index --force", "Force a full reindex."],
+          [
+            "openclaw memory smoke",
+            "Run MongoDB memory smoke checks (sync + write/read + retrieval).",
+          ],
           ['openclaw memory search --query "deployment notes"', "Search indexed memory entries."],
           ["openclaw memory status --json", "Output machine-readable JSON."],
         ])}\n\n${theme.muted("Docs:")} ${formatDocsLink("/cli/memory", "docs.openclaw.ai/cli/memory")}\n`,
@@ -747,4 +947,14 @@ export function registerMemoryCli(program: Command) {
         });
       },
     );
+
+  memory
+    .command("smoke")
+    .description("Run MongoDB memory smoke checks (sync + write/read + retrieval)")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--json", "Print JSON")
+    .option("--verbose", "Verbose logging", false)
+    .action(async (opts: MemoryCommandOptions) => {
+      await runMemorySmoke(opts);
+    });
 }

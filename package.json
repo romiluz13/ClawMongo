@@ -9,15 +9,15 @@
     "openclaw",
     "vector-search"
   ],
-  "homepage": "https://github.com/openclaw/openclaw#readme",
+  "homepage": "https://github.com/romiluz13/ClawMongo#readme",
   "bugs": {
-    "url": "https://github.com/openclaw/openclaw/issues"
+    "url": "https://github.com/romiluz13/ClawMongo/issues"
   },
   "license": "MIT",
   "author": "romiluz",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openclaw/openclaw.git"
+    "url": "git+https://github.com/romiluz13/ClawMongo.git"
   },
   "bin": {
     "clawmongo": "openclaw.mjs",

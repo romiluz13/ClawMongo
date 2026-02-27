@@ -28,6 +28,33 @@ The default workspace layout uses two memory layers:
 These files live under the workspace (`agents.defaults.workspace`, default
 `~/.openclaw/workspace`). See [Agent workspace](/concepts/agent-workspace) for the full layout.
 
+## Source of truth split for ClawMongo
+
+When `memory.backend = "mongodb"`, keep a strict ownership split so memory stays
+predictable and conflict-free:
+
+- Markdown files remain canonical for identity and policy context:
+  - `SOUL.md`, `AGENTS.md`, `BOOT.md`, and skill `SKILL.md` files.
+  - Human-authored operator notes and guardrails.
+- MongoDB is canonical for runtime and business knowledge retrieval:
+  - Imported knowledge-base documents and chunks.
+  - Structured memory records (for example decisions/preferences/facts via
+    `memory_write`).
+  - Queryable memory/session recall data used by `memory_search` and `kb_search`.
+
+Do not maintain two canonical stores for the same entity type. If you export
+MongoDB data back to Markdown for readability, treat those files as projections,
+not source of truth.
+
+Routing guidance:
+
+- Use `memory_write` for structured durable facts.
+- Use `kb_search` for imported documentation and reference material.
+- Use Markdown memory files for informal scratch notes and identity/policy docs.
+- Keep procedural instructions in [Skills](/tools/skills), and trigger
+  ingestion or maintenance through [Hooks](/automation/hooks) and
+  [Cron jobs](/automation/cron-jobs).
+
 ## When to write memory
 
 - Decisions, preferences, and durable facts go to `MEMORY.md`.
@@ -298,16 +325,18 @@ The MongoDB backend tries search methods in order of quality:
 | ---------------------------------- | ------ | ----------------------- | -------------------------------------------------------- |
 | `memory.mongodb.uri`               | string | `$OPENCLAW_MONGODB_URI` | Connection string                                        |
 | `memory.mongodb.database`          | string | `"openclaw"`            | Database name                                            |
-| `memory.mongodb.collectionPrefix`  | string | `"openclaw_"`           | Collection name prefix                                   |
+| `memory.mongodb.collectionPrefix`  | string | `"openclaw_<agentId>_"` | Collection name prefix                                   |
 | `memory.mongodb.deploymentProfile` | string | `"atlas-default"`       | See profiles above                                       |
-| `memory.mongodb.embeddingMode`     | string | `"automated"`           | `"automated"` (Voyage AI) or `"managed"`                 |
+| `memory.mongodb.embeddingMode`     | string | profile-aware           | `"automated"` (Voyage AI) or `"managed"`                 |
 | `memory.mongodb.fusionMethod`      | string | `"scoreFusion"`         | Preferred: `"scoreFusion"`, `"rankFusion"`, `"js-merge"` |
 | `memory.mongodb.quantization`      | string | `"none"`                | Vector quantization: `"none"`, `"scalar"`, `"binary"`    |
 | `memory.mongodb.watchDebounceMs`   | number | `500`                   | File watcher debounce in ms                              |
 
-**Fallback behavior**: If MongoDB is unavailable at startup, OpenClaw silently
-falls back to the builtin SQLite manager (same pattern as QMD fallback). All
-MongoDB code is lazily imported via dynamic `import()` -- zero cost when not used.
+**Availability behavior**: If MongoDB is selected and unavailable, OpenClaw logs
+an initialization failure for the MongoDB backend and does not silently switch
+to builtin memory. Choose a different backend explicitly in config if you want
+builtin behavior. All MongoDB code is lazily imported via dynamic `import()` --
+zero cost when not used.
 
 ### Additional memory paths
 
