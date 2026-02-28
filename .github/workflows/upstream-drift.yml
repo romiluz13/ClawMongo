@@ -1,0 +1,18 @@
+name: Upstream Drift
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * *"
+
+jobs:
+  check-upstream-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check drift vs upstream/main
+        run: bash scripts/sync-upstream.sh --ref origin/main --fail-if-behind

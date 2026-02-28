@@ -146,6 +146,28 @@ Upgrading? [Updating guide](https://docs.openclaw.ai/install/updating) (and run 
 Switch channels (git + npm): `clawmongo update --channel stable|beta|dev`.
 Details: [Development channels](https://docs.openclaw.ai/install/development-channels).
 
+## Keep in sync with OpenClaw upstream
+
+Check whether ClawMongo `main` is behind `openclaw/openclaw`:
+
+```bash
+bash scripts/sync-upstream.sh --ref origin/main --fail-if-behind
+```
+
+Preview divergence + conflict hotspots:
+
+```bash
+bash scripts/sync-upstream.sh --ref origin/main
+```
+
+Merge upstream into your current branch when you intentionally run a sync wave:
+
+```bash
+bash scripts/sync-upstream.sh --merge
+```
+
+A scheduled GitHub Action (`Upstream Drift`) also runs daily and fails if `origin/main` is behind upstream.
+
 ## From source (development)
 
 Prefer `pnpm` for builds from source. Bun is optional for running TypeScript directly.
