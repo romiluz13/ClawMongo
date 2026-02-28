@@ -81,6 +81,13 @@ USER.md
 # Claude Code internals (cc10x memory, plans, etc.)
 .claude/
 
+# Internal planning/research docs (local only, keep OSS repo clean)
+docs/plans/
+docs/research/
+docs/discussion-update-*.md
+docs/upstream-pain-showcase.md
+CLAWMONGO_FRESH_START.md
+
 # Temporary/test files
 temp-*.ts
 temp-*.js
