@@ -1,9 +1,8 @@
-import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import fs from "node:fs/promises";
+import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import type { MemorySyncProgressUpdate, MemorySource } from "./types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import {
   buildFileEntry,
   chunkMarkdown,
@@ -18,6 +17,7 @@ import {
   listSessionFilesForAgent,
   type SessionFileEntry,
 } from "./session-files.js";
+import type { MemorySyncProgressUpdate, MemorySource } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:sync");
 
@@ -315,7 +315,10 @@ export async function syncToMongoDB(params: {
   const diskFiles: MemoryFileEntry[] = [];
   for (const absPath of diskPaths) {
     try {
-      diskFiles.push(await buildFileEntry(absPath, workspaceDir));
+      const entry = await buildFileEntry(absPath, workspaceDir);
+      if (entry) {
+        diskFiles.push(entry);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`sync: failed to read ${absPath}: ${msg}`);

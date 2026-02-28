@@ -8,7 +8,7 @@ import {
   unsetConfigValueAtPath,
 } from "./config-paths.js";
 import { readConfigFileSnapshot, validateConfigObject } from "./config.js";
-import { withTempHome } from "./test-helpers.js";
+import { buildWebSearchProviderConfig, withTempHome } from "./test-helpers.js";
 import { OpenClawSchema } from "./zod-schema.js";
 
 describe("$schema key in config (#14998)", () => {
@@ -51,22 +51,17 @@ describe("ui.seamColor", () => {
 });
 
 describe("web search provider config", () => {
-  it("accepts perplexity provider and config", () => {
-    const res = validateConfigObject({
-      tools: {
-        web: {
-          search: {
-            enabled: true,
-            provider: "perplexity",
-            perplexity: {
-              apiKey: "test-key",
-              baseUrl: "https://api.perplexity.ai",
-              model: "perplexity/sonar-pro",
-            },
-          },
+  it("accepts kimi provider and config", () => {
+    const res = validateConfigObject(
+      buildWebSearchProviderConfig({
+        provider: "kimi",
+        providerConfig: {
+          apiKey: "test-key",
+          baseUrl: "https://api.moonshot.ai/v1",
+          model: "moonshot-v1-128k",
         },
-      },
-    });
+      }),
+    );
 
     expect(res.ok).toBe(true);
   });
@@ -149,6 +144,29 @@ describe("gateway.tools config", () => {
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.issues[0]?.path).toBe("gateway.tools.allow");
+    }
+  });
+});
+
+describe("gateway.channelHealthCheckMinutes", () => {
+  it("accepts zero to disable monitor", () => {
+    const res = validateConfigObject({
+      gateway: {
+        channelHealthCheckMinutes: 0,
+      },
+    });
+    expect(res.ok).toBe(true);
+  });
+
+  it("rejects negative intervals", () => {
+    const res = validateConfigObject({
+      gateway: {
+        channelHealthCheckMinutes: -1,
+      },
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.issues[0]?.path).toBe("gateway.channelHealthCheckMinutes");
     }
   });
 });

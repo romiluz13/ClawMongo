@@ -1,5 +1,5 @@
-import type { Command } from "commander";
 import path from "node:path";
+import type { Command } from "commander";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { setVerbose } from "../globals.js";
@@ -140,7 +140,9 @@ export function registerKBCli(program: Command) {
                   fallback: settings.fallback,
                   local: settings.local,
                 });
-                embeddingProvider = result.provider;
+                if (result.provider) {
+                  embeddingProvider = result.provider;
+                }
               }
             } catch {
               defaultRuntime.log(
@@ -173,7 +175,7 @@ export function registerKBCli(program: Command) {
 
           const rich = isRich();
           const lines = [
-            `${colorize(rich, theme.success, "KB ingest complete")}`,
+            colorize(rich, theme.success, "KB ingest complete"),
             `  Documents processed: ${result!.documentsProcessed}`,
             `  Chunks created: ${result!.chunksCreated}`,
             `  Skipped (already imported): ${result!.skipped}`,
@@ -315,7 +317,9 @@ export function registerKBCli(program: Command) {
                 fallback: settings.fallback,
                 local: settings.local,
               });
-              queryVector = await result.provider.embedQuery(query);
+              if (result.provider) {
+                queryVector = await result.provider.embedQuery(query);
+              }
             }
           } catch {
             defaultRuntime.log(

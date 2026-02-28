@@ -1,6 +1,6 @@
 import type { Db, Document } from "mongodb";
-import type { EmbeddingStatusCoverage } from "./mongodb-embedding-retry.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { EmbeddingStatusCoverage } from "./mongodb-embedding-retry.js";
 import {
   chunksCollection,
   filesCollection,

@@ -2,6 +2,7 @@ export type MemorySource = "memory" | "sessions" | "kb" | "structured";
 
 export type MemorySearchResult = {
   path: string;
+  filePath?: string;
   startLine: number;
   endLine: number;
   score: number;

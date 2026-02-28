@@ -1,17 +1,32 @@
 import { describe, it, expect } from "vitest";
-import type { MemorySearchResult } from "./types.js";
 import { deduplicateSearchResults } from "./mongodb-manager.js";
+import type { MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Phase 3: Result dedup at merge by content hash
 // ---------------------------------------------------------------------------
 
 describe("deduplicateSearchResults", () => {
+  const makeResult = (
+    filePath: string,
+    snippet: string,
+    score: number,
+    source: MemorySearchResult["source"],
+  ): MemorySearchResult => ({
+    filePath,
+    path: filePath,
+    startLine: 1,
+    endLine: 1,
+    snippet,
+    score,
+    source,
+  });
+
   it("removes duplicate results by content, keeping the highest-scoring one", () => {
     const results: MemorySearchResult[] = [
-      { filePath: "/a.md", snippet: "same content here", score: 0.9, source: "memory" },
-      { filePath: "/b.md", snippet: "same content here", score: 0.7, source: "kb" },
-      { filePath: "/c.md", snippet: "different content", score: 0.8, source: "sessions" },
+      makeResult("/a.md", "same content here", 0.9, "memory"),
+      makeResult("/b.md", "same content here", 0.7, "kb"),
+      makeResult("/c.md", "different content", 0.8, "sessions"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -29,9 +44,9 @@ describe("deduplicateSearchResults", () => {
 
   it("keeps all results when no duplicates exist", () => {
     const results: MemorySearchResult[] = [
-      { filePath: "/a.md", snippet: "first content", score: 0.9, source: "memory" },
-      { filePath: "/b.md", snippet: "second content", score: 0.7, source: "kb" },
-      { filePath: "/c.md", snippet: "third content", score: 0.5, source: "sessions" },
+      makeResult("/a.md", "first content", 0.9, "memory"),
+      makeResult("/b.md", "second content", 0.7, "kb"),
+      makeResult("/c.md", "third content", 0.5, "sessions"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -40,11 +55,11 @@ describe("deduplicateSearchResults", () => {
 
   it("handles multiple duplicates correctly", () => {
     const results: MemorySearchResult[] = [
-      { filePath: "/a.md", snippet: "alpha content", score: 0.3, source: "memory" },
-      { filePath: "/b.md", snippet: "alpha content", score: 0.9, source: "kb" },
-      { filePath: "/c.md", snippet: "alpha content", score: 0.5, source: "structured" },
-      { filePath: "/d.md", snippet: "beta content", score: 0.8, source: "memory" },
-      { filePath: "/e.md", snippet: "beta content", score: 0.6, source: "sessions" },
+      makeResult("/a.md", "alpha content", 0.3, "memory"),
+      makeResult("/b.md", "alpha content", 0.9, "kb"),
+      makeResult("/c.md", "alpha content", 0.5, "structured"),
+      makeResult("/d.md", "beta content", 0.8, "memory"),
+      makeResult("/e.md", "beta content", 0.6, "sessions"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -57,8 +72,8 @@ describe("deduplicateSearchResults", () => {
 
   it("returns dedupCount in the result when logging is needed", () => {
     const results: MemorySearchResult[] = [
-      { filePath: "/a.md", snippet: "dup content", score: 0.9, source: "memory" },
-      { filePath: "/b.md", snippet: "dup content", score: 0.7, source: "kb" },
+      makeResult("/a.md", "dup content", 0.9, "memory"),
+      makeResult("/b.md", "dup content", 0.7, "kb"),
     ];
 
     // The function should return deduped results — the count of removed duplicates

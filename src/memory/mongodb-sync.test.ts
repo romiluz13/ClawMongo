@@ -1,8 +1,9 @@
-import type { Db, ClientSession, MongoClient } from "mongodb";
-import type { Collection } from "mongodb";
+/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Db, ClientSession, MongoClient } from "mongodb";
+import type { Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the schema module before imports (vi.mock is hoisted)
@@ -678,7 +679,10 @@ describe("syncToMongoDB — transaction wrapping", () => {
 
     // deleteMany for stale chunks should include session
     const deleteCalls = (mockChunks.deleteMany as ReturnType<typeof vi.fn>).mock.calls;
-    const staleDeleteCall = deleteCalls.find((call: unknown[]) => call[0]?.path?.$in !== undefined);
+    const staleDeleteCall = deleteCalls.find((call: unknown[]) => {
+      const filter = call[0] as { path?: { $in?: unknown } } | undefined;
+      return filter?.path?.$in !== undefined;
+    });
     expect(staleDeleteCall).toBeDefined();
     expect(staleDeleteCall![1]).toMatchObject({ session: mockSession });
   });

@@ -1,10 +1,10 @@
-import type { Db, MongoClient, ClientSession } from "mongodb";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { Db, MongoClient, ClientSession } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 import { chunkMarkdown, hashText } from "./internal.js";
 import { retryEmbedding, type EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { kbCollection, kbChunksCollection } from "./mongodb-schema.js";
@@ -194,8 +194,8 @@ export async function ingestToKB(params: {
       });
 
       // The new KB document to insert
-      const newKBDoc = {
-        _id: docId as unknown as any,
+      const newKBDoc: Record<string, unknown> = {
+        _id: docId,
         title: doc.title,
         content: doc.content,
         source: {

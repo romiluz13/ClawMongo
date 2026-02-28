@@ -1,10 +1,8 @@
-import type { ApiClientOptions } from "grammy";
 import { sequentialize } from "@grammyjs/runner";
 import { apiThrottler } from "@grammyjs/transformer-throttler";
-import { type Message, type UserFromGetMe, ReactionTypeEmoji } from "@grammyjs/types";
+import { type Message, type UserFromGetMe } from "@grammyjs/types";
+import type { ApiClientOptions } from "grammy";
 import { Bot, webhookCallback } from "grammy";
-import type { OpenClawConfig, ReplyToMode } from "../config/config.js";
-import type { RuntimeEnv } from "../runtime.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveTextChunkLimit } from "../auto-reply/chunk.js";
 import { isAbortRequestText } from "../auto-reply/reply/abort.js";
@@ -14,6 +12,7 @@ import {
   resolveNativeCommandsEnabled,
   resolveNativeSkillsEnabled,
 } from "../config/commands.js";
+import type { OpenClawConfig, ReplyToMode } from "../config/config.js";
 import { loadConfig } from "../config/config.js";
 import {
   resolveChannelGroupPolicy,
@@ -22,10 +21,9 @@ import {
 import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
 import { danger, logVerbose, shouldLogVerbose } from "../globals.js";
 import { formatUncaughtError } from "../infra/errors.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { resolveAgentRoute } from "../routing/resolve-route.js";
+import { createNonExitingRuntime, type RuntimeEnv } from "../runtime.js";
 import { resolveTelegramAccount } from "./accounts.js";
 import { registerTelegramHandlers } from "./bot-handlers.js";
 import { createTelegramMessageProcessor } from "./bot-message.js";
@@ -38,12 +36,11 @@ import {
 } from "./bot-updates.js";
 import {
   buildTelegramGroupPeerId,
-  buildTelegramParentPeer,
   resolveTelegramForumThreadId,
   resolveTelegramStreamMode,
 } from "./bot/helpers.js";
 import { resolveTelegramFetch } from "./fetch.js";
-import { wasSentByBot } from "./sent-message-cache.js";
+import { createTelegramSendChatActionHandler } from "./sendchataction-401-backoff.js";
 
 export type TelegramBotOptions = {
   token: string;
@@ -70,9 +67,13 @@ export function getTelegramSequentialKey(ctx: {
   chat?: { id?: number };
   me?: UserFromGetMe;
   message?: Message;
+  channelPost?: Message;
+  editedChannelPost?: Message;
   update?: {
     message?: Message;
     edited_message?: Message;
+    channel_post?: Message;
+    edited_channel_post?: Message;
     callback_query?: { message?: Message };
     message_reaction?: { chat?: { id?: number } };
   };
@@ -84,8 +85,12 @@ export function getTelegramSequentialKey(ctx: {
   }
   const msg =
     ctx.message ??
+    ctx.channelPost ??
+    ctx.editedChannelPost ??
     ctx.update?.message ??
     ctx.update?.edited_message ??
+    ctx.update?.channel_post ??
+    ctx.update?.edited_channel_post ??
     ctx.update?.callback_query?.message;
   const chatId = msg?.chat?.id ?? ctx.chat?.id;
   const rawText = msg?.text ?? msg?.caption;
@@ -109,13 +114,7 @@ export function getTelegramSequentialKey(ctx: {
 }
 
 export function createTelegramBot(opts: TelegramBotOptions) {
-  const runtime: RuntimeEnv = opts.runtime ?? {
-    log: console.log,
-    error: console.error,
-    exit: (code: number): never => {
-      throw new Error(`exit ${code}`);
-    },
-  };
+  const runtime: RuntimeEnv = opts.runtime ?? createNonExitingRuntime();
   const cfg = opts.config ?? loadConfig();
   const account = resolveTelegramAccount({
     cfg,
@@ -144,34 +143,53 @@ export function createTelegramBot(opts: TelegramBotOptions) {
 
   const bot = new Bot(opts.token, client ? { client } : undefined);
   bot.api.config.use(apiThrottler());
-  bot.use(sequentialize(getTelegramSequentialKey));
   // Catch all errors from bot middleware to prevent unhandled rejections
   bot.catch((err) => {
     runtime.error?.(danger(`telegram bot error: ${formatUncaughtError(err)}`));
   });
 
   const recentUpdates = createTelegramUpdateDedupe();
-  let lastUpdateId =
+  const initialUpdateId =
     typeof opts.updateOffset?.lastUpdateId === "number" ? opts.updateOffset.lastUpdateId : null;
 
-  const recordUpdateId = (ctx: TelegramUpdateKeyContext) => {
-    const updateId = resolveTelegramUpdateId(ctx);
-    if (typeof updateId !== "number") {
+  // Track update_ids that have entered the middleware pipeline but have not completed yet.
+  // This includes updates that are "queued" behind sequentialize(...) for a chat/topic key.
+  // We only persist a watermark that is strictly less than the smallest pending update_id,
+  // so we never write an offset that would skip an update still waiting to run.
+  const pendingUpdateIds = new Set<number>();
+  let highestCompletedUpdateId: number | null = initialUpdateId;
+  let highestPersistedUpdateId: number | null = initialUpdateId;
+  const maybePersistSafeWatermark = () => {
+    if (typeof opts.updateOffset?.onUpdateId !== "function") {
       return;
     }
-    if (lastUpdateId !== null && updateId <= lastUpdateId) {
+    if (highestCompletedUpdateId === null) {
       return;
     }
-    lastUpdateId = updateId;
-    void opts.updateOffset?.onUpdateId?.(updateId);
+    let safe = highestCompletedUpdateId;
+    if (pendingUpdateIds.size > 0) {
+      let minPending: number | null = null;
+      for (const id of pendingUpdateIds) {
+        if (minPending === null || id < minPending) {
+          minPending = id;
+        }
+      }
+      if (minPending !== null) {
+        safe = Math.min(safe, minPending - 1);
+      }
+    }
+    if (highestPersistedUpdateId !== null && safe <= highestPersistedUpdateId) {
+      return;
+    }
+    highestPersistedUpdateId = safe;
+    void opts.updateOffset.onUpdateId(safe);
   };
 
   const shouldSkipUpdate = (ctx: TelegramUpdateKeyContext) => {
     const updateId = resolveTelegramUpdateId(ctx);
-    if (typeof updateId === "number" && lastUpdateId !== null) {
-      if (updateId <= lastUpdateId) {
-        return true;
-      }
+    const skipCutoff = highestPersistedUpdateId ?? initialUpdateId;
+    if (typeof updateId === "number" && skipCutoff !== null && updateId <= skipCutoff) {
+      return true;
     }
     const key = buildTelegramUpdateKey(ctx);
     const skipped = recentUpdates.check(key);
@@ -180,6 +198,26 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     }
     return skipped;
   };
+
+  bot.use(async (ctx, next) => {
+    const updateId = resolveTelegramUpdateId(ctx);
+    if (typeof updateId === "number") {
+      pendingUpdateIds.add(updateId);
+    }
+    try {
+      await next();
+    } finally {
+      if (typeof updateId === "number") {
+        pendingUpdateIds.delete(updateId);
+        if (highestCompletedUpdateId === null || updateId > highestCompletedUpdateId) {
+          highestCompletedUpdateId = updateId;
+        }
+        maybePersistSafeWatermark();
+      }
+    }
+  });
+
+  bot.use(sequentialize(getTelegramSequentialKey));
 
   const rawUpdateLogger = createSubsystemLogger("gateway/channels/telegram/raw-update");
   const MAX_RAW_UPDATE_CHARS = 8000;
@@ -219,7 +257,6 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       }
     }
     await next();
-    recordUpdateId(ctx);
   });
 
   const historyLimit = Math.max(
@@ -312,6 +349,20 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     return { groupConfig, topicConfig };
   };
 
+  // Global sendChatAction handler with 401 backoff / circuit breaker (issue #27092).
+  // Created BEFORE the message processor so it can be injected into every message context.
+  // Shared across all message contexts for this account so that consecutive 401s
+  // from ANY chat are tracked together — prevents infinite retry storms.
+  const sendChatActionHandler = createTelegramSendChatActionHandler({
+    sendChatActionFn: (chatId, action, threadParams) =>
+      bot.api.sendChatAction(
+        chatId,
+        action,
+        threadParams as Parameters<typeof bot.api.sendChatAction>[2],
+      ),
+    logger: (message) => logVerbose(`telegram: ${message}`),
+  });
+
   const processMessage = createTelegramMessageProcessor({
     bot,
     cfg,
@@ -327,6 +378,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     resolveGroupActivation,
     resolveGroupRequireMention,
     resolveTelegramGroupConfig,
+    sendChatActionHandler,
     runtime,
     replyToMode,
     streamMode,
@@ -354,98 +406,6 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     opts,
   });
 
-  // Handle emoji reactions to messages
-  bot.on("message_reaction", async (ctx) => {
-    try {
-      const reaction = ctx.messageReaction;
-      if (!reaction) {
-        return;
-      }
-      if (shouldSkipUpdate(ctx)) {
-        return;
-      }
-
-      const chatId = reaction.chat.id;
-      const messageId = reaction.message_id;
-      const user = reaction.user;
-
-      // Resolve reaction notification mode (default: "own")
-      const reactionMode = telegramCfg.reactionNotifications ?? "own";
-      if (reactionMode === "off") {
-        return;
-      }
-      if (user?.is_bot) {
-        return;
-      }
-      if (reactionMode === "own" && !wasSentByBot(chatId, messageId)) {
-        return;
-      }
-
-      // Detect added reactions
-      const oldEmojis = new Set(
-        reaction.old_reaction
-          .filter((r): r is ReactionTypeEmoji => r.type === "emoji")
-          .map((r) => r.emoji),
-      );
-      const addedReactions = reaction.new_reaction
-        .filter((r): r is ReactionTypeEmoji => r.type === "emoji")
-        .filter((r) => !oldEmojis.has(r.emoji));
-
-      if (addedReactions.length === 0) {
-        return;
-      }
-
-      // Build sender label
-      const senderName = user
-        ? [user.first_name, user.last_name].filter(Boolean).join(" ").trim() || user.username
-        : undefined;
-      const senderUsername = user?.username ? `@${user.username}` : undefined;
-      let senderLabel = senderName;
-      if (senderName && senderUsername) {
-        senderLabel = `${senderName} (${senderUsername})`;
-      } else if (!senderName && senderUsername) {
-        senderLabel = senderUsername;
-      }
-      if (!senderLabel && user?.id) {
-        senderLabel = `id:${user.id}`;
-      }
-      senderLabel = senderLabel || "unknown";
-
-      // Reactions target a specific message_id; the Telegram Bot API does not include
-      // message_thread_id on MessageReactionUpdated, so we route to the chat-level
-      // session (forum topic routing is not available for reactions).
-      const isGroup = reaction.chat.type === "group" || reaction.chat.type === "supergroup";
-      const isForum = reaction.chat.is_forum === true;
-      const resolvedThreadId = isForum
-        ? resolveTelegramForumThreadId({ isForum, messageThreadId: undefined })
-        : undefined;
-      const peerId = isGroup ? buildTelegramGroupPeerId(chatId, resolvedThreadId) : String(chatId);
-      const parentPeer = buildTelegramParentPeer({ isGroup, resolvedThreadId, chatId });
-      // Fresh config for bindings lookup; other routing inputs are payload-derived.
-      const route = resolveAgentRoute({
-        cfg: loadConfig(),
-        channel: "telegram",
-        accountId: account.accountId,
-        peer: { kind: isGroup ? "group" : "direct", id: peerId },
-        parentPeer,
-      });
-      const sessionKey = route.sessionKey;
-
-      // Enqueue system event for each added reaction
-      for (const r of addedReactions) {
-        const emoji = r.emoji;
-        const text = `Telegram reaction added: ${emoji} by ${senderLabel} on msg ${messageId}`;
-        enqueueSystemEvent(text, {
-          sessionKey: sessionKey,
-          contextKey: `telegram:reaction:add:${chatId}:${messageId}:${user?.id ?? "anon"}:${emoji}`,
-        });
-        logVerbose(`telegram: reaction event enqueued: ${text}`);
-      }
-    } catch (err) {
-      runtime.error?.(danger(`telegram reaction handler failed: ${String(err)}`));
-    }
-  });
-
   registerTelegramHandlers({
     cfg,
     accountId: account.accountId,
@@ -454,6 +414,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
     runtime,
     mediaMaxBytes,
     telegramCfg,
+    allowFrom,
     groupAllowFrom,
     resolveGroupPolicy,
     resolveTelegramGroupConfig,

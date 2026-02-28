@@ -156,7 +156,17 @@ describe("mongodb relevance runtime", () => {
 
     for (let i = 0; i < 20; i++) {
       runtime.recordSignal(
-        [{ filePath: "/ok.md", snippet: "ok", score: 0.9, source: "memory" }],
+        [
+          {
+            filePath: "/ok.md",
+            path: "/ok.md",
+            startLine: 1,
+            endLine: 1,
+            snippet: "ok",
+            score: 0.9,
+            source: "memory",
+          },
+        ],
         undefined,
       );
     }

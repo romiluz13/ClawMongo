@@ -9,10 +9,10 @@
  * against a Community Edition instance WITHOUT mongot (community-bare profile).
  */
 
-import { MongoClient, type Db } from "mongodb";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { MongoClient, type Db } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getMemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
@@ -438,7 +438,8 @@ describe("E2E: $text Search (community-bare fallback)", () => {
           },
         },
       )
-      .toSorted({ score: { $meta: "textScore" } })
+      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
 
@@ -460,7 +461,8 @@ describe("E2E: $text Search (community-bare fallback)", () => {
           },
         },
       )
-      .toSorted({ score: { $meta: "textScore" } })
+      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
 
@@ -481,7 +483,8 @@ describe("E2E: $text Search (community-bare fallback)", () => {
           },
         },
       )
-      .toSorted({ score: { $meta: "textScore" } })
+      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
 

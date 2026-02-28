@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-import type { MemorySearchResult } from "./types.js";
 import {
   buildOrJoinFtsQuery,
   rrfScore,
@@ -8,8 +7,8 @@ import {
   normalizeRRFScore,
   mergeHybridResultsMongoDB,
   normalizeSearchResults,
-  type SearchMethod,
 } from "./mongodb-hybrid.js";
+import type { MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // buildOrJoinFtsQuery -- OR-join FTS query builder

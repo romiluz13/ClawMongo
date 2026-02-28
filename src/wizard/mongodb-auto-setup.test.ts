@@ -26,14 +26,18 @@ function createMockPrompter(responses?: {
   const selectResponses = [...(responses?.selectResponses ?? [])];
   const textResponses = [...(responses?.textResponses ?? [])];
   const confirmResponses = [...(responses?.confirmResponses ?? [true])];
+  const select = vi.fn(async <T>() => selectResponses.shift() as T) as WizardPrompter["select"];
+  const multiselect = vi.fn(async () => []) as WizardPrompter["multiselect"];
+  const text = vi.fn(async () => textResponses.shift() ?? "") as WizardPrompter["text"];
+  const confirm = vi.fn(async () => confirmResponses.shift() ?? true) as WizardPrompter["confirm"];
   return {
     intro: vi.fn(async () => {}),
     outro: vi.fn(async () => {}),
     note: vi.fn(async () => {}),
-    select: vi.fn(async () => selectResponses.shift()),
-    multiselect: vi.fn(async () => []),
-    text: vi.fn(async () => textResponses.shift() ?? ""),
-    confirm: vi.fn(async () => confirmResponses.shift() ?? true),
+    select,
+    multiselect,
+    text,
+    confirm,
     progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
   };
 }
@@ -55,6 +59,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter({ confirmResponses: [true] });
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
     expect(result.uri).toBe("mongodb://localhost:27017/openclaw");
     expect(result.source).toBe("existing");
   });
@@ -69,6 +76,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
     expect(result.source).toBe("existing");
     // Should show note about found MongoDB
     expect(prompter.note).toHaveBeenCalled();
@@ -91,6 +101,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
     expect(result.uri).toContain("localhost:27017");
     expect(result.source).toBe("docker-auto");
     expect(result.tier).toBe("fullstack");
@@ -120,6 +133,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(true);
+    if (!result.success) {
+      throw new Error("expected success");
+    }
     expect(result.source).toBe("docker-existing");
     expect(result.tier).toBe("replicaset");
   });
@@ -135,6 +151,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
     expect(result.reason).toContain("Docker");
   });
 
@@ -149,6 +168,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
     expect(result.reason).toContain("Docker");
   });
 
@@ -163,6 +185,9 @@ describe("attemptAutoSetup", () => {
     const prompter = createMockPrompter();
     const result = await attemptAutoSetup(prompter);
     expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
     expect(result.reason).toContain("Compose");
   });
 
@@ -197,6 +222,9 @@ describe("attemptAutoSetup", () => {
     // Should note port conflict to user
     expect(prompter.note).toHaveBeenCalled();
     expect(result.success).toBe(false);
+    if (result.success) {
+      throw new Error("expected failure");
+    }
     expect(result.reason).toContain("Port");
   });
 

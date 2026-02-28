@@ -69,6 +69,7 @@ describe("computeFeedbackHint", () => {
     score,
     startLine: 1,
     endLine: 5,
+    source: "memory",
   });
 
   it("returns hint when < 2 results and all scores < 0.3", () => {
