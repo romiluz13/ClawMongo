@@ -1,11 +1,11 @@
 import { spinner as clackSpinner } from "@clack/prompts";
+import { note as terminalNote } from "../terminal/note.js";
 /**
  * Adapter: creates a WizardPrompter from the @clack/prompts primitives.
  * Used by configure-memory.ts to reuse attemptAutoSetup()
  * without duplicating the auto-setup logic.
  */
 import type { WizardPrompter, WizardProgress } from "./prompts.js";
-import { note as terminalNote } from "../terminal/note.js";
 
 export function createConfigurePrompterAdapter(): WizardPrompter {
   return {

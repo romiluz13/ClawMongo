@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { EmbeddingProvider } from "./embeddings.js";
 import { resolveEmbeddingMaxInputTokens } from "./embedding-model-limits.js";
+import type { EmbeddingProvider } from "./embeddings.js";
 
 function mockProvider(id: string, model: string, maxInputTokens?: number): EmbeddingProvider {
   return {

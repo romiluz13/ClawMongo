@@ -54,7 +54,7 @@ export function createMemorySearchTool(options: {
   return {
     label: "Memory Search",
     name: "memory_search",
-    description,
+    description: `${description} If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.`,
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -65,7 +65,7 @@ export function createMemorySearchTool(options: {
         agentId,
       });
       if (!manager) {
-        return jsonResult({ results: [], disabled: true, error });
+        return jsonResult(buildMemorySearchUnavailableResult(error));
       }
       try {
         const citationsMode = resolveMemoryCitationsMode(cfg);
@@ -86,6 +86,7 @@ export function createMemorySearchTool(options: {
             ? clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars)
             : decorated;
         const feedbackHint = computeFeedbackHint(rawResults, status.backend);
+        const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
         return jsonResult({
           results,
           provider: status.provider,
@@ -93,10 +94,11 @@ export function createMemorySearchTool(options: {
           fallback: status.fallback,
           citations: citationsMode,
           ...(feedbackHint ? { feedbackHint } : {}),
+          mode: searchMode,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ results: [], disabled: true, error: message });
+        return jsonResult(buildMemorySearchUnavailableResult(message));
       }
     },
   };
@@ -194,6 +196,25 @@ function clampResultsByInjectedChars(
     }
   }
   return clamped;
+}
+
+function buildMemorySearchUnavailableResult(error: string | undefined) {
+  const reason = (error ?? "memory search unavailable").trim() || "memory search unavailable";
+  const isQuotaError = /insufficient_quota|quota|429/.test(reason.toLowerCase());
+  const warning = isQuotaError
+    ? "Memory search is unavailable because the embedding provider quota is exhausted."
+    : "Memory search is unavailable due to an embedding/provider error.";
+  const action = isQuotaError
+    ? "Top up or switch embedding provider, then retry memory_search."
+    : "Check embedding provider configuration and retry memory_search.";
+  return {
+    results: [],
+    disabled: true,
+    unavailable: true,
+    error: reason,
+    warning,
+    action,
+  };
 }
 
 function shouldIncludeCitations(params: {

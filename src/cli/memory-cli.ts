@@ -29,6 +29,7 @@ type MemoryCommandOptions = {
 };
 
 type MemoryManager = NonNullable<MemorySearchManagerResult["manager"]>;
+type MemoryManagerPurpose = Parameters<typeof getMemorySearchManager>[0]["purpose"];
 
 type RelevanceSourceScope = "all" | "memory" | "kb" | "structured";
 
@@ -160,6 +161,30 @@ function hasRelevanceCapability(manager: MemoryManager): manager is RelevanceCap
   );
 }
 
+async function withMemoryManagerForAgent(params: {
+  cfg: ReturnType<typeof loadConfig>;
+  agentId: string;
+  purpose?: MemoryManagerPurpose;
+  run: (manager: MemoryManager) => Promise<void>;
+}): Promise<void> {
+  const managerParams: Parameters<typeof getMemorySearchManager>[0] = {
+    cfg: params.cfg,
+    agentId: params.agentId,
+  };
+  if (params.purpose) {
+    managerParams.purpose = params.purpose;
+  }
+  await withManager<MemoryManager>({
+    getManager: () => getMemorySearchManager(managerParams),
+    onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
+    onCloseError: (err) =>
+      defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
+    close: async (manager) => {
+      await manager.close?.();
+    },
+    run: params.run,
+  });
+}
 async function checkReadableFile(pathname: string): Promise<{ exists: boolean; issue?: string }> {
   try {
     await fs.access(pathname, fsSync.constants.R_OK);
@@ -361,14 +386,10 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
 
   for (const agentId of agentIds) {
     const managerPurpose = opts.index ? "default" : "status";
-    await withManager<MemoryManager>({
-      getManager: () => getMemorySearchManager({ cfg, agentId, purpose: managerPurpose }),
-      onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-      onCloseError: (err) =>
-        defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-      close: async (manager) => {
-        await manager.close?.();
-      },
+    await withMemoryManagerForAgent({
+      cfg,
+      agentId,
+      purpose: managerPurpose,
       run: async (manager) => {
         const deep = Boolean(opts.deep || opts.index);
         let embeddingProbe:
@@ -1095,14 +1116,9 @@ export function registerMemoryCli(program: Command) {
       const cfg = loadConfig();
       const agentIds = resolveAgentIds(cfg, opts.agent);
       for (const agentId of agentIds) {
-        await withManager<MemoryManager>({
-          getManager: () => getMemorySearchManager({ cfg, agentId }),
-          onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-          onCloseError: (err) =>
-            defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-          close: async (manager) => {
-            await manager.close?.();
-          },
+        await withMemoryManagerForAgent({
+          cfg,
+          agentId,
           run: async (manager) => {
             try {
               const syncFn = manager.sync ? manager.sync.bind(manager) : undefined;
@@ -1229,29 +1245,34 @@ export function registerMemoryCli(program: Command) {
   memory
     .command("search")
     .description("Search memory files")
-    .argument("<query>", "Search query")
+    .argument("[query]", "Search query")
+    .option("--query <text>", "Search query (alternative to positional argument)")
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--max-results <n>", "Max results", (value: string) => Number(value))
     .option("--min-score <n>", "Minimum score", (value: string) => Number(value))
     .option("--json", "Print JSON")
     .action(
       async (
-        query: string,
+        queryArg: string | undefined,
         opts: MemoryCommandOptions & {
+          query?: string;
           maxResults?: number;
           minScore?: number;
         },
       ) => {
+        const query = opts.query ?? queryArg;
+        if (!query) {
+          defaultRuntime.error(
+            "Missing search query. Provide a positional query or use --query <text>.",
+          );
+          process.exitCode = 1;
+          return;
+        }
         const cfg = loadConfig();
         const agentId = resolveAgent(cfg, opts.agent);
-        await withManager<MemoryManager>({
-          getManager: () => getMemorySearchManager({ cfg, agentId }),
-          onMissing: (error) => defaultRuntime.log(error ?? "Memory search disabled."),
-          onCloseError: (err) =>
-            defaultRuntime.error(`Memory manager close failed: ${formatErrorMessage(err)}`),
-          close: async (manager) => {
-            await manager.close?.();
-          },
+        await withMemoryManagerForAgent({
+          cfg,
+          agentId,
           run: async (manager) => {
             let results: Awaited<ReturnType<typeof manager.search>>;
             try {

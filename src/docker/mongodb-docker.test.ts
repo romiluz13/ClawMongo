@@ -17,7 +17,7 @@ vi.mock("../infra/openclaw-root.js", () => ({
 
 // Mock mongodb driver
 const mockMongoClientCloseFn = vi.hoisted(() => vi.fn(async () => {}));
-const mockMongoClientConnectFn = vi.hoisted(() => vi.fn(async () => {}));
+const mockMongoClientConnectFn = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => {}));
 const mockMongoClientDbFn = vi.hoisted(() =>
   vi.fn(() => ({
     admin: () => ({
@@ -144,7 +144,8 @@ describe("detectExistingMongoDB", () => {
 
   it("falls back to authenticated URI when unauthenticated URI fails", async () => {
     const { detectExistingMongoDB } = await import("./mongodb-docker.js");
-    mockMongoClientConnectFn.mockImplementation(async (uri: string) => {
+    mockMongoClientConnectFn.mockImplementation(async (...args: unknown[]) => {
+      const uri = typeof args[0] === "string" ? args[0] : undefined;
       if (uri === "mongodb://localhost:27017/openclaw") {
         throw new Error("authentication failed");
       }

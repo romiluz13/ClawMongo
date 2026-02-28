@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 
 // ---------------------------------------------------------------------------
 // Mock chokidar before any imports that use it
@@ -100,35 +101,37 @@ import { MongoDBMemoryManager } from "./mongodb-manager.js";
 function makeConfig(
   overrides?: Partial<ResolvedMemoryBackendConfig["mongodb"]>,
 ): ResolvedMemoryBackendConfig {
+  const mongodb = {
+    uri: "mongodb://localhost:27017",
+    database: "testdb",
+    collectionPrefix: "test_",
+    deploymentProfile: "community-bare",
+    embeddingMode: "managed",
+    fusionMethod: "js-merge",
+    quantization: "none",
+    watchDebounceMs: 500,
+    numDimensions: 1024,
+    maxPoolSize: 10,
+    minPoolSize: 0,
+    embeddingCacheTtlDays: 30,
+    memoryTtlDays: 0,
+    enableChangeStreams: false,
+    changeStreamDebounceMs: 1000,
+    connectTimeoutMs: 10_000,
+    numCandidates: 200,
+    kb: {
+      enabled: true,
+      chunking: { tokens: 600, overlap: 100 },
+      autoImportPaths: [],
+      maxDocumentSize: 10 * 1024 * 1024,
+      autoRefreshHours: 24,
+    },
+    ...overrides,
+  } as ResolvedMemoryBackendConfig["mongodb"];
   return {
     backend: "mongodb",
     citations: "auto",
-    mongodb: {
-      uri: "mongodb://localhost:27017",
-      database: "testdb",
-      collectionPrefix: "test_",
-      deploymentProfile: "community-bare",
-      embeddingMode: "managed",
-      fusionMethod: "js-merge",
-      quantization: "none",
-      watchDebounceMs: 500,
-      numDimensions: 1024,
-      maxPoolSize: 10,
-      embeddingCacheTtlDays: 30,
-      memoryTtlDays: 0,
-      enableChangeStreams: false,
-      changeStreamDebounceMs: 1000,
-      connectTimeoutMs: 10_000,
-      numCandidates: 200,
-      kb: {
-        enabled: true,
-        chunking: { tokens: 600, overlap: 100 },
-        autoImportPaths: [],
-        maxDocumentSize: 10 * 1024 * 1024,
-        autoRefreshHours: 24,
-      },
-      ...overrides,
-    },
+    mongodb,
   };
 }
 
@@ -139,7 +142,7 @@ async function createManager(
   const manager = await MongoDBMemoryManager.create({
     cfg: {
       agents: { defaults: { workspace: "/workspace" } },
-    } as any,
+    } as unknown as OpenClawConfig,
     agentId: "main",
     resolved,
   });
@@ -420,7 +423,7 @@ describe("resolveMemoryBackendConfig — watchDebounceMs", () => {
           uri: "mongodb://localhost:27017",
         },
       },
-    } as any;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.watchDebounceMs).toBe(500);
   });
@@ -436,7 +439,7 @@ describe("resolveMemoryBackendConfig — watchDebounceMs", () => {
           watchDebounceMs: 2000,
         },
       },
-    } as any;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.watchDebounceMs).toBe(2000);
   });

@@ -41,7 +41,12 @@ describe("MongoDBChangeStreamWatcher", () => {
   let mockStream: ReturnType<typeof createMockStream>;
   let mockCol: Collection;
   let callback: ChangeStreamCallback;
-  let callbackArgs: Array<{ operationType: string; paths: string[]; timestamp: Date }>;
+  let callbackArgs: Array<{
+    operationType: string;
+    paths: string[];
+    timestamp: Date;
+    resumeToken?: unknown;
+  }>;
 
   beforeEach(() => {
     vi.useFakeTimers();

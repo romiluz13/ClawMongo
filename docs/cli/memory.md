@@ -27,6 +27,7 @@ openclaw memory index
 openclaw memory index --verbose
 openclaw memory search "release checklist"
 openclaw memory smoke
+openclaw memory search --query "release checklist"
 openclaw memory status --agent main
 openclaw memory index --agent main --verbose
 openclaw memory relevance explain --query "release checklist" --deep
@@ -41,6 +42,12 @@ Common:
 
 - `--agent <id>`: scope to a single agent (default: all configured agents).
 - `--verbose`: emit detailed logs during probes and indexing.
+
+`memory search`:
+
+- Query input: pass either positional `[query]` or `--query <text>`.
+- If both are provided, `--query` wins.
+- If neither is provided, the command exits with an error.
 
 Notes:
 

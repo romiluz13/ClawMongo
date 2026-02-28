@@ -1,5 +1,6 @@
 import type { Collection, Db, Document } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 
 // ---------------------------------------------------------------------------
 // Phase 5: Performance Optimization tests
@@ -246,7 +247,10 @@ describe("Phase 5: minPoolSize config", () => {
         mongodb: { uri: "mongodb://localhost:27017" },
       },
     };
-    const resolved = resolveMemoryBackendConfig({ cfg: cfg as any, agentId: "main" });
+    const resolved = resolveMemoryBackendConfig({
+      cfg: cfg as unknown as OpenClawConfig,
+      agentId: "main",
+    });
     expect(resolved.mongodb!.minPoolSize).toBe(2);
   });
 
@@ -259,7 +263,10 @@ describe("Phase 5: minPoolSize config", () => {
         mongodb: { uri: "mongodb://localhost:27017", minPoolSize: 5 },
       },
     };
-    const resolved = resolveMemoryBackendConfig({ cfg: cfg as any, agentId: "main" });
+    const resolved = resolveMemoryBackendConfig({
+      cfg: cfg as unknown as OpenClawConfig,
+      agentId: "main",
+    });
     expect(resolved.mongodb!.minPoolSize).toBe(5);
   });
 
@@ -272,7 +279,10 @@ describe("Phase 5: minPoolSize config", () => {
         mongodb: { uri: "mongodb://localhost:27017", minPoolSize: -1 },
       },
     };
-    const resolved = resolveMemoryBackendConfig({ cfg: cfg as any, agentId: "main" });
+    const resolved = resolveMemoryBackendConfig({
+      cfg: cfg as unknown as OpenClawConfig,
+      agentId: "main",
+    });
     expect(resolved.mongodb!.minPoolSize).toBe(2);
   });
 });

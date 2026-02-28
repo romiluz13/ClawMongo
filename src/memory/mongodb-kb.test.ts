@@ -1,7 +1,8 @@
-import type { Collection, Db } from "mongodb";
+/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the schema module before imports

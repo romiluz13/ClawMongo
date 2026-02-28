@@ -18,14 +18,18 @@ function createMockPrompter(responses: {
 }): WizardPrompter {
   const selectResponses = [...(responses.selectResponses ?? [])];
   const textResponses = [...(responses.textResponses ?? [])];
+  const select = vi.fn(async <T>() => selectResponses.shift() as T) as WizardPrompter["select"];
+  const multiselect = vi.fn(async () => []) as WizardPrompter["multiselect"];
+  const text = vi.fn(async () => textResponses.shift() ?? "") as WizardPrompter["text"];
+  const confirm = vi.fn(async () => true) as WizardPrompter["confirm"];
   return {
     intro: vi.fn(async () => {}),
     outro: vi.fn(async () => {}),
     note: vi.fn(async () => {}),
-    select: vi.fn(async () => selectResponses.shift()),
-    multiselect: vi.fn(async () => []),
-    text: vi.fn(async () => textResponses.shift() ?? ""),
-    confirm: vi.fn(async () => true),
+    select,
+    multiselect,
+    text,
+    confirm,
     progress: vi.fn(() => ({ update: vi.fn(), stop: vi.fn() })),
   };
 }
