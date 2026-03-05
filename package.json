@@ -1,5 +1,5 @@
 {
-  "name": "openclaw",
+  "name": "@romiluz/clawmongo",
   "version": "2026.3.3",
   "description": "Multi-channel AI gateway with extensible messaging integrations",
   "keywords": [],
