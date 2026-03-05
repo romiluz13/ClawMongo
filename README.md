@@ -1,7 +1,7 @@
 # 🦞 ClawMongo — MongoDB-First OpenClaw
 
 <p align="center">
-  <img src="./README-header.png" alt="ClawMongo" width="100%">
+  <img src="./README-clawmongo-header.png" alt="ClawMongo" width="100%">
 </p>
 
 <p align="center">
