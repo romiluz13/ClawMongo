@@ -80,9 +80,9 @@ Routing guidance:
 
 ClawMongo is community-first.
 
-### Official ClawMongo v1 target
+### Official ClawMongo target
 
-Use `community-mongot` with managed embeddings:
+Use `community-mongot` with automatic embeddings:
 
 ```json5
 {
@@ -90,7 +90,7 @@ Use `community-mongot` with managed embeddings:
     mongodb: {
       uri: "mongodb://localhost:27017/openclaw?replicaSet=rs0",
       deploymentProfile: "community-mongot",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     },
   },
 }
@@ -102,45 +102,36 @@ Or via environment:
 export OPENCLAW_MONGODB_URI="mongodb://localhost:27017/openclaw?replicaSet=rs0"
 ```
 
-### Deployment profiles
+ClawMongo supports one official deployment profile:
 
-| Profile            | Role in ClawMongo                      | Retrieval shape                           |
-| ------------------ | -------------------------------------- | ----------------------------------------- |
-| `community-mongot` | Official ClawMongo target              | lexical + vector + hybrid when configured |
-| `community-bare`   | Degraded fallback                      | lexical only via `$text`                  |
-| `atlas-default`    | Later supported path, not the baseline | managed embeddings only                   |
-| `atlas-m0`         | Later supported path, not the baseline | managed embeddings only                   |
+| Profile            | Role in ClawMongo        | Retrieval shape           |
+| ------------------ | ------------------------ | ------------------------- |
+| `community-mongot` | Official and only target | lexical + vector + hybrid |
 
 ### Embeddings
 
-ClawMongo defaults to `embeddingMode: "managed"`.
+ClawMongo defaults to `embeddingMode: "automated"`.
 
-That means embeddings come from a configured provider or local model. If no
-embedding provider is configured:
-
-- sync still works
-- lexical retrieval still works where available
-- vector and hybrid retrieval stay disabled until embeddings are configured
-
-ClawMongo does not use Atlas automated embedding as the default path.
+That means MongoDB generates embeddings inside the supported Community +
+`mongot` stack. ClawMongo does not require an external embedding provider for
+its official path.
 
 ## Community-first caveat
 
-MongoDB's own docs describe Community Search and Vector Search as preview and
-require both `mongod` and `mongot` for the self-managed Search path. ClawMongo
-supports this as the community-first target, but the launch story should remain
-preview-aware and precise.
+MongoDB's own docs describe Community Search, Vector Search, and automatic
+embeddings as preview features and require both `mongod` and `mongot` for the
+self-managed Search path. ClawMongo supports this exact stack, but the launch
+story should remain preview-aware and precise.
 
 ## Search behavior
 
 ClawMongo searches only from MongoDB at runtime.
 
-The backend tries the best available path for the connected deployment:
+The backend tries the best available path for the supported deployment:
 
 1. hybrid fusion when lexical and vector are both available
 2. vector-only search when vectors are available but lexical is not
 3. lexical Search when `mongot` search is available
-4. `$text` fallback when running `community-bare`
 
 The runtime never silently switches back to SQLite or QMD.
 

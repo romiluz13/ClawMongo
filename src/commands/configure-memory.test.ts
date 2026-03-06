@@ -45,35 +45,35 @@ describe("configureMemorySection", () => {
     mockAttemptAutoSetup.mockResolvedValue({ success: false, reason: "Auto-setup unavailable" });
   });
 
-  it("uses managed embeddings by default for atlas profile", async () => {
+  it("pins ClawMongo to community-mongot with automated embeddings", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
-    mockSelect.mockResolvedValueOnce("atlas-default").mockResolvedValueOnce("skip");
-    mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
+    mockSelect.mockResolvedValueOnce("skip");
+    mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
     const result = await configureMemorySection({}, createRuntime());
 
     expect(result.memory?.backend).toBeUndefined();
-    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
+    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(mockNote).toHaveBeenCalledWith(
-      expect.stringContaining("does not use Atlas automated embeddings as the default path"),
-      "Atlas Profile",
+      expect.stringContaining("pinned to MongoDB Community + mongot with automatic embeddings"),
+      "Memory",
     );
   });
 
-  it("disables change streams by default for community-bare profile", async () => {
+  it("disables change streams by default on standalone community setup", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
-    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
-    // Atlas URI avoids topology probing in this unit test.
-    mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
+    mockSelect.mockResolvedValueOnce("skip");
+    mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
     const result = await configureMemorySection({}, createRuntime());
 
     expect(result.memory?.backend).toBeUndefined();
-    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
-    expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
+    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
+    expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
   });
 
   it("preserves existing explicit change-stream setting", async () => {
@@ -84,8 +84,8 @@ describe("configureMemorySection", () => {
         mongodb: { enableChangeStreams: false },
       },
     };
-    mockSelect.mockResolvedValueOnce("atlas-default").mockResolvedValueOnce("skip");
-    mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
+    mockSelect.mockResolvedValueOnce("skip");
+    mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
     const result = await configureMemorySection(config, createRuntime());
@@ -100,7 +100,7 @@ describe("configureMemorySection", () => {
       success: false,
       reason: "Docker is not installed. Enter a MongoDB URI manually.",
     });
-    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
@@ -114,7 +114,7 @@ describe("configureMemorySection", () => {
 
   it("replaces legacy backend config with MongoDB-only memory settings", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
-    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false);
 

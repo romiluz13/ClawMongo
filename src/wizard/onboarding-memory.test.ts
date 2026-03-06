@@ -53,7 +53,7 @@ describe("setupMemoryBackend", () => {
       },
     };
     const prompter = createMockPrompter({
-      selectResponses: ["community-bare", "skip"],
+      selectResponses: ["skip"],
       textResponses: ["mongodb://localhost:27017/openclaw"],
     });
 
@@ -64,7 +64,8 @@ describe("setupMemoryBackend", () => {
     expect(result.memory?.backend).toBeUndefined();
     expect("qmd" in (result.memory ?? {})).toBe(false);
     expect(result.memory?.mongodb?.uri).toBe("mongodb://localhost:27017/openclaw");
-    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-bare");
+    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
     expect(prompter.note).toHaveBeenCalledWith(
       'Legacy memory backend "qmd" detected. ClawMongo will replace it with MongoDB.',
@@ -72,35 +73,32 @@ describe("setupMemoryBackend", () => {
     );
   });
 
-  it("prompts for URI and auto-suggests atlas-default for Atlas URIs", async () => {
+  it("pins onboarding to community-mongot with automated embeddings", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const prompter = createMockPrompter({
-      selectResponses: ["atlas-default", "skip"],
-      textResponses: ["mongodb+srv://user:pass@cluster.mongodb.net/"],
+      selectResponses: ["skip"],
+      textResponses: ["mongodb://localhost:27017/openclaw"],
     });
 
     const result = await setupMemoryBackend({}, prompter);
 
     expect(result.memory?.backend).toBeUndefined();
-    expect(result.memory?.mongodb?.uri).toBe("mongodb+srv://user:pass@cluster.mongodb.net/");
-    expect(result.memory?.mongodb?.deploymentProfile).toBe("atlas-default");
-    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
-    const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
-    expect(selectCalls[0]?.[0].initialValue).toBe("atlas-default");
+    expect(result.memory?.mongodb?.uri).toBe("mongodb://localhost:27017/openclaw");
+    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
   });
 
-  it("defaults community-mongot to managed embeddings", async () => {
+  it("defaults community-mongot to automated embeddings", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const prompter = createMockPrompter({
-      selectResponses: ["community-mongot", "skip"],
+      selectResponses: ["skip"],
       textResponses: ["mongodb://localhost:27017/openclaw"],
-      confirmResponses: [false],
     });
 
     const result = await setupMemoryBackend({}, prompter);
 
     expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
-    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
   });
 
   it("preserves explicit change stream settings", async () => {
@@ -111,7 +109,7 @@ describe("setupMemoryBackend", () => {
       },
     };
     const prompter = createMockPrompter({
-      selectResponses: ["community-bare", "skip"],
+      selectResponses: ["skip"],
       textResponses: ["mongodb://localhost:27017/openclaw"],
     });
 
@@ -128,7 +126,7 @@ describe("setupMemoryBackend", () => {
     });
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const prompter = createMockPrompter({
-      selectResponses: ["community-bare", "skip"],
+      selectResponses: ["skip"],
       textResponses: ["mongodb://localhost:27017/openclaw"],
     });
 

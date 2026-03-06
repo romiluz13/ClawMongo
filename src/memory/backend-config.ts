@@ -81,7 +81,7 @@ const DEFAULT_BACKEND = "mongodb";
 const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
-const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "managed";
+const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "automated";
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -115,22 +115,27 @@ export function resolveMemoryBackendConfig(params: {
       mongoCfg?.deploymentProfile ?? DEFAULT_MONGODB_PROFILE;
     const embeddingMode = mongoCfg?.embeddingMode ?? DEFAULT_MONGODB_EMBEDDING_MODE;
 
-    if (deploymentProfile === "community-bare" && embeddingMode === "automated") {
+    if (uri.includes(".mongodb.net")) {
       throw new Error(
         [
-          'embeddingMode "automated" is not supported for deploymentProfile "community-bare".',
-          'Use embeddingMode "managed" or switch to deploymentProfile "community-mongot".',
+          "ClawMongo supports only MongoDB Community with mongot as the official deployment path.",
+          "Atlas URIs (*.mongodb.net) are not part of the supported ClawMongo contract.",
         ].join(" "),
       );
     }
-    if (
-      (deploymentProfile === "atlas-default" || deploymentProfile === "atlas-m0") &&
-      embeddingMode === "automated"
-    ) {
+    if (deploymentProfile !== "community-mongot") {
       throw new Error(
         [
-          'embeddingMode "automated" is not supported for Atlas deployment profiles in ClawMongo.',
-          'Use embeddingMode "managed" for Atlas deployments.',
+          `deploymentProfile "${deploymentProfile}" is not supported in ClawMongo.`,
+          'Use deploymentProfile "community-mongot".',
+        ].join(" "),
+      );
+    }
+    if (embeddingMode !== "automated") {
+      throw new Error(
+        [
+          `embeddingMode "${embeddingMode}" is not supported in ClawMongo.`,
+          'Use embeddingMode "automated" with community-mongot.',
         ].join(" "),
       );
     }

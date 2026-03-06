@@ -54,7 +54,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.database).toBe("openclaw");
     expect(resolved.mongodb!.collectionPrefix).toBe("openclaw_main_");
     expect(resolved.mongodb!.deploymentProfile).toBe("community-mongot");
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(resolved.mongodb!.embeddingMode).toBe("automated");
     expect(resolved.mongodb!.fusionMethod).toBe("scoreFusion");
     expect(resolved.mongodb!.quantization).toBe("none");
     expect(resolved.mongodb!.relevance.enabled).toBe(true);
@@ -78,22 +78,22 @@ describe("resolveMemoryBackendConfig", () => {
       memory: {
         backend: "mongodb",
         mongodb: {
-          uri: "mongodb+srv://atlas.example.com",
+          uri: "mongodb://localhost:27017",
           database: "mydb",
           collectionPrefix: "custom_",
           deploymentProfile: "community-mongot",
-          embeddingMode: "managed",
+          embeddingMode: "automated",
           fusionMethod: "rankFusion",
           quantization: "scalar",
         },
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.uri).toBe("mongodb+srv://atlas.example.com");
+    expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("mydb");
     expect(resolved.mongodb!.collectionPrefix).toBe("custom_");
     expect(resolved.mongodb!.deploymentProfile).toBe("community-mongot");
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(resolved.mongodb!.embeddingMode).toBe("automated");
     expect(resolved.mongodb!.fusionMethod).toBe("rankFusion");
     expect(resolved.mongodb!.quantization).toBe("scalar");
   });
@@ -280,7 +280,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.changeStreamDebounceMs).toBe(1000);
   });
 
-  it("defaults embeddingMode to managed for community-mongot profile", () => {
+  it("defaults embeddingMode to automated for community-mongot profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -292,10 +292,10 @@ describe("resolveMemoryBackendConfig", () => {
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(resolved.mongodb!.embeddingMode).toBe("automated");
   });
 
-  it("defaults embeddingMode to managed for community-bare profile", () => {
+  it("rejects unsupported community-bare profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -306,26 +306,28 @@ describe("resolveMemoryBackendConfig", () => {
         },
       },
     } as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
+      /deploymentProfile "community-bare" is not supported/,
+    );
   });
 
-  it("defaults embeddingMode to managed for atlas-m0 profile", () => {
+  it("rejects unsupported atlas profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
         backend: "mongodb",
         mongodb: {
-          uri: "mongodb+srv://atlas.example.com",
+          uri: "mongodb://localhost:27017",
           deploymentProfile: "atlas-m0",
         },
       },
     } as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("managed");
+    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
+      /deploymentProfile "atlas-m0" is not supported/,
+    );
   });
 
-  it("respects explicit embeddingMode override regardless of profile", () => {
+  it("rejects unsupported managed embedding mode", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -333,12 +335,13 @@ describe("resolveMemoryBackendConfig", () => {
         mongodb: {
           uri: "mongodb://localhost:27017",
           deploymentProfile: "community-mongot",
-          embeddingMode: "automated",
+          embeddingMode: "managed",
         },
       },
     } as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
+      /embeddingMode "managed" is not supported/,
+    );
   });
 
   it("caps numCandidates at 10000 in config resolution (F1)", () => {

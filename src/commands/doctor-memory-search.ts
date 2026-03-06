@@ -27,7 +27,7 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
           `Legacy memory backend "${legacyBackend}" is no longer supported in ClawMongo.`,
           "",
           "Fix:",
-          `- Remove legacy backend config and set ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb+srv://...")}`,
+          `- Remove legacy backend config and set ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb://localhost:27017/openclaw?replicaSet=rs0")}`,
         ].join("\n"),
         "Memory (MongoDB)",
       );
@@ -38,7 +38,7 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
         "MongoDB memory is active but no URI is set.",
         "",
         "Fix:",
-        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb+srv://...")}`,
+        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb://localhost:27017/openclaw?replicaSet=rs0")}`,
         "- Or set OPENCLAW_MONGODB_URI in the environment",
       ].join("\n"),
       "Memory (MongoDB)",

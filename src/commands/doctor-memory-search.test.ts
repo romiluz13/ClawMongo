@@ -100,7 +100,7 @@ describe("noteMemorySearchHealth", () => {
         uri: "mongodb://localhost:27017/openclaw",
         database: "openclaw",
         collectionPrefix: "openclaw_",
-        deploymentProfile: "community-bare",
+        deploymentProfile: "community-mongot",
       },
     });
   });
