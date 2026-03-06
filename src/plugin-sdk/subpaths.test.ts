@@ -28,7 +28,6 @@ const bundledExtensionSubpathLoaders = [
   { id: "matrix", load: () => import("openclaw/plugin-sdk/matrix") },
   { id: "mattermost", load: () => import("openclaw/plugin-sdk/mattermost") },
   { id: "memory-core", load: () => import("openclaw/plugin-sdk/memory-core") },
-  { id: "memory-lancedb", load: () => import("openclaw/plugin-sdk/memory-lancedb") },
   {
     id: "minimax-portal-auth",
     load: () => import("openclaw/plugin-sdk/minimax-portal-auth"),

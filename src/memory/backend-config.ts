@@ -1,12 +1,9 @@
 import type { OpenClawConfig } from "../config/config.js";
-import type { SessionSendPolicyConfig } from "../config/types.base.js";
 import type {
-  MemoryBackend,
   MemoryCitationsMode,
   MemoryMongoDBDeploymentProfile,
   MemoryMongoDBEmbeddingMode,
   MemoryMongoDBFusionMethod,
-  MemoryQmdSearchMode,
 } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
@@ -76,62 +73,11 @@ export type ResolvedMongoDBConfig = {
 };
 
 export type ResolvedMemoryBackendConfig = {
-  backend: MemoryBackend;
+  backend: "mongodb";
   citations: MemoryCitationsMode;
-  qmd?: ResolvedQmdConfig;
   mongodb?: ResolvedMongoDBConfig;
 };
-
-export type ResolvedQmdCollection = {
-  name: string;
-  path: string;
-  pattern: string;
-  kind: "memory" | "custom" | "sessions";
-};
-
-export type ResolvedQmdUpdateConfig = {
-  intervalMs: number;
-  debounceMs: number;
-  onBoot: boolean;
-  waitForBootSync: boolean;
-  embedIntervalMs: number;
-  commandTimeoutMs: number;
-  updateTimeoutMs: number;
-  embedTimeoutMs: number;
-};
-
-export type ResolvedQmdLimitsConfig = {
-  maxResults: number;
-  maxSnippetChars: number;
-  maxInjectedChars: number;
-  timeoutMs: number;
-};
-
-export type ResolvedQmdSessionConfig = {
-  enabled: boolean;
-  exportDir?: string;
-  retentionDays?: number;
-};
-
-export type ResolvedQmdMcporterConfig = {
-  enabled: boolean;
-  serverName: string;
-  startDaemon: boolean;
-};
-
-export type ResolvedQmdConfig = {
-  command: string;
-  mcporter: ResolvedQmdMcporterConfig;
-  searchMode: MemoryQmdSearchMode;
-  collections: ResolvedQmdCollection[];
-  sessions: ResolvedQmdSessionConfig;
-  update: ResolvedQmdUpdateConfig;
-  limits: ResolvedQmdLimitsConfig;
-  includeDefaultMemory: boolean;
-  scope?: SessionSendPolicyConfig;
-};
-
-const DEFAULT_BACKEND: MemoryBackend = "mongodb";
+const DEFAULT_BACKEND = "mongodb";
 const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
@@ -372,7 +318,7 @@ export function resolveMemoryBackendConfig(params: {
   throw new Error(`Unsupported memory backend: ${String(backend)}`);
 }
 
-function buildLegacyBackendError(backend: Exclude<MemoryBackend, "mongodb">): string {
+function buildLegacyBackendError(backend: "builtin" | "qmd"): string {
   return [
     `Legacy memory backend "${backend}" is no longer supported in ClawMongo.`,
     "ClawMongo is MongoDB-only.",

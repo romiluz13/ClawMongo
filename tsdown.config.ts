@@ -31,7 +31,6 @@ const pluginSdkEntrypoints = [
   "matrix",
   "mattermost",
   "memory-core",
-  "memory-lancedb",
   "minimax-portal-auth",
   "nextcloud-talk",
   "nostr",
