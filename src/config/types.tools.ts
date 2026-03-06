@@ -354,23 +354,6 @@ export type MemorySearchConfig = {
     /** Optional cache directory for local models. */
     modelCacheDir?: string;
   };
-  /** Index storage configuration. */
-  store?: {
-    driver?: "sqlite";
-    path?: string;
-    vector?: {
-      /** Enable sqlite-vec extension for vector search (default: true). */
-      enabled?: boolean;
-      /** Optional override path to sqlite-vec extension (.dylib/.so/.dll). */
-      extensionPath?: string;
-    };
-    cache?: {
-      /** Enable embedding cache (default: true). */
-      enabled?: boolean;
-      /** Optional max cache entries per provider/model. */
-      maxEntries?: number;
-    };
-  };
   /** Chunking configuration. */
   chunking?: {
     tokens?: number;

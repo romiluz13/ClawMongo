@@ -600,20 +600,6 @@ export const MemorySearchSchema = z
       })
       .strict()
       .optional(),
-    store: z
-      .object({
-        driver: z.literal("sqlite").optional(),
-        path: z.string().optional(),
-        vector: z
-          .object({
-            enabled: z.boolean().optional(),
-            extensionPath: z.string().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
     chunking: z
       .object({
         tokens: z.number().int().positive().optional(),

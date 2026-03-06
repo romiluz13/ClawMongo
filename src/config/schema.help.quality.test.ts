@@ -54,9 +54,6 @@ const TARGET_KEYS = [
   "agents.defaults.memorySearch.remote.batch.pollIntervalMs",
   "agents.defaults.memorySearch.remote.batch.timeoutMinutes",
   "agents.defaults.memorySearch.local.modelPath",
-  "agents.defaults.memorySearch.store.path",
-  "agents.defaults.memorySearch.store.vector.enabled",
-  "agents.defaults.memorySearch.store.vector.extensionPath",
   "agents.defaults.memorySearch.query.hybrid.enabled",
   "agents.defaults.memorySearch.query.hybrid.vectorWeight",
   "agents.defaults.memorySearch.query.hybrid.textWeight",
@@ -597,12 +594,6 @@ describe("config help copy quality", () => {
     expect(help.includes('"off"')).toBe(true);
     expect(/always|always shows/i.test(help)).toBe(true);
     expect(/hides|hide/i.test(help)).toBe(true);
-  });
-
-  it("includes concrete examples on path fields", () => {
-    expect(FIELD_HELP["agents.defaults.memorySearch.store.path"]).toContain(
-      "~/.openclaw/memory/{agentId}.sqlite",
-    );
   });
 
   it("documents cron deprecation, migration, and retention formats", () => {

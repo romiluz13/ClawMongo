@@ -1,9 +1,6 @@
-import os from "node:os";
-import path from "node:path";
 import type { OpenClawConfig, MemorySearchConfig } from "../config/config.js";
-import { resolveStateDir } from "../config/paths.js";
 import type { SecretInput } from "../config/types.secrets.js";
-import { clampInt, clampNumber, resolveUserPath } from "../utils.js";
+import { clampInt, clampNumber } from "../utils.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 
 export type ResolvedMemorySearchConfig = {
@@ -31,14 +28,6 @@ export type ResolvedMemorySearchConfig = {
   local: {
     modelPath?: string;
     modelCacheDir?: string;
-  };
-  store: {
-    driver: "sqlite";
-    path: string;
-    vector: {
-      enabled: boolean;
-      extensionPath?: string;
-    };
   };
   chunking: {
     tokens: number;
@@ -122,16 +111,6 @@ function normalizeSources(
   return Array.from(normalized);
 }
 
-function resolveStorePath(agentId: string, raw?: string): string {
-  const stateDir = resolveStateDir(process.env, os.homedir);
-  const fallback = path.join(stateDir, "memory", `${agentId}.sqlite`);
-  if (!raw) {
-    return fallback;
-  }
-  const withToken = raw.includes("{agentId}") ? raw.replaceAll("{agentId}", agentId) : raw;
-  return resolveUserPath(withToken);
-}
-
 function mergeConfig(
   defaults: MemorySearchConfig | undefined,
   overrides: MemorySearchConfig | undefined,
@@ -213,16 +192,6 @@ function mergeConfig(
     .map((value) => value.trim())
     .filter(Boolean);
   const extraPaths = Array.from(new Set(rawPaths));
-  const vector = {
-    enabled: overrides?.store?.vector?.enabled ?? defaults?.store?.vector?.enabled ?? true,
-    extensionPath:
-      overrides?.store?.vector?.extensionPath ?? defaults?.store?.vector?.extensionPath,
-  };
-  const store = {
-    driver: overrides?.store?.driver ?? defaults?.store?.driver ?? "sqlite",
-    path: resolveStorePath(agentId, overrides?.store?.path ?? defaults?.store?.path),
-    vector,
-  };
   const chunking = {
     tokens: overrides?.chunking?.tokens ?? defaults?.chunking?.tokens ?? DEFAULT_CHUNK_TOKENS,
     overlap: overrides?.chunking?.overlap ?? defaults?.chunking?.overlap ?? DEFAULT_CHUNK_OVERLAP,
@@ -324,7 +293,6 @@ function mergeConfig(
     fallback,
     model,
     local,
-    store,
     chunking: { tokens: Math.max(1, chunking.tokens), overlap },
     sync: {
       ...sync,
