@@ -30,20 +30,28 @@ describe("diffConfigPaths", () => {
   it("does not report unchanged arrays of objects as changed", () => {
     const prev = {
       memory: {
-        qmd: {
-          paths: [{ path: "~/docs", pattern: "**/*.md", name: "docs" }],
-          scope: {
-            rules: [{ when: { channel: "slack" }, include: ["docs"] }],
+        mongodb: {
+          kb: {
+            autoImportPaths: [
+              {
+                path: "~/docs",
+                tags: ["docs"],
+              },
+            ],
           },
         },
       },
     };
     const next = {
       memory: {
-        qmd: {
-          paths: [{ path: "~/docs", pattern: "**/*.md", name: "docs" }],
-          scope: {
-            rules: [{ when: { channel: "slack" }, include: ["docs"] }],
+        mongodb: {
+          kb: {
+            autoImportPaths: [
+              {
+                path: "~/docs",
+                tags: ["docs"],
+              },
+            ],
           },
         },
       },
@@ -54,19 +62,23 @@ describe("diffConfigPaths", () => {
   it("reports changed arrays of objects", () => {
     const prev = {
       memory: {
-        qmd: {
-          paths: [{ path: "~/docs", pattern: "**/*.md", name: "docs" }],
+        mongodb: {
+          kb: {
+            autoImportPaths: [{ path: "~/docs", tags: ["docs"] }],
+          },
         },
       },
     };
     const next = {
       memory: {
-        qmd: {
-          paths: [{ path: "~/docs", pattern: "**/*.txt", name: "docs" }],
+        mongodb: {
+          kb: {
+            autoImportPaths: [{ path: "~/kb", tags: ["kb"] }],
+          },
         },
       },
     };
-    expect(diffConfigPaths(prev, next)).toContain("memory.qmd.paths");
+    expect(diffConfigPaths(prev, next)).toContain("memory.mongodb.kb.autoImportPaths");
   });
 });
 

@@ -213,10 +213,11 @@ async function continueMongoDBSetup(
     initialValue: suggestedProfile,
   });
 
-  // Default to MongoDB-managed automated embeddings whenever mongot is available.
+  // ClawMongo defaults to managed embeddings across profiles. Automated
+  // embeddings remain an explicit opt-in because Atlas does not provide them
+  // and Community support is still preview-only.
   const existingEmbeddingMode = config.memory?.mongodb?.embeddingMode;
-  const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode =
-    profile === "community-bare" ? "managed" : "automated";
+  const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode = "managed";
   const embeddingMode = existingEmbeddingMode ?? defaultEmbeddingMode;
   const existingEnableChangeStreams = config.memory?.mongodb?.enableChangeStreams;
   const defaultEnableChangeStreams =
@@ -453,7 +454,7 @@ async function offerKBImport(
     await ensureStandardIndexes(db, prefix);
 
     const { ingestFilesToKB } = await import("../memory/mongodb-kb.js");
-    const embeddingMode = mongoCfg?.embeddingMode ?? "automated";
+    const embeddingMode = mongoCfg?.embeddingMode ?? "managed";
 
     const result = await ingestFilesToKB({
       db,

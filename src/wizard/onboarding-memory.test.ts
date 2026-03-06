@@ -84,8 +84,23 @@ describe("setupMemoryBackend", () => {
     expect(result.memory?.backend).toBeUndefined();
     expect(result.memory?.mongodb?.uri).toBe("mongodb+srv://user:pass@cluster.mongodb.net/");
     expect(result.memory?.mongodb?.deploymentProfile).toBe("atlas-default");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
     const selectCalls = (prompter.select as ReturnType<typeof vi.fn>).mock.calls;
     expect(selectCalls[0]?.[0].initialValue).toBe("atlas-default");
+  });
+
+  it("defaults community-mongot to managed embeddings", async () => {
+    const { setupMemoryBackend } = await import("./onboarding-memory.js");
+    const prompter = createMockPrompter({
+      selectResponses: ["community-mongot", "skip"],
+      textResponses: ["mongodb://localhost:27017/openclaw"],
+      confirmResponses: [false],
+    });
+
+    const result = await setupMemoryBackend({}, prompter);
+
+    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
   });
 
   it("preserves explicit change stream settings", async () => {
