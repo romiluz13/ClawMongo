@@ -185,10 +185,6 @@ function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): st
   return [resolveDefaultAgentId(cfg)];
 }
 
-function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] {
-  return normalizeExtraMemoryPaths(workspaceDir, extraPaths).map((entry) => shortenHomePath(entry));
-}
-
 function hasRelevanceCapability(manager: MemoryManager): manager is RelevanceCapableManager {
   return (
     typeof (manager as Partial<RelevanceCapableManager>).relevanceExplain === "function" &&
@@ -462,7 +458,6 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
               workspaceDir,
               agentId,
               sources,
-              extraPaths: status.extraPaths,
             })
           : undefined;
         allResults.push({ agentId, status, embeddingProbe, indexError, scan });
@@ -499,21 +494,15 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
     }
     const requestedProvider = status.requestedProvider ?? status.provider;
     const modelLabel = status.model ?? status.provider;
-    const storePath = status.dbPath ? shortenHomePath(status.dbPath) : "<unknown>";
     const workspacePath = status.workspaceDir ? shortenHomePath(status.workspaceDir) : "<unknown>";
     const sourceList = status.sources?.length ? status.sources.join(", ") : null;
-    const extraPaths = status.workspaceDir
-      ? formatExtraPaths(status.workspaceDir, status.extraPaths ?? [])
-      : [];
     const lines = [
       `${heading("Memory Search")} ${muted(`(${agentId})`)}`,
       `${label("Provider")} ${info(status.provider)} ${muted(`(requested: ${requestedProvider})`)}`,
       `${label("Model")} ${info(modelLabel)}`,
       sourceList ? `${label("Sources")} ${info(sourceList)}` : null,
-      extraPaths.length ? `${label("Extra paths")} ${info(extraPaths.join(", "))}` : null,
       `${label("Indexed")} ${success(indexedLabel)}`,
       `${label("Dirty")} ${status.dirty ? warn("yes") : muted("no")}`,
-      `${label("Store")} ${info(storePath)}`,
       `${label("Workspace")} ${info(workspacePath)}`,
     ].filter(Boolean) as string[];
     const custom = status.custom && typeof status.custom === "object" ? status.custom : null;
@@ -616,9 +605,6 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         );
       }
     }
-    if (status.fallback) {
-      lines.push(`${label("Fallback")} ${warn(status.fallback.from)}`);
-    }
     if (status.vector) {
       const vectorState = status.vector.enabled
         ? status.vector.available === undefined
@@ -636,9 +622,6 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       lines.push(`${label("Vector")} ${colorize(rich, vectorColor, vectorState)}`);
       if (status.vector.dims) {
         lines.push(`${label("Vector dims")} ${info(String(status.vector.dims))}`);
-      }
-      if (status.vector.extensionPath) {
-        lines.push(`${label("Vector path")} ${info(shortenHomePath(status.vector.extensionPath))}`);
       }
       if (status.vector.loadError) {
         lines.push(`${label("Vector error")} ${warn(status.vector.loadError)}`);
@@ -683,9 +666,6 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       if (status.batch.lastError) {
         lines.push(`${label("Batch error")} ${warn(status.batch.lastError)}`);
       }
-    }
-    if (status.fallback?.reason) {
-      lines.push(muted(status.fallback.reason));
     }
     if (indexError) {
       lines.push(`${label("Index error")} ${warn(indexError)}`);
@@ -740,10 +720,13 @@ async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
   }
 
   if (resolvedBackend.backend !== "mongodb") {
-    const message = `memory backend is "${resolvedBackend.backend}", expected "mongodb"`;
+    const legacyBackend = String(
+      (resolvedBackend as unknown as { backend: string }).backend ?? "unknown",
+    );
+    const message = `memory backend is "${legacyBackend}", expected "mongodb"`;
     const result: MemorySmokeResult = {
       agentId,
-      backend: resolvedBackend.backend,
+      backend: legacyBackend,
       sync: "failed",
       writeReadRoundtrip: "failed",
       retrieval: "failed",
@@ -781,11 +764,12 @@ async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
   const manager = lookup.manager;
   const statusBackend = manager.status().backend;
   if (statusBackend !== "mongodb") {
-    const message = `runtime memory backend is "${statusBackend}", expected "mongodb"`;
+    const unexpectedBackend = String(statusBackend);
+    const message = `runtime memory backend is "${unexpectedBackend}", expected "mongodb"`;
     const result: MemorySmokeResult = {
       agentId,
       backend: resolvedBackend.backend,
-      statusBackend,
+      statusBackend: unexpectedBackend,
       sync: "failed",
       writeReadRoundtrip: "failed",
       retrieval: "failed",
@@ -1174,14 +1158,10 @@ export function registerMemoryCli(program: Command) {
                 const heading = (text: string) => colorize(rich, theme.heading, text);
                 const muted = (text: string) => colorize(rich, theme.muted, text);
                 const info = (text: string) => colorize(rich, theme.info, text);
-                const warn = (text: string) => colorize(rich, theme.warn, text);
                 const label = (text: string) => muted(`${text}:`);
                 const sourceLabels = (status.sources ?? []).map((source) =>
                   formatSourceLabel(source, status.workspaceDir ?? "", agentId),
                 );
-                const extraPaths = status.workspaceDir
-                  ? formatExtraPaths(status.workspaceDir, status.extraPaths ?? [])
-                  : [];
                 const requestedProvider = status.requestedProvider ?? status.provider;
                 const modelLabel = status.model ?? status.provider;
                 const lines = [
@@ -1193,13 +1173,7 @@ export function registerMemoryCli(program: Command) {
                   sourceLabels.length
                     ? `${label("Sources")} ${info(sourceLabels.join(", "))}`
                     : null,
-                  extraPaths.length
-                    ? `${label("Extra paths")} ${info(extraPaths.join(", "))}`
-                    : null,
                 ].filter(Boolean) as string[];
-                if (status.fallback) {
-                  lines.push(`${label("Fallback")} ${warn(status.fallback.from)}`);
-                }
                 defaultRuntime.log(lines.join("\n"));
                 defaultRuntime.log("");
               }
