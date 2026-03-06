@@ -9,7 +9,10 @@ set -euo pipefail
 
 MERGE=false
 FAIL_IF_BEHIND=false
+FAIL_IF_OUTSIDE_ALLOWLIST=false
 REF="origin/main"
+ALLOWLIST="scripts/upstream-drift-allowlist.txt"
+BASELINE="scripts/upstream-drift-baseline.txt"
 
 usage() {
   cat <<'EOF'
@@ -19,6 +22,12 @@ Options:
   --merge             Merge upstream/main into the current branch.
   --ref <git-ref>     Compare this ref to upstream/main (default: origin/main).
   --fail-if-behind    Exit non-zero if <ref> is behind upstream/main.
+  --fail-if-outside-allowlist
+                     Exit non-zero if fork-only drift falls outside the allowlist.
+  --allowlist <path> Allowlist of approved drift prefixes/files
+                     (default: scripts/upstream-drift-allowlist.txt).
+  --baseline <path>  Baseline of pre-existing fork drift to ignore when enforcing
+                     the allowlist (default: scripts/upstream-drift-baseline.txt).
   --help              Show this help.
 EOF
 }
@@ -33,12 +42,32 @@ while [[ $# -gt 0 ]]; do
       FAIL_IF_BEHIND=true
       shift
       ;;
+    --fail-if-outside-allowlist)
+      FAIL_IF_OUTSIDE_ALLOWLIST=true
+      shift
+      ;;
     --ref)
       if [[ $# -lt 2 ]]; then
         echo "Missing value for --ref"
         exit 1
       fi
       REF="$2"
+      shift 2
+      ;;
+    --allowlist)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --allowlist"
+        exit 1
+      fi
+      ALLOWLIST="$2"
+      shift 2
+      ;;
+    --baseline)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --baseline"
+        exit 1
+      fi
+      BASELINE="$2"
       shift 2
       ;;
     --help)
@@ -85,6 +114,55 @@ HEAD_AHEAD=$(git rev-list --count upstream/main..HEAD)
 echo "Compared ref ($REF): ${AHEAD} ahead, ${BEHIND} behind upstream/main"
 echo "Current branch ($HEAD_BRANCH): ${HEAD_AHEAD} ahead, ${HEAD_BEHIND} behind upstream/main"
 
+check_allowlist() {
+  local ref="$1"
+  local allowlist_path="$2"
+  local baseline_path="$3"
+
+  if [[ ! -f "$allowlist_path" ]]; then
+    echo "Allowlist file not found: $allowlist_path"
+    return 3
+  fi
+
+  mapfile -t allowed < <(grep -v '^\s*#' "$allowlist_path" | sed '/^\s*$/d')
+  local baseline=()
+  if [[ -f "$baseline_path" ]]; then
+    mapfile -t baseline < <(grep -v '^\s*#' "$baseline_path" | sed '/^\s*$/d')
+  fi
+  mapfile -t ahead_files < <(git diff --name-only upstream/main..."$ref")
+
+  local invalid=()
+  for file in "${ahead_files[@]}"; do
+    local matched=false
+    for prefix in "${allowed[@]}"; do
+      if [[ "$file" == "$prefix" || "$file" == "$prefix"* ]]; then
+        matched=true
+        break
+      fi
+    done
+    if [[ "$matched" == false ]]; then
+      for exact in "${baseline[@]}"; do
+        if [[ "$file" == "$exact" ]]; then
+          matched=true
+          break
+        fi
+      done
+    fi
+    if [[ "$matched" == false ]]; then
+      invalid+=("$file")
+    fi
+  done
+
+  if [[ "${#invalid[@]}" -eq 0 ]]; then
+    echo "Allowlist check passed ($allowlist_path; baseline: $baseline_path)."
+    return 0
+  fi
+
+  echo "Allowlist violations:"
+  printf '  %s\n' "${invalid[@]}"
+  return 4
+}
+
 if [[ "$BEHIND" -eq 0 ]]; then
   echo "Compared ref is up to date with upstream."
 else
@@ -113,6 +191,16 @@ if [[ "$FAIL_IF_BEHIND" == "true" && "$BEHIND" -gt 0 ]]; then
   echo ""
   echo "FAIL: $REF is behind upstream/main by $BEHIND commit(s)."
   exit 2
+fi
+
+if [[ "$FAIL_IF_OUTSIDE_ALLOWLIST" == "true" ]]; then
+  echo ""
+  echo "Checking approved drift allowlist..."
+  if ! check_allowlist "$REF" "$ALLOWLIST" "$BASELINE"; then
+    echo ""
+    echo "FAIL: fork drift extends outside $ALLOWLIST (after baseline $BASELINE)"
+    exit 3
+  fi
 fi
 
 if [[ "$MERGE" == "true" ]]; then
