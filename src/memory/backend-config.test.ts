@@ -53,8 +53,8 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("openclaw");
     expect(resolved.mongodb!.collectionPrefix).toBe("openclaw_main_");
-    expect(resolved.mongodb!.deploymentProfile).toBe("atlas-default");
-    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.deploymentProfile).toBe("community-mongot");
+    expect(resolved.mongodb!.embeddingMode).toBe("managed");
     expect(resolved.mongodb!.fusionMethod).toBe("scoreFusion");
     expect(resolved.mongodb!.quantization).toBe("none");
     expect(resolved.mongodb!.relevance.enabled).toBe(true);
@@ -280,7 +280,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.changeStreamDebounceMs).toBe(1000);
   });
 
-  it("defaults embeddingMode to automated for community-mongot profile", () => {
+  it("defaults embeddingMode to managed for community-mongot profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -292,7 +292,7 @@ describe("resolveMemoryBackendConfig", () => {
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.embeddingMode).toBe("managed");
   });
 
   it("defaults embeddingMode to managed for community-bare profile", () => {
@@ -310,7 +310,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.embeddingMode).toBe("managed");
   });
 
-  it("defaults embeddingMode to automated for atlas-m0 profile", () => {
+  it("defaults embeddingMode to managed for atlas-m0 profile", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -322,7 +322,7 @@ describe("resolveMemoryBackendConfig", () => {
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.embeddingMode).toBe("managed");
   });
 
   it("respects explicit embeddingMode override regardless of profile", () => {

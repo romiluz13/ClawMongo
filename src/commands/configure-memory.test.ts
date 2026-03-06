@@ -45,7 +45,7 @@ describe("configureMemorySection", () => {
     mockAttemptAutoSetup.mockResolvedValue({ success: false, reason: "Auto-setup unavailable" });
   });
 
-  it("enables change streams by default for atlas profile", async () => {
+  it("uses managed embeddings by default for atlas profile", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
     mockSelect.mockResolvedValueOnce("atlas-default").mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
@@ -54,11 +54,11 @@ describe("configureMemorySection", () => {
     const result = await configureMemorySection({}, createRuntime());
 
     expect(result.memory?.backend).toBeUndefined();
-    expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
+    expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(mockNote).toHaveBeenCalledWith(
-      expect.stringContaining("enables automated embeddings by default"),
-      "Automated Embeddings",
+      expect.stringContaining("does not use Atlas automated embeddings as the default path"),
+      "Atlas Profile",
     );
   });
 

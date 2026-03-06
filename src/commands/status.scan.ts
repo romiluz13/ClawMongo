@@ -60,6 +60,9 @@ function resolveMemoryPluginStatus(cfg: ReturnType<typeof loadConfig>): MemoryPl
   if (raw && raw.toLowerCase() === "none") {
     return { enabled: false, slot: null, reason: 'plugins.slots.memory="none"' };
   }
+  if (raw && raw !== "memory-core") {
+    return { enabled: false, slot: raw, reason: `unsupported memory slot "${raw}"` };
+  }
   return { enabled: true, slot: raw || "memory-core" };
 }
 
@@ -196,8 +199,12 @@ async function scanStatusJsonFast(opts: {
     : null;
   const channelsStatusPromise = resolveChannelsStatus({ gatewayReachable, opts });
   const memoryPlugin = resolveMemoryPluginStatus(cfg);
-  const memoryPromise = resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin });
-  const [channelsStatus, memory] = await Promise.all([channelsStatusPromise, memoryPromise]);
+  const memoryPromise = deferResult(
+    resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin }),
+  );
+  const [channelsStatus, memoryResult] = await Promise.all([channelsStatusPromise, memoryPromise]);
+  const memory = memoryResult.ok ? memoryResult.value : null;
+  const memoryError = memoryResult.ok ? null : String(memoryResult.error);
   const channelIssues = channelsStatus ? collectChannelStatusIssues(channelsStatus) : [];
 
   return {
@@ -218,6 +225,7 @@ async function scanStatusJsonFast(opts: {
     channels: { rows: [], details: [] },
     summary,
     memory,
+    memoryError,
     memoryPlugin,
   };
 }
@@ -307,7 +315,11 @@ export async function scanStatus(
 
       progress.setLabel("Checking memory…");
       const memoryPlugin = resolveMemoryPluginStatus(cfg);
-      const memory = await resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin });
+      const memoryResult = await deferResult(
+        resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin }),
+      );
+      const memory = memoryResult.ok ? memoryResult.value : null;
+      const memoryError = memoryResult.ok ? null : String(memoryResult.error);
       progress.tick();
 
       progress.setLabel("Reading sessions…");

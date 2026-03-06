@@ -453,9 +453,9 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
           await manager.probeVectorAvailability();
         }
         const status = manager.status();
-        const sources = (
-          status.sources?.length ? status.sources : ["memory"]
-        ) as MemorySourceName[];
+        const sources = status.sources?.filter(
+          (source): source is MemorySourceName => source === "memory" || source === "sessions",
+        ) ?? ["memory"];
         const workspaceDir = status.workspaceDir;
         const scan = workspaceDir
           ? await scanMemorySources({
@@ -516,6 +516,25 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       `${label("Store")} ${info(storePath)}`,
       `${label("Workspace")} ${info(workspacePath)}`,
     ].filter(Boolean) as string[];
+    const custom = status.custom && typeof status.custom === "object" ? status.custom : null;
+    const searchModes =
+      custom &&
+      "searchModes" in custom &&
+      custom.searchModes &&
+      typeof custom.searchModes === "object"
+        ? (custom.searchModes as {
+            vector?: boolean;
+            lexical?: boolean;
+            hybrid?: boolean;
+          })
+        : null;
+    const sourceCoverage =
+      custom &&
+      "sourceCoverage" in custom &&
+      custom.sourceCoverage &&
+      typeof custom.sourceCoverage === "object"
+        ? (custom.sourceCoverage as Record<string, boolean>)
+        : null;
     if (embeddingProbe) {
       const state = embeddingProbe.ok ? "ready" : "unavailable";
       const stateColor = embeddingProbe.ok ? theme.success : theme.warn;
@@ -537,13 +556,29 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         lines.push(`  ${accent(entry.source)} ${muted("·")} ${muted(counts)}`);
       }
     }
+    if (searchModes) {
+      lines.push(
+        `${label("Search modes")} ${info(
+          [
+            searchModes.lexical ? "lexical:on" : "lexical:off",
+            searchModes.vector ? "vector:on" : "vector:off",
+            searchModes.hybrid ? "hybrid:on" : "hybrid:off",
+          ].join(", "),
+        )}`,
+      );
+    }
+    if (sourceCoverage) {
+      lines.push(
+        `${label("Source coverage")} ${info(
+          Object.entries(sourceCoverage)
+            .map(([source, enabled]) => `${source}:${enabled ? "on" : "off"}`)
+            .join(", "),
+        )}`,
+      );
+    }
     const relevance =
-      status.custom &&
-      typeof status.custom === "object" &&
-      "relevance" in status.custom &&
-      status.custom.relevance &&
-      typeof status.custom.relevance === "object"
-        ? (status.custom.relevance as {
+      custom && "relevance" in custom && custom.relevance && typeof custom.relevance === "object"
+        ? (custom.relevance as {
             enabled?: boolean;
             telemetry?: { state?: string };
             sampleRate?: { current?: number };

@@ -19,9 +19,9 @@ export type MemoryMongoDBConfig = {
   database?: string;
   /** Collection prefix. Default: "openclaw_" */
   collectionPrefix?: string;
-  /** Deployment profile. Default: "atlas-default" */
+  /** Deployment profile. Default: "community-mongot" */
   deploymentProfile?: MemoryMongoDBDeploymentProfile;
-  /** Embedding mode. Default: profile-based ("automated" unless profile is "community-bare") */
+  /** Embedding mode. Default: "managed" */
   embeddingMode?: MemoryMongoDBEmbeddingMode;
   /** Hybrid search fusion method. Default: "scoreFusion" */
   fusionMethod?: MemoryMongoDBFusionMethod;

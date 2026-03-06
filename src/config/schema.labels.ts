@@ -762,7 +762,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "plugins.load": "Plugin Loader",
   "plugins.load.paths": "Plugin Load Paths",
   "plugins.slots": "Plugin Slots",
-  "plugins.slots.memory": "Memory Plugin",
+  "plugins.slots.memory": "Memory Slot",
   "plugins.entries": "Plugin Entries",
   "plugins.entries.*.enabled": "Plugin Enabled",
   "plugins.entries.*.apiKey": "Plugin API Key",

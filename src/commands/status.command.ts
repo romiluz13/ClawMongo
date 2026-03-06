@@ -389,6 +389,27 @@ export async function statusCommand(
       const cacheSummary = resolveMemoryCacheSummary(cache);
       parts.push(colorByTone(cacheSummary.tone, cacheSummary.text));
     }
+    const custom = memory.custom && typeof memory.custom === "object" ? memory.custom : null;
+    const searchModes =
+      custom &&
+      "searchModes" in custom &&
+      custom.searchModes &&
+      typeof custom.searchModes === "object"
+        ? (custom.searchModes as {
+            vector?: boolean;
+            lexical?: boolean;
+            hybrid?: boolean;
+          })
+        : null;
+    if (searchModes) {
+      parts.push(
+        [
+          searchModes.lexical ? "lexical on" : "lexical off",
+          searchModes.vector ? "vector on" : "vector off",
+          searchModes.hybrid ? "hybrid on" : "hybrid off",
+        ].join(", "),
+      );
+    }
     return parts.join(" · ");
   })();
 

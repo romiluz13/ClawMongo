@@ -115,7 +115,7 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     expect(prompt).toContain("memory_search FIRST");
     expect(prompt).toContain("memory_write");
     expect(prompt).toContain("kb_search");
-    expect(prompt).toContain("MEMORY.md is for informal scratch notes only");
+    expect(prompt).toContain("durable structured memory belongs in memory_write");
 
     // Bridge must appear AFTER the context files content (AGENTS.md/SOUL.md)
     const bridgeIndex = prompt.indexOf("## MongoDB Memory Integration");

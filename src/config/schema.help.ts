@@ -844,9 +844,9 @@ export const FIELD_HELP: Record<string, string> = {
   "plugins.load.paths":
     "Additional plugin files or directories scanned by the loader beyond built-in defaults. Use dedicated extension directories and avoid broad paths with unrelated executable content.",
   "plugins.slots":
-    "Selects which plugins own exclusive runtime slots such as memory so only one plugin provides that capability. Use explicit slot ownership to avoid overlapping providers with conflicting behavior.",
+    "Selects which plugins own exclusive runtime slots. ClawMongo keeps the memory slot only for upstream compatibility and supports only the Mongo-backed memory-core path.",
   "plugins.slots.memory":
-    'Select the active memory plugin by id, or "none" to disable memory plugins.',
+    'Select the active memory slot. ClawMongo supports only "memory-core" (or "none" to disable memory tools entirely).',
   "plugins.entries":
     "Per-plugin settings keyed by plugin ID including enablement and plugin-specific runtime configuration payloads. Use this for scoped plugin tuning without changing global loader policy.",
   "plugins.entries.*.enabled":

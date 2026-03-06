@@ -33,7 +33,7 @@ function buildMongoDBBridgeSection(params: {
   const tools = params.availableTools;
   const lines: string[] = [
     "## MongoDB Memory Integration",
-    "The MongoDB memory backend is active. These rules override any conflicting file-based guidance above:",
+    "The MongoDB memory backend is active. These rules define runtime memory routing without changing the workspace/bootstrap file roles above:",
     "- To recall: always call memory_search FIRST (not file reads)",
   ];
   if (!tools || tools.has("memory_write")) {
@@ -42,7 +42,10 @@ function buildMongoDBBridgeSection(params: {
   if (!tools || tools.has("kb_search")) {
     lines.push("- To find reference docs: use kb_search");
   }
-  lines.push("- MEMORY.md is for informal scratch notes only — NOT your primary memory", "");
+  lines.push(
+    "- MEMORY.md and memory/*.md stay useful for operator-authored notes, but durable structured memory belongs in memory_write",
+    "",
+  );
   return lines;
 }
 
@@ -103,7 +106,7 @@ function buildMemorySection(params: {
           '  - **project**: project-level info (e.g., "Project codename is Phoenix")',
           '  - **architecture**: technical decisions (e.g., "Using event-driven architecture")',
           "  Type+key is the dedup key — writing the same type+key updates the existing record.",
-          "  Use MEMORY.md only for informal scratch notes and working observations.",
+          "  Use MEMORY.md and memory/*.md for informal scratch notes and working observations.",
         ].join("\n"),
       );
     }

@@ -83,8 +83,9 @@ function resolveLegacySourceFilter(sessionKey?: string): MemorySource | undefine
 // ---------------------------------------------------------------------------
 // $vectorSearch stage builder
 // ---------------------------------------------------------------------------
-// In automated mode (autoEmbed), MongoDB generates query embeddings from text
-// using Voyage AI. Use `query: { text }` and `path` to the source text field.
+// In automated mode, MongoDB generates query embeddings from text. ClawMongo
+// treats this as an advanced community-mongot-only path, not the default.
+// Use `query: { text }` and `path` to the source text field.
 // In managed mode, the application provides pre-computed embeddings.
 // Use `queryVector` and `path` to the embedding field.
 // ---------------------------------------------------------------------------
@@ -112,7 +113,7 @@ export function buildVectorSearchStage(input: {
   }
 
   if (input.embeddingMode === "automated" && input.queryText) {
-    // Automated: MongoDB generates the query embedding via Voyage AI
+    // Automated: MongoDB generates the query embedding from text.
     base.query = { text: input.queryText };
     base.path = input.textFieldPath ?? "text";
   } else if (input.queryVector) {

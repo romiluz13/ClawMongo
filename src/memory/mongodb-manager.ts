@@ -940,6 +940,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
   status(): MemoryProviderStatus {
     const mongoCfg = this.config.mongodb!;
+    const vectorEnabled = this.capabilities.vectorSearch && this.probeEmbeddingModeSupportsVector();
+    const lexicalEnabled = this.capabilities.textSearch;
+    const hybridEnabled = vectorEnabled && lexicalEnabled;
     return {
       backend: "mongodb",
       provider:
@@ -960,6 +963,17 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         embeddingMode: mongoCfg.embeddingMode,
         fusionMethod: mongoCfg.fusionMethod,
         capabilities: this.capabilities,
+        searchModes: {
+          vector: vectorEnabled,
+          lexical: lexicalEnabled,
+          hybrid: hybridEnabled,
+        },
+        sourceCoverage: {
+          memory: true,
+          sessions: true,
+          kb: mongoCfg.kb.enabled,
+          structured: true,
+        },
         database: mongoCfg.database,
         collectionPrefix: mongoCfg.collectionPrefix,
         quantization: mongoCfg.quantization,
@@ -1277,14 +1291,19 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   async probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult> {
     const mongoCfg = this.config.mongodb!;
 
-    // In automated mode, MongoDB handles embeddings — always available if vector search works
     if (mongoCfg.embeddingMode === "automated") {
+      if (mongoCfg.deploymentProfile !== "community-mongot") {
+        return {
+          ok: false,
+          error: `embeddingMode "automated" is only supported on community-mongot in ClawMongo`,
+        };
+      }
       return this.capabilities.vectorSearch
         ? { ok: true }
         : { ok: false, error: "vector search not available on this MongoDB deployment" };
     }
 
-    // In managed mode, test the embedding provider
+    // In managed mode, test the configured embedding provider.
     if (!this.embeddingProvider) {
       return { ok: false, error: "no embedding provider configured" };
     }
@@ -1302,7 +1321,15 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   // ---------------------------------------------------------------------------
 
   async probeVectorAvailability(): Promise<boolean> {
-    return this.capabilities.vectorSearch;
+    return this.capabilities.vectorSearch && this.probeEmbeddingModeSupportsVector();
+  }
+
+  private probeEmbeddingModeSupportsVector(): boolean {
+    const mongoCfg = this.config.mongodb!;
+    if (mongoCfg.embeddingMode === "automated") {
+      return mongoCfg.deploymentProfile === "community-mongot";
+    }
+    return this.embeddingProvider !== null;
   }
 
   // ---------------------------------------------------------------------------

@@ -182,14 +182,14 @@ async function configureMongoDBWithUri(
     if (currentProfile) {
       return currentProfile;
     }
-    if (isAtlas) {
-      return "atlas-default";
-    }
     if (detectedTier) {
       if (detectedTier === "fullstack") {
         return "community-mongot";
       }
       return "community-bare";
+    }
+    if (isAtlas) {
+      return "atlas-default";
     }
     return "community-mongot";
   })();
@@ -199,24 +199,24 @@ async function configureMongoDBWithUri(
       message: "Deployment profile",
       options: [
         {
-          value: "atlas-default",
-          label: "Atlas (standard)",
-          hint: "Full MongoDB Search + Vector Search",
-        },
-        {
-          value: "atlas-m0",
-          label: "Atlas (free tier M0)",
-          hint: "Limited to 3 search indexes total",
-        },
-        {
           value: "community-mongot",
           label: "Community + mongot",
-          hint: "Self-hosted with mongot search engine",
+          hint: "Official ClawMongo target. Self-managed Search + Vector Search",
         },
         {
           value: "community-bare",
           label: "Community (bare)",
           hint: "No mongot. Keyword search via $text only",
+        },
+        {
+          value: "atlas-default",
+          label: "Atlas (standard)",
+          hint: "Supported later. Use managed embeddings only",
+        },
+        {
+          value: "atlas-m0",
+          label: "Atlas (free tier M0)",
+          hint: "Supported later. Managed embeddings only",
         },
       ],
       initialValue: suggestedProfile,
@@ -224,9 +224,8 @@ async function configureMongoDBWithUri(
     runtime,
   );
 
-  // Auto-set embeddingMode based on profile
   const isCommunity = profile === "community-mongot" || profile === "community-bare";
-  const embeddingMode = isCommunity ? "managed" : "automated";
+  const embeddingMode = "managed";
   const existingEnableChangeStreams = nextConfig.memory?.mongodb?.enableChangeStreams;
   const defaultEnableChangeStreams =
     detectedTier === "standalone"
@@ -254,31 +253,24 @@ async function configureMongoDBWithUri(
     },
   };
 
+  if (typeof existingEnableChangeStreams !== "boolean") {
+    note(
+      enableChangeStreams
+        ? "Change streams enabled for real-time cross-instance sync."
+        : "Change streams disabled for this setup.",
+      "Change Streams",
+    );
+  }
+
   if (!isCommunity) {
-    if (typeof existingEnableChangeStreams !== "boolean") {
-      note(
-        enableChangeStreams
-          ? "Change streams enabled for real-time cross-instance sync."
-          : "Change streams disabled for this setup.",
-        "Change Streams",
-      );
-    }
     note(
       [
-        "This deployment profile enables automated embeddings by default.",
-        "You can ingest KB docs and run semantic search without configuring an external embedding API key.",
+        "Atlas is supported through the same MongoDB memory pipeline, but ClawMongo does not use Atlas automated embeddings as the default path.",
+        "Configure a managed embedding provider if you want semantic/vector retrieval.",
       ].join("\n"),
-      "Automated Embeddings",
+      "Atlas Profile",
     );
   } else if (profile === "community-bare") {
-    if (typeof existingEnableChangeStreams !== "boolean") {
-      note(
-        enableChangeStreams
-          ? "Change streams enabled for real-time cross-instance sync."
-          : "Change streams disabled for this setup.",
-        "Change Streams",
-      );
-    }
     note(
       [
         "Text/keyword search via $text is available out of the box.",
@@ -287,18 +279,11 @@ async function configureMongoDBWithUri(
       "Search Capabilities",
     );
   } else {
-    if (typeof existingEnableChangeStreams !== "boolean") {
-      note(
-        enableChangeStreams
-          ? "Change streams enabled for real-time cross-instance sync."
-          : "Change streams disabled for this setup.",
-        "Change Streams",
-      );
-    }
     // community-mongot: vector search available with managed embeddings
     const wantVectorSearch = guardCancel(
       await confirm({
-        message: "Enable vector/semantic search? (requires an embedding API key)",
+        message:
+          "Enable vector/semantic search? (requires a managed embedding provider or local model)",
         initialValue: true,
       }),
       runtime,
@@ -378,9 +363,10 @@ async function configureMongoDBWithUri(
       }
     } else {
       note(
-        ["Text search will work out of the box.", `Enable later: openclaw configure → Memory`].join(
-          "\n",
-        ),
+        [
+          "Text search will work out of the box.",
+          "You can add a managed embedding provider later to enable vector and hybrid retrieval.",
+        ].join("\n"),
         "Text Search Only",
       );
     }
@@ -530,7 +516,7 @@ async function offerKBImportConfigure(
     await ensureStandardIndexes(db, prefix);
 
     const { ingestFilesToKB } = await import("../memory/mongodb-kb.js");
-    const embeddingMode = mongoCfg?.embeddingMode ?? "automated";
+    const embeddingMode = mongoCfg?.embeddingMode ?? "managed";
 
     note("Importing documents…", "Knowledge Base");
 

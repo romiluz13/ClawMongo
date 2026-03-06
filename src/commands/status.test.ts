@@ -377,6 +377,34 @@ vi.mock("../daemon/node-service.js", () => ({
 vi.mock("../security/audit.js", () => ({
   runSecurityAudit: mocks.runSecurityAudit,
 }));
+vi.mock("../memory/index.js", () => ({
+  getMemorySearchManager: vi.fn(async ({ agentId }: { agentId: string }) => ({
+    manager: {
+      probeVectorAvailability: vi.fn(async () => true),
+      status: () => ({
+        backend: "mongodb",
+        files: 2,
+        chunks: 3,
+        dirty: false,
+        workspaceDir: "/tmp/openclaw",
+        provider: "openai",
+        model: "text-embedding-3-small",
+        requestedProvider: "openai",
+        sources: ["memory", "sessions", "kb", "structured"],
+        sourceCounts: [{ source: "memory", files: 2, chunks: 3 }],
+        custom: {
+          searchModes: { lexical: true, vector: true, hybrid: true },
+        },
+        vector: {
+          enabled: true,
+          available: true,
+        },
+      }),
+      close: vi.fn(async () => {}),
+      __agentId: agentId,
+    },
+  })),
+}));
 
 import { statusCommand } from "./status.js";
 

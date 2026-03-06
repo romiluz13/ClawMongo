@@ -134,6 +134,8 @@ export type ResolvedQmdConfig = {
 const DEFAULT_BACKEND: MemoryBackend = "mongodb";
 const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
+const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
+const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "managed";
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -164,9 +166,28 @@ export function resolveMemoryBackendConfig(params: {
       );
     }
     const deploymentProfile: MemoryMongoDBDeploymentProfile =
-      mongoCfg?.deploymentProfile ?? "atlas-default";
-    const defaultEmbeddingMode: MemoryMongoDBEmbeddingMode =
-      deploymentProfile === "community-bare" ? "managed" : "automated";
+      mongoCfg?.deploymentProfile ?? DEFAULT_MONGODB_PROFILE;
+    const embeddingMode = mongoCfg?.embeddingMode ?? DEFAULT_MONGODB_EMBEDDING_MODE;
+
+    if (deploymentProfile === "community-bare" && embeddingMode === "automated") {
+      throw new Error(
+        [
+          'embeddingMode "automated" is not supported for deploymentProfile "community-bare".',
+          'Use embeddingMode "managed" or switch to deploymentProfile "community-mongot".',
+        ].join(" "),
+      );
+    }
+    if (
+      (deploymentProfile === "atlas-default" || deploymentProfile === "atlas-m0") &&
+      embeddingMode === "automated"
+    ) {
+      throw new Error(
+        [
+          'embeddingMode "automated" is not supported for Atlas deployment profiles in ClawMongo.',
+          'Use embeddingMode "managed" for Atlas deployments.',
+        ].join(" "),
+      );
+    }
 
     const result: ResolvedMemoryBackendConfig = {
       backend: "mongodb",
@@ -176,7 +197,7 @@ export function resolveMemoryBackendConfig(params: {
         database: mongoCfg?.database ?? "openclaw",
         collectionPrefix: mongoCfg?.collectionPrefix ?? `openclaw_${sanitizeName(params.agentId)}_`,
         deploymentProfile,
-        embeddingMode: mongoCfg?.embeddingMode ?? defaultEmbeddingMode,
+        embeddingMode,
         fusionMethod: mongoCfg?.fusionMethod ?? "scoreFusion",
         quantization: mongoCfg?.quantization ?? "none",
         watchDebounceMs:

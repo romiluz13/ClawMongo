@@ -189,7 +189,7 @@ export async function handleToolsInvokeHttpRequest(
           type: "invalid_request",
           message:
             `memory tools are disabled in tests${suffix}. ` +
-            'Enable by setting plugins.slots.memory="memory-core" (and ensure plugins.enabled is not false).',
+            'Enable by setting plugins.slots.memory="memory-core" (and ensure plugins.enabled is not false). ClawMongo does not support alternate memory slot plugins.',
         },
       });
       return true;

@@ -8,6 +8,11 @@ const resolveAgentDir = vi.hoisted(() => vi.fn(() => "/tmp/agent-default"));
 const resolveMemorySearchConfig = vi.hoisted(() => vi.fn());
 const resolveApiKeyForProvider = vi.hoisted(() => vi.fn());
 const resolveMemoryBackendConfig = vi.hoisted(() => vi.fn());
+const getMemoryStats = vi.hoisted(() =>
+  vi.fn(async () => ({
+    embeddingStatusCoverage: { failed: 0, success: 0, pending: 0, total: 0 },
+  })),
+);
 
 vi.mock("../terminal/note.js", () => ({
   note,
@@ -30,11 +35,42 @@ vi.mock("../memory/backend-config.js", () => ({
   resolveMemoryBackendConfig,
 }));
 
+vi.mock("mongodb", () => ({
+  MongoClient: class MockMongoClient {
+    async connect() {}
+    db() {
+      return {
+        command: async () => ({ ok: 1 }),
+      };
+    }
+    async close() {}
+  },
+}));
+
+vi.mock("../memory/mongodb-topology.js", () => ({
+  detectTopology: vi.fn(async () => ({ serverVersion: "8.2.0", replicaSetName: "rs0" })),
+  topologyToTier: vi.fn(() => "fullstack"),
+  tierFeatures: vi.fn(() => ({ available: ["Search", "Vector Search"], unavailable: [] })),
+}));
+
+vi.mock("../memory/mongodb-analytics.js", () => ({
+  getMemoryStats,
+}));
+
 import { noteMemorySearchHealth } from "./doctor-memory-search.js";
 import { detectLegacyWorkspaceDirs } from "./doctor-workspace.js";
 
 describe("noteMemorySearchHealth", () => {
   const cfg = {} as OpenClawConfig;
+
+  function expectOnlyBackendHealthNote() {
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(String(note.mock.calls[0]?.[0] ?? "")).toContain("MongoDB connected. Profile:");
+  }
+
+  function getLastNoteMessage(): string {
+    return String(note.mock.calls.at(-1)?.[0] ?? "");
+  }
 
   async function expectNoWarningWithConfiguredRemoteApiKey(provider: string) {
     resolveMemorySearchConfig.mockReturnValue({
@@ -45,7 +81,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   }
 
@@ -78,7 +114,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
   });
 
   it("warns when local provider with default model but gateway probe reports not ready", async () => {
@@ -92,8 +128,8 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: false, error: "node-llama-cpp not installed" },
     });
 
-    expect(note).toHaveBeenCalledTimes(1);
-    const message = String(note.mock.calls[0]?.[0] ?? "");
+    expect(note).toHaveBeenCalledTimes(2);
+    const message = getLastNoteMessage();
     expect(message).toContain("gateway reports local embeddings are not ready");
     expect(message).toContain("node-llama-cpp not installed");
   });
@@ -109,7 +145,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: true },
     });
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
   });
 
   it("does not warn when local provider has an explicit hf: modelPath", async () => {
@@ -121,10 +157,11 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
   });
 
   it("stops after legacy backend validation fails", async () => {
+    const legacyCfg = { memory: { backend: "qmd" } } as OpenClawConfig;
     resolveMemoryBackendConfig.mockImplementation(() => {
       throw new Error('Legacy memory backend "qmd" is no longer supported');
     });
@@ -134,7 +171,7 @@ describe("noteMemorySearchHealth", () => {
       remote: {},
     });
 
-    await noteMemorySearchHealth(cfg, {});
+    await noteMemorySearchHealth(legacyCfg, {});
 
     expect(note).toHaveBeenCalledWith(
       expect.stringContaining('Legacy memory backend "qmd" is no longer supported in ClawMongo.'),
@@ -169,7 +206,7 @@ describe("noteMemorySearchHealth", () => {
       cfg,
       agentDir: "/tmp/agent-default",
     });
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
   });
 
   it("resolves mistral auth for explicit mistral embedding provider", async () => {
@@ -191,7 +228,7 @@ describe("noteMemorySearchHealth", () => {
       cfg,
       agentDir: "/tmp/agent-default",
     });
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
   });
 
   it("notes when gateway probe reports embeddings ready and CLI API key is missing", async () => {
@@ -205,7 +242,8 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: true },
     });
 
-    const message = note.mock.calls[0]?.[0] as string;
+    expect(note).toHaveBeenCalledTimes(2);
+    const message = getLastNoteMessage();
     expect(message).toContain("reports memory embeddings are ready");
   });
 
@@ -224,7 +262,8 @@ describe("noteMemorySearchHealth", () => {
       },
     });
 
-    const message = note.mock.calls[0]?.[0] as string;
+    expect(note).toHaveBeenCalledTimes(2);
+    const message = getLastNoteMessage();
     expect(message).toContain("Gateway memory probe for default agent is not ready");
     expect(message).toContain("openclaw configure --section model");
     expect(message).not.toContain("openclaw auth add --provider");
@@ -239,11 +278,8 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    // In auto mode, canAutoSelectLocal requires an explicit local file path.
-    // DEFAULT_LOCAL_MODEL fallback does NOT apply to auto — only to explicit
-    // provider: "local". So with no local file and no API keys, warn.
-    expect(note).toHaveBeenCalledTimes(1);
-    const message = String(note.mock.calls[0]?.[0] ?? "");
+    expect(note).toHaveBeenCalledTimes(2);
+    const message = getLastNoteMessage();
     expect(message).toContain("openclaw configure --section model");
   });
 
@@ -266,7 +302,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note).toHaveBeenCalledTimes(1);
+    expect(note).toHaveBeenCalledTimes(2);
     const providerCalls = resolveApiKeyForProvider.mock.calls as Array<[{ provider: string }]>;
     const providersChecked = providerCalls.map(([arg]) => arg.provider);
     expect(providersChecked).toEqual(["openai", "google", "voyage", "mistral"]);

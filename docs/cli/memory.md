@@ -1,15 +1,18 @@
 ---
 summary: "CLI reference for `openclaw memory` (status/index/search/relevance/smoke)"
 read_when:
-  - You want to index or search semantic memory
-  - You’re debugging memory availability or indexing
+  - You want to inspect or index ClawMongo memory
+  - You are debugging MongoDB memory health or retrieval
+  - You want relevance diagnostics for the MongoDB memory backend
 title: "memory"
 ---
 
 # `openclaw memory`
 
-Manage semantic memory indexing and search.
-Provided by the active memory plugin (default: `memory-core`; set `plugins.slots.memory = "none"` to disable).
+Manage ClawMongo memory.
+
+This CLI works with the MongoDB memory backend. In ClawMongo, MongoDB is the
+only supported runtime memory backend.
 
 Related:
 
@@ -22,15 +25,10 @@ Related:
 openclaw memory status
 openclaw memory status --deep
 openclaw memory status --deep --index
-openclaw memory status --deep --index --verbose
 openclaw memory index
-openclaw memory index --verbose
 openclaw memory search "release checklist"
 openclaw memory smoke
-openclaw memory search --query "release checklist"
-openclaw memory status --agent main
-openclaw memory index --agent main --verbose
-openclaw memory relevance explain --query "release checklist" --deep
+openclaw memory relevance explain --query "release checklist"
 openclaw memory relevance benchmark
 openclaw memory relevance report --window 7d
 openclaw memory relevance sample-rate
@@ -40,20 +38,20 @@ openclaw memory relevance sample-rate
 
 Common:
 
-- `--agent <id>`: scope to a single agent (default: all configured agents).
-- `--verbose`: emit detailed logs during probes and indexing.
+- `--agent <id>`: scope to a single agent (default: all configured agents)
+- `--verbose`: emit detailed logs during probes and indexing
 
 `memory search`:
 
-- Query input: pass either positional `[query]` or `--query <text>`.
-- If both are provided, `--query` wins.
-- If neither is provided, the command exits with an error.
+- pass either positional `[query]` or `--query <text>`
+- if both are provided, `--query` wins
+- if neither is provided, the command exits with an error
 
-Notes:
+## Notes
 
-- `memory status --deep` probes vector + embedding availability.
-- `memory status --deep --index` runs a reindex if the store is dirty.
-- `memory index --verbose` prints per-phase details (provider, model, sources, batch activity).
-- `memory status` includes any extra paths configured via `memorySearch.extraPaths`.
-- If effectively active memory remote API key fields are configured as SecretRefs, the command resolves those values from the active gateway snapshot. If gateway is unavailable, the command fails fast.
-- Gateway version skew note: this command path requires a gateway that supports `secrets.resolve`; older gateways return an unknown-method error.
+- `memory status --deep` probes vector and embedding availability
+- `memory status --deep --index` runs a reindex if the store is dirty
+- `memory index --verbose` prints per-phase details including source coverage and search modes
+- `memory status` includes extra paths configured via `agents.defaults.memorySearch.extraPaths`
+- if memory secret fields are configured as SecretRefs, the CLI resolves them from the active gateway snapshot
+- gateway version skew note: this command path requires a gateway that supports `secrets.resolve`

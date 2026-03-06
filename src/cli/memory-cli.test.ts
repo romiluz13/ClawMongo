@@ -1,11 +1,11 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { Command } from "commander";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 const getMemorySearchManager = vi.fn();
-const loadConfig = vi.fn(() => ({}));
+const loadConfig = vi.fn(() => ({
+  memory: { mongodb: { uri: "mongodb://localhost:27017/openclaw" } },
+}));
+const resolveMemoryBackendConfig = vi.fn(() => ({ backend: "mongodb" }));
 const resolveDefaultAgentId = vi.fn(() => "main");
 const resolveCommandSecretRefsViaGateway = vi.fn(async ({ config }: { config: unknown }) => ({
   resolvedConfig: config,
@@ -18,6 +18,10 @@ vi.mock("../memory/index.js", () => ({
 
 vi.mock("../config/config.js", () => ({
   loadConfig,
+}));
+
+vi.mock("../memory/backend-config.js", () => ({
+  resolveMemoryBackendConfig,
 }));
 
 vi.mock("../agents/agent-scope.js", () => ({
@@ -42,6 +46,8 @@ beforeAll(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   getMemorySearchManager.mockClear();
+  resolveMemoryBackendConfig.mockReset();
+  resolveMemoryBackendConfig.mockReturnValue({ backend: "mongodb" });
   resolveCommandSecretRefsViaGateway.mockClear();
   process.exitCode = undefined;
   setVerbose(false);
@@ -90,17 +96,6 @@ describe("memory cli", () => {
     program.name("test");
     registerMemoryCli(program);
     await program.parseAsync(["memory", ...args], { from: "user" });
-  }
-
-  async function withQmdIndexDb(content: string, run: (dbPath: string) => Promise<void>) {
-    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "memory-cli-qmd-index-"));
-    const dbPath = path.join(tmpDir, "index.sqlite");
-    try {
-      await fs.writeFile(dbPath, content, "utf-8");
-      await run(dbPath);
-    } finally {
-      await fs.rm(tmpDir, { recursive: true, force: true });
-    }
   }
 
   async function expectCloseFailureAfterCommand(params: {
@@ -309,40 +304,6 @@ describe("memory cli", () => {
     expectCliSync(sync);
     expect(close).toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith("Memory index updated (main).");
-  });
-
-  it("logs qmd index file path and size after index", async () => {
-    const close = vi.fn(async () => {});
-    const sync = vi.fn(async () => {});
-    await withQmdIndexDb("sqlite-bytes", async (dbPath) => {
-      mockManager({ sync, status: () => ({ backend: "qmd", dbPath }), close });
-
-      const log = spyRuntimeLogs();
-      await runMemoryCli(["index"]);
-
-      expectCliSync(sync);
-      expect(log).toHaveBeenCalledWith(expect.stringContaining("QMD index: "));
-      expect(log).toHaveBeenCalledWith("Memory index updated (main).");
-      expect(close).toHaveBeenCalled();
-    });
-  });
-
-  it("fails index when qmd db file is empty", async () => {
-    const close = vi.fn(async () => {});
-    const sync = vi.fn(async () => {});
-    await withQmdIndexDb("", async (dbPath) => {
-      mockManager({ sync, status: () => ({ backend: "qmd", dbPath }), close });
-
-      const error = spyRuntimeErrors();
-      await runMemoryCli(["index"]);
-
-      expectCliSync(sync);
-      expect(error).toHaveBeenCalledWith(
-        expect.stringContaining("Memory index failed (main): QMD index file is empty"),
-      );
-      expect(close).toHaveBeenCalled();
-      expect(process.exitCode).toBe(1);
-    });
   });
 
   it("logs close failures without failing the command", async () => {

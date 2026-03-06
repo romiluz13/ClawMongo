@@ -159,8 +159,8 @@ describe("config plugin validation", () => {
         slots: { memory: removedId },
       },
     });
-    expect(res.ok).toBe(true);
-    if (res.ok) {
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
       expect(res.warnings).toEqual(
         expect.arrayContaining([
           {
@@ -185,6 +185,10 @@ describe("config plugin validation", () => {
           },
         ]),
       );
+      expect(res.issues).toContainEqual({
+        path: "plugins.slots.memory",
+        message: 'ClawMongo supports only plugins.slots.memory="memory-core" or "none"',
+      });
     }
   });
 

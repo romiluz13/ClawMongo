@@ -543,6 +543,17 @@ function validateConfigObjectWithPluginsBase(
   if (typeof memorySlot === "string" && memorySlot.trim() && !knownIds.has(memorySlot)) {
     pushMissingPluginIssue("plugins.slots.memory", memorySlot);
   }
+  if (
+    typeof memorySlot === "string" &&
+    memorySlot.trim() &&
+    memorySlot.trim().toLowerCase() !== "none" &&
+    memorySlot.trim() !== "memory-core"
+  ) {
+    issues.push({
+      path: "plugins.slots.memory",
+      message: 'ClawMongo supports only plugins.slots.memory="memory-core" or "none"',
+    });
+  }
 
   let selectedMemoryPluginId: string | null = null;
   const seenPlugins = new Set<string>();
