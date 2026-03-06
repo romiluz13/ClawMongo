@@ -237,6 +237,12 @@ const SkillEntrySchema = z
 const PluginEntrySchema = z
   .object({
     enabled: z.boolean().optional(),
+    hooks: z
+      .object({
+        allowPromptInjection: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
     config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
@@ -708,7 +714,7 @@ export const OpenClawSchema = z
                 z.literal("trusted-proxy"),
               ])
               .optional(),
-            token: z.string().optional().register(sensitive),
+            token: SecretInputSchema.optional().register(sensitive),
             password: SecretInputSchema.optional().register(sensitive),
             allowTailscale: z.boolean().optional(),
             rateLimit: z
@@ -790,6 +796,15 @@ export const OpenClawSchema = z
                 chatCompletions: z
                   .object({
                     enabled: z.boolean().optional(),
+                    maxBodyBytes: z.number().int().positive().optional(),
+                    maxImageParts: z.number().int().nonnegative().optional(),
+                    maxTotalImageBytes: z.number().int().positive().optional(),
+                    images: z
+                      .object({
+                        ...ResponsesEndpointUrlFetchShape,
+                      })
+                      .strict()
+                      .optional(),
                   })
                   .strict()
                   .optional(),
