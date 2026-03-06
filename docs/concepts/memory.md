@@ -33,6 +33,8 @@ The standard workspace files keep their upstream roles:
   - Not auto-injected; read on demand.
 
 See [Agent workspace](/concepts/agent-workspace) for the full workspace map.
+For the ownership contract between workspace files and MongoDB, see
+[Heart brain boundary](/reference/heart-brain-boundary).
 
 ## Runtime ownership split
 

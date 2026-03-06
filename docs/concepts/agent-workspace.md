@@ -108,6 +108,8 @@ These are the standard files OpenClaw expects inside the workspace:
   - Only load in the main, private session (not shared/group contexts).
 
 See [Memory](/concepts/memory) for the workflow and automatic memory flush.
+See [Heart brain boundary](/reference/heart-brain-boundary) for the ownership
+contract between workspace files and MongoDB memory.
 
 - `skills/` (optional)
   - Workspace-specific skills.
