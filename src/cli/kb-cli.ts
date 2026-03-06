@@ -31,7 +31,7 @@ async function connectMongoDB(cfg: ReturnType<typeof loadConfig>, agentId: strin
   const mongoCfg = resolved.mongodb;
   if (!mongoCfg) {
     defaultRuntime.error(
-      'KB commands require MongoDB backend. Set memory.backend = "mongodb" in config.',
+      "KB commands require MongoDB memory. Set memory.mongodb.uri or OPENCLAW_MONGODB_URI.",
     );
     return null;
   }

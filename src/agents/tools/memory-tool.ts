@@ -4,7 +4,7 @@ import type { MemoryCitationsMode } from "../../config/types.memory.js";
 import { resolveMemoryBackendConfig } from "../../memory/backend-config.js";
 import { getMemorySearchManager } from "../../memory/index.js";
 import { hasWriteCapability } from "../../memory/mongodb-manager.js";
-import type { MemorySearchResult } from "../../memory/types.js";
+import type { MemoryReadResult, MemorySearchResult } from "../../memory/types.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
@@ -38,6 +38,23 @@ function resolveMemoryToolContext(options: { config?: OpenClawConfig; agentSessi
   return { cfg, agentId };
 }
 
+function resolveMongoMemoryToolContext(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): { cfg: OpenClawConfig; agentId: string; error?: string } | null {
+  const ctx = resolveMemoryToolContext(options);
+  if (!ctx) {
+    return null;
+  }
+  try {
+    resolveMemoryBackendConfig(ctx);
+    return ctx;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ...ctx, error: message };
+  }
+}
+
 export function createMemorySearchTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
@@ -47,14 +64,11 @@ export function createMemorySearchTool(options: {
     return null;
   }
   const { cfg, agentId } = ctx;
-  const isMongoDBBackend = cfg.memory?.backend === "mongodb";
-  const description = isMongoDBBackend
-    ? 'Mandatory recall step: semantically search your knowledge base, structured memory, memory files, and session transcripts. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"})'
-    : "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines.";
   return {
     label: "Memory Search",
     name: "memory_search",
-    description: `${description} If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.`,
+    description:
+      'Mandatory recall step: semantically search your knowledge base, structured memory, memory files, and session transcripts. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -80,13 +94,8 @@ export function createMemorySearchTool(options: {
         });
         const status = manager.status();
         const decorated = decorateCitations(rawResults, includeCitations);
-        const resolved = resolveMemoryBackendConfig({ cfg, agentId });
-        const results =
-          status.backend === "qmd"
-            ? clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars)
-            : decorated;
+        const results = decorated;
         const feedbackHint = computeFeedbackHint(rawResults, status.backend);
-        const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
         return jsonResult({
           results,
           provider: status.provider,
@@ -94,7 +103,6 @@ export function createMemorySearchTool(options: {
           fallback: status.fallback,
           citations: citationsMode,
           ...(feedbackHint ? { feedbackHint } : {}),
-          mode: searchMode,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -117,7 +125,7 @@ export function createMemoryGetTool(options: {
     label: "Memory Get",
     name: "memory_get",
     description:
-      "Safe snippet read from MEMORY.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
+      "Read an exact memory object by locator. Supports Markdown memory files, knowledge-base documents, and structured memory records. Use after memory_search or kb_search to pull the exact item you need.",
     parameters: MemoryGetSchema,
     execute: async (_toolCallId, params) => {
       const relPath = readStringParam(params, "path", { required: true });
@@ -128,7 +136,7 @@ export function createMemoryGetTool(options: {
         agentId,
       });
       if (!manager) {
-        return jsonResult({ path: relPath, text: "", disabled: true, error });
+        return jsonResult(buildMemoryReadUnavailableResult(relPath, error));
       }
       try {
         const result = await manager.readFile({
@@ -139,7 +147,7 @@ export function createMemoryGetTool(options: {
         return jsonResult(result);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({ path: relPath, text: "", disabled: true, error: message });
+        return jsonResult(buildMemoryReadUnavailableResult(relPath, message));
       }
     },
   };
@@ -172,32 +180,6 @@ function formatCitation(entry: MemorySearchResult): string {
   return `${entry.path}${lineRange}`;
 }
 
-function clampResultsByInjectedChars(
-  results: MemorySearchResult[],
-  budget?: number,
-): MemorySearchResult[] {
-  if (!budget || budget <= 0) {
-    return results;
-  }
-  let remaining = budget;
-  const clamped: MemorySearchResult[] = [];
-  for (const entry of results) {
-    if (remaining <= 0) {
-      break;
-    }
-    const snippet = entry.snippet ?? "";
-    if (snippet.length <= remaining) {
-      clamped.push(entry);
-      remaining -= snippet.length;
-    } else {
-      const trimmed = snippet.slice(0, Math.max(0, remaining));
-      clamped.push({ ...entry, snippet: trimmed });
-      break;
-    }
-  }
-  return clamped;
-}
-
 function buildMemorySearchUnavailableResult(error: string | undefined) {
   const reason = (error ?? "memory search unavailable").trim() || "memory search unavailable";
   const isQuotaError = /insufficient_quota|quota|429/.test(reason.toLowerCase());
@@ -214,6 +196,19 @@ function buildMemorySearchUnavailableResult(error: string | undefined) {
     error: reason,
     warning,
     action,
+  };
+}
+
+function buildMemoryReadUnavailableResult(
+  path: string,
+  error: string | undefined,
+): MemoryReadResult {
+  return {
+    path,
+    locator: path,
+    text: "",
+    error,
+    disabled: true,
   };
 }
 
@@ -293,20 +288,11 @@ export function createKBSearchTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
 }): AnyAgentTool | null {
-  const cfg = options.config;
-  if (!cfg) {
+  const ctx = resolveMongoMemoryToolContext(options);
+  if (!ctx) {
     return null;
   }
-
-  // Only register when MongoDB backend is active
-  if (cfg.memory?.backend !== "mongodb") {
-    return null;
-  }
-
-  const agentId = resolveSessionAgentId({
-    sessionKey: options.agentSessionKey,
-    config: cfg,
-  });
+  const { cfg, agentId, error: configError } = ctx;
 
   return {
     label: "KB Search",
@@ -326,7 +312,7 @@ export function createKBSearchTool(options: {
 
       const { manager, error } = await getMemorySearchManager({ cfg, agentId });
       if (!manager) {
-        return jsonResult({ results: [], disabled: true, error });
+        return jsonResult({ results: [], disabled: true, error: configError ?? error });
       }
 
       try {
@@ -381,20 +367,11 @@ export function createMemoryWriteTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
 }): AnyAgentTool | null {
-  const cfg = options.config;
-  if (!cfg) {
+  const ctx = resolveMongoMemoryToolContext(options);
+  if (!ctx) {
     return null;
   }
-
-  // Only register when MongoDB backend is active
-  if (cfg.memory?.backend !== "mongodb") {
-    return null;
-  }
-
-  const agentId = resolveSessionAgentId({
-    sessionKey: options.agentSessionKey,
-    config: cfg,
-  });
+  const { cfg, agentId, error: configError } = ctx;
 
   return {
     label: "Memory Write",
@@ -417,7 +394,10 @@ export function createMemoryWriteTool(options: {
         // Reuse the manager's existing connection pool (not per-call MongoClient)
         const { manager, error } = await getMemorySearchManager({ cfg, agentId });
         if (!manager) {
-          return jsonResult({ success: false, error: error ?? "memory manager unavailable" });
+          return jsonResult({
+            success: false,
+            error: configError ?? error ?? "memory manager unavailable",
+          });
         }
         if (!hasWriteCapability(manager)) {
           return jsonResult({ success: false, error: "write not supported on this backend" });

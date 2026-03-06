@@ -47,16 +47,13 @@ describe("configureMemorySection", () => {
 
   it("enables change streams by default for atlas profile", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
-    mockSelect
-      .mockResolvedValueOnce("mongodb")
-      .mockResolvedValueOnce("atlas-default")
-      .mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("atlas-default").mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
     const result = await configureMemorySection({}, createRuntime());
 
-    expect(result.memory?.backend).toBe("mongodb");
+    expect(result.memory?.backend).toBeUndefined();
     expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(mockNote).toHaveBeenCalledWith(
@@ -67,17 +64,14 @@ describe("configureMemorySection", () => {
 
   it("disables change streams by default for community-bare profile", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
-    mockSelect
-      .mockResolvedValueOnce("mongodb")
-      .mockResolvedValueOnce("community-bare")
-      .mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
     // Atlas URI avoids topology probing in this unit test.
     mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
     const result = await configureMemorySection({}, createRuntime());
 
-    expect(result.memory?.backend).toBe("mongodb");
+    expect(result.memory?.backend).toBeUndefined();
     expect(result.memory?.mongodb?.embeddingMode).toBe("managed");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
   });
@@ -90,10 +84,7 @@ describe("configureMemorySection", () => {
         mongodb: { enableChangeStreams: false },
       },
     };
-    mockSelect
-      .mockResolvedValueOnce("mongodb")
-      .mockResolvedValueOnce("atlas-default")
-      .mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("atlas-default").mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb+srv://user:pass@cluster.mongodb.net/");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
@@ -109,10 +100,7 @@ describe("configureMemorySection", () => {
       success: false,
       reason: "Docker is not installed. Enter a MongoDB URI manually.",
     });
-    mockSelect
-      .mockResolvedValueOnce("mongodb")
-      .mockResolvedValueOnce("community-bare")
-      .mockResolvedValueOnce("skip");
+    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
     mockConfirm.mockResolvedValueOnce(false); // skip connection test
 
@@ -121,6 +109,33 @@ describe("configureMemorySection", () => {
     expect(mockNote).toHaveBeenCalledWith(
       expect.stringContaining("Docker is optional. Local MongoDB works without Docker."),
       "Local MongoDB (No Docker)",
+    );
+  });
+
+  it("replaces legacy backend config with MongoDB-only memory settings", async () => {
+    const { configureMemorySection } = await import("./configure-memory.js");
+    mockSelect.mockResolvedValueOnce("community-bare").mockResolvedValueOnce("skip");
+    mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
+    mockConfirm.mockResolvedValueOnce(false);
+
+    const result = await configureMemorySection(
+      {
+        memory: {
+          backend: "qmd",
+          citations: "on",
+          mongodb: { enableChangeStreams: true },
+        },
+      },
+      createRuntime(),
+    );
+
+    expect(result.memory?.citations).toBe("on");
+    expect(result.memory?.backend).toBeUndefined();
+    expect("qmd" in (result.memory ?? {})).toBe(false);
+    expect(result.memory?.mongodb?.uri).toBe("mongodb://localhost:27017/openclaw");
+    expect(mockNote).toHaveBeenCalledWith(
+      expect.stringContaining("Legacy backend config detected: qmd"),
+      "Memory",
     );
   });
 });

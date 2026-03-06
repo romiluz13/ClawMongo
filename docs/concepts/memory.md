@@ -30,21 +30,19 @@ These files live under the workspace (`agents.defaults.workspace`, default
 
 ## Memory tools
 
-OpenClaw exposes two agent-facing tools for these Markdown files:
+ClawMongo exposes four agent-facing memory tools:
 
-- `memory_search` — semantic recall over indexed snippets.
-- `memory_get` — targeted read of a specific Markdown file/line range.
+- `memory_search` — primary recall across memory chunks, sessions, KB, and structured memory.
+- `memory_get` — exact read by locator for Markdown memory, KB docs, and structured memory.
+- `kb_search` — scoped search for imported documentation and reference material.
+- `memory_write` — durable structured writes for decisions, facts, preferences, and other records.
 
-`memory_get` now **degrades gracefully when a file doesn't exist** (for example,
-today's daily log before the first write). Both the builtin manager and the QMD
-backend return `{ text: "", path }` instead of throwing `ENOENT`, so agents can
-handle "nothing recorded yet" and continue their workflow without wrapping the
-tool call in try/catch logic.
+`memory_get` degrades gracefully when a target does not exist by returning an
+empty payload instead of throwing raw storage errors.
 
 ## Source of truth split for ClawMongo
 
-When `memory.backend = "mongodb"`, keep a strict ownership split so memory stays
-predictable and conflict-free:
+Keep a strict ownership split so memory stays predictable and conflict-free:
 
 - Markdown files remain canonical for identity and policy context:
   - `SOUL.md`, `AGENTS.md`, `BOOT.md`, and skill `SKILL.md` files.
@@ -151,150 +149,8 @@ local policy).
 When using a custom OpenAI-compatible endpoint,
 set `memorySearch.remote.apiKey` (and optional `memorySearch.remote.headers`).
 
-### QMD backend (experimental)
-
-Set `memory.backend = "qmd"` to swap the built-in SQLite indexer for
-[QMD](https://github.com/tobi/qmd): a local-first search sidecar that combines
-BM25 + vectors + reranking. Markdown stays the source of truth; OpenClaw shells
-out to QMD for retrieval. Key points:
-
-**Prereqs**
-
-- Disabled by default. Opt in per-config (`memory.backend = "qmd"`).
-- Install the QMD CLI separately (`bun install -g https://github.com/tobi/qmd` or grab
-  a release) and make sure the `qmd` binary is on the gateway’s `PATH`.
-- QMD needs an SQLite build that allows extensions (`brew install sqlite` on
-  macOS).
-- QMD runs fully locally via Bun + `node-llama-cpp` and auto-downloads GGUF
-  models from HuggingFace on first use (no separate Ollama daemon required).
-- The gateway runs QMD in a self-contained XDG home under
-  `~/.openclaw/agents/<agentId>/qmd/` by setting `XDG_CONFIG_HOME` and
-  `XDG_CACHE_HOME`.
-- OS support: macOS and Linux work out of the box once Bun + SQLite are
-  installed. Windows is best supported via WSL2.
-
-**How the sidecar runs**
-
-- The gateway writes a self-contained QMD home under
-  `~/.openclaw/agents/<agentId>/qmd/` (config + cache + sqlite DB).
-- Collections are created via `qmd collection add` from `memory.qmd.paths`
-  (plus default workspace memory files), then `qmd update` + `qmd embed` run
-  on boot and on a configurable interval (`memory.qmd.update.interval`,
-  default 5 m).
-- The gateway now initializes the QMD manager on startup, so periodic update
-  timers are armed even before the first `memory_search` call.
-- Boot refresh now runs in the background by default so chat startup is not
-  blocked; set `memory.qmd.update.waitForBootSync = true` to keep the previous
-  blocking behavior.
-- Searches run via `memory.qmd.searchMode` (default `qmd search --json`; also
-  supports `vsearch` and `query`). If the selected mode rejects flags on your
-  QMD build, OpenClaw retries with `qmd query`. If QMD fails or the binary is
-  missing, OpenClaw automatically falls back to the builtin SQLite manager so
-  memory tools keep working.
-- OpenClaw does not expose QMD embed batch-size tuning today; batch behavior is
-  controlled by QMD itself.
-- **First search may be slow**: QMD may download local GGUF models (reranker/query
-  expansion) on the first `qmd query` run.
-  - OpenClaw sets `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` automatically when it runs QMD.
-  - If you want to pre-download models manually (and warm the same index OpenClaw
-    uses), run a one-off query with the agent’s XDG dirs.
-
-    OpenClaw’s QMD state lives under your **state dir** (defaults to `~/.openclaw`).
-    You can point `qmd` at the exact same index by exporting the same XDG vars
-    OpenClaw uses:
-
-    ```bash
-    # Pick the same state dir OpenClaw uses
-    STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
-
-    export XDG_CONFIG_HOME="$STATE_DIR/agents/main/qmd/xdg-config"
-    export XDG_CACHE_HOME="$STATE_DIR/agents/main/qmd/xdg-cache"
-
-    # (Optional) force an index refresh + embeddings
-    qmd update
-    qmd embed
-
-    # Warm up / trigger first-time model downloads
-    qmd query "test" -c memory-root --json >/dev/null 2>&1
-    ```
-
-**Config surface (`memory.qmd.*`)**
-
-- `command` (default `qmd`): override the executable path.
-- `searchMode` (default `search`): pick which QMD command backs
-  `memory_search` (`search`, `vsearch`, `query`).
-- `includeDefaultMemory` (default `true`): auto-index `MEMORY.md` + `memory/**/*.md`.
-- `paths[]`: add extra directories/files (`path`, optional `pattern`, optional
-  stable `name`).
-- `sessions`: opt into session JSONL indexing (`enabled`, `retentionDays`,
-  `exportDir`).
-- `update`: controls refresh cadence and maintenance execution:
-  (`interval`, `debounceMs`, `onBoot`, `waitForBootSync`, `embedInterval`,
-  `commandTimeoutMs`, `updateTimeoutMs`, `embedTimeoutMs`).
-- `limits`: clamp recall payload (`maxResults`, `maxSnippetChars`,
-  `maxInjectedChars`, `timeoutMs`).
-- `scope`: same schema as [`session.sendPolicy`](/gateway/configuration#session).
-  Default is DM-only (`deny` all, `allow` direct chats); loosen it to surface QMD
-  hits in groups/channels.
-  - `match.keyPrefix` matches the **normalized** session key (lowercased, with any
-    leading `agent:<id>:` stripped). Example: `discord:channel:`.
-  - `match.rawKeyPrefix` matches the **raw** session key (lowercased), including
-    `agent:<id>:`. Example: `agent:main:discord:`.
-  - Legacy: `match.keyPrefix: "agent:..."` is still treated as a raw-key prefix,
-    but prefer `rawKeyPrefix` for clarity.
-- When `scope` denies a search, OpenClaw logs a warning with the derived
-  `channel`/`chatType` so empty results are easier to debug.
-- Snippets sourced outside the workspace show up as
-  `qmd/<collection>/<relative-path>` in `memory_search` results; `memory_get`
-  understands that prefix and reads from the configured QMD collection root.
-- When `memory.qmd.sessions.enabled = true`, OpenClaw exports sanitized session
-  transcripts (User/Assistant turns) into a dedicated QMD collection under
-  `~/.openclaw/agents/<id>/qmd/sessions/`, so `memory_search` can recall recent
-  conversations without touching the builtin SQLite index.
-- `memory_search` snippets now include a `Source: <path#line>` footer when
-  `memory.citations` is `auto`/`on`; set `memory.citations = "off"` to keep
-  the path metadata internal (the agent still receives the path for
-  `memory_get`, but the snippet text omits the footer and the system prompt
-  warns the agent not to cite it).
-
-**Example**
-
-```json5
-memory: {
-  backend: "qmd",
-  citations: "auto",
-  qmd: {
-    includeDefaultMemory: true,
-    update: { interval: "5m", debounceMs: 15000 },
-    limits: { maxResults: 6, timeoutMs: 4000 },
-    scope: {
-      default: "deny",
-      rules: [
-        { action: "allow", match: { chatType: "direct" } },
-        // Normalized session-key prefix (strips `agent:<id>:`).
-        { action: "deny", match: { keyPrefix: "discord:channel:" } },
-        // Raw session-key prefix (includes `agent:<id>:`).
-        { action: "deny", match: { rawKeyPrefix: "agent:main:discord:" } },
-      ]
-    },
-    paths: [
-      { name: "docs", path: "~/notes", pattern: "**/*.md" }
-    ]
-  }
-}
-```
-
-**Citations & fallback**
-
-- `memory.citations` applies regardless of backend (`auto`/`on`/`off`).
-- When `qmd` runs, we tag `status().backend = "qmd"` so diagnostics show which
-  engine served the results. If the QMD subprocess exits or JSON output can’t be
-  parsed, the search manager logs a warning and returns the builtin provider
-  (existing Markdown embeddings) until QMD recovers.
-
 ### MongoDB memory backend
 
-Set `memory.backend = "mongodb"` to use MongoDB as the memory store.
 MongoDB provides scalable, server-based memory with full-text search,
 vector search, and hybrid retrieval. Requires MongoDB 8.0+.
 
@@ -303,7 +159,6 @@ vector search, and hybrid retrieval. Requires MongoDB 8.0+.
 ```json5
 {
   memory: {
-    backend: "mongodb",
     mongodb: {
       uri: "mongodb+srv://user:pass@cluster.mongodb.net/",
       deploymentProfile: "atlas-default",
@@ -316,7 +171,6 @@ Or via environment:
 
 ```bash
 export OPENCLAW_MONGODB_URI="mongodb+srv://user:pass@cluster.mongodb.net/"
-openclaw config set memory.backend mongodb
 ```
 
 **Deployment profiles**
@@ -360,11 +214,9 @@ The MongoDB backend tries search methods in order of quality:
 | `memory.mongodb.relevance.retention.days`                   | number  | `14`                                   | TTL retention for relevance runs and explain artifacts       |
 | `memory.mongodb.relevance.benchmark.datasetPath`            | string  | `"~/.openclaw/relevance/golden.jsonl"` | Benchmark dataset for `memory relevance benchmark`           |
 
-**Availability behavior**: If MongoDB is selected and unavailable, OpenClaw logs
-an initialization failure for the MongoDB backend and does not silently switch
-to builtin memory. Choose a different backend explicitly in config if you want
-builtin behavior. All MongoDB code is lazily imported via dynamic `import()` --
-zero cost when not used.
+**Availability behavior**: ClawMongo does not silently switch to another
+backend. If MongoDB is unavailable, startup and recall surface the MongoDB
+failure directly.
 
 ### Explain-driven relevance
 
@@ -492,8 +344,10 @@ agents: {
 
 Tools:
 
-- `memory_search` — returns snippets with file + line ranges.
-- `memory_get` — read memory file content by path.
+- `memory_search` — returns snippets with file + line ranges across memory, sessions, KB, and structured records.
+- `memory_get` — read an exact memory locator, KB document, or structured record.
+- `kb_search` — search imported documentation and reference material.
+- `memory_write` — upsert structured durable memory records.
 
 Local mode:
 
@@ -503,9 +357,10 @@ Local mode:
 
 ### How the memory tools work
 
-- `memory_search` semantically searches Markdown chunks (~400 token target, 80-token overlap) from `MEMORY.md` + `memory/**/*.md`. It returns snippet text (capped ~700 chars), file path, line range, score, provider/model, and whether we fell back from local → remote embeddings. No full file payload is returned.
-- `memory_get` reads a specific memory Markdown file (workspace-relative), optionally from a starting line and for N lines. Paths outside `MEMORY.md` / `memory/` are rejected.
-- Both tools are enabled only when `memorySearch.enabled` resolves true for the agent.
+- `memory_search` searches synchronized Markdown chunks, session chunks, KB chunks, and structured memory. It returns snippet text, locator, source, path, and relevance metadata.
+- `memory_get` resolves a locator returned by search and reads the exact Markdown file, KB document, or structured memory record.
+- `kb_search` is optimized for imported docs and reference lookup.
+- `memory_write` stores structured facts keyed by type + key so later writes update instead of duplicating.
 
 ### What gets indexed (and when)
 
@@ -750,10 +605,9 @@ agents: {
 }
 ```
 
-### Session memory search (experimental)
+### Session memory search
 
 You can optionally index **session transcripts** and surface them via `memory_search`.
-This is gated behind an experimental flag.
 
 ```json5
 agents: {
@@ -768,10 +622,10 @@ agents: {
 
 Notes:
 
-- Session indexing is **opt-in** (off by default).
+- Session indexing is enabled by default in the MongoDB runtime flow unless you override `sources`.
 - Session updates are debounced and **indexed asynchronously** once they cross delta thresholds (best-effort).
 - `memory_search` never blocks on indexing; results can be slightly stale until background sync finishes.
-- Results still include snippets only; `memory_get` remains limited to memory files.
+- `memory_get` can read exact Markdown, KB, and structured-memory targets after search.
 - Session indexing is isolated per agent (only that agent’s session logs are indexed).
 - Session logs live on disk (`~/.openclaw/agents/<agentId>/sessions/*.jsonl`). Any process/user with filesystem access can read them, so treat disk access as the trust boundary. For stricter isolation, run agents under separate OS users or hosts.
 

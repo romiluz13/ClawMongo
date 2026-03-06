@@ -11,6 +11,18 @@ export type MemorySearchResult = {
   citation?: string;
 };
 
+export type MemoryReadResult = {
+  text: string;
+  path: string;
+  locator?: string;
+  source?: MemorySource;
+  title?: string;
+  key?: string;
+  type?: string;
+  error?: string;
+  disabled?: boolean;
+};
+
 export type MemoryEmbeddingProbeResult = {
   ok: boolean;
   error?: string;
@@ -73,11 +85,7 @@ export interface MemorySearchManager {
       filter?: { tags?: string[]; category?: string; source?: string };
     },
   ): Promise<MemorySearchResult[]>;
-  readFile(params: {
-    relPath: string;
-    from?: number;
-    lines?: number;
-  }): Promise<{ text: string; path: string }>;
+  readFile(params: { relPath: string; from?: number; lines?: number }): Promise<MemoryReadResult>;
   status(): MemoryProviderStatus;
   sync?(params?: {
     reason?: string;

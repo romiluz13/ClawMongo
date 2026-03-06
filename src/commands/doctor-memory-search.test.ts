@@ -57,7 +57,16 @@ describe("noteMemorySearchHealth", () => {
     resolveApiKeyForProvider.mockReset();
     resolveApiKeyForProvider.mockRejectedValue(new Error("missing key"));
     resolveMemoryBackendConfig.mockReset();
-    resolveMemoryBackendConfig.mockReturnValue({ backend: "builtin", citations: "auto" });
+    resolveMemoryBackendConfig.mockReturnValue({
+      backend: "mongodb",
+      citations: "auto",
+      mongodb: {
+        uri: "mongodb://localhost:27017/openclaw",
+        database: "openclaw",
+        collectionPrefix: "openclaw_",
+        deploymentProfile: "community-bare",
+      },
+    });
   });
 
   it("does not warn when local provider is set with no explicit modelPath (default model fallback)", async () => {
@@ -115,10 +124,9 @@ describe("noteMemorySearchHealth", () => {
     expect(note).not.toHaveBeenCalled();
   });
 
-  it("does not warn when QMD backend is active", async () => {
-    resolveMemoryBackendConfig.mockReturnValue({
-      backend: "qmd",
-      citations: "auto",
+  it("stops after legacy backend validation fails", async () => {
+    resolveMemoryBackendConfig.mockImplementation(() => {
+      throw new Error('Legacy memory backend "qmd" is no longer supported');
     });
     resolveMemorySearchConfig.mockReturnValue({
       provider: "auto",
@@ -128,7 +136,10 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expect(note).toHaveBeenCalledWith(
+      expect.stringContaining('Legacy memory backend "qmd" is no longer supported in ClawMongo.'),
+      "Memory (MongoDB)",
+    );
   });
 
   it("does not warn when remote apiKey is configured for explicit provider", async () => {

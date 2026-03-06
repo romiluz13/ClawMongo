@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   resetMemoryToolMockState,
-  setMemoryBackend,
   setMemoryReadFileImpl,
   setMemorySearchImpl,
   type MemoryReadParams,
@@ -27,7 +26,6 @@ function createMemoryGetToolOrThrow(config: OpenClawConfig = createToolConfig())
 
 beforeEach(() => {
   resetMemoryToolMockState({
-    backend: "builtin",
     searchImpl: async () => [
       {
         path: "MEMORY.md",
@@ -44,7 +42,6 @@ beforeEach(() => {
 
 describe("memory search citations", () => {
   it("appends source information when citations are enabled", async () => {
-    setMemoryBackend("builtin");
     const cfg = asOpenClawConfig({
       memory: { citations: "on" },
       agents: { list: [{ id: "main", default: true }] },
@@ -60,7 +57,6 @@ describe("memory search citations", () => {
   });
 
   it("leaves snippet untouched when citations are off", async () => {
-    setMemoryBackend("builtin");
     const cfg = asOpenClawConfig({
       memory: { citations: "off" },
       agents: { list: [{ id: "main", default: true }] },
@@ -75,23 +71,7 @@ describe("memory search citations", () => {
     expect(details.results[0]?.citation).toBeUndefined();
   });
 
-  it("clamps decorated snippets to qmd injected budget", async () => {
-    setMemoryBackend("qmd");
-    const cfg = asOpenClawConfig({
-      memory: { citations: "on", backend: "qmd", qmd: { limits: { maxInjectedChars: 20 } } },
-      agents: { list: [{ id: "main", default: true }] },
-    });
-    const tool = createMemorySearchTool({ config: cfg });
-    if (!tool) {
-      throw new Error("tool missing");
-    }
-    const result = await tool.execute("call_citations_qmd", { query: "notes" });
-    const details = result.details as { results: Array<{ snippet: string; citation?: string }> };
-    expect(details.results[0]?.snippet.length).toBeLessThanOrEqual(20);
-  });
-
   it("honors auto mode for direct chats", async () => {
-    setMemoryBackend("builtin");
     const cfg = asOpenClawConfig({
       memory: { citations: "auto" },
       agents: { list: [{ id: "main", default: true }] },
@@ -109,7 +89,6 @@ describe("memory search citations", () => {
   });
 
   it("suppresses citations for auto mode in group chats", async () => {
-    setMemoryBackend("builtin");
     const cfg = asOpenClawConfig({
       memory: { citations: "auto" },
       agents: { list: [{ id: "main", default: true }] },
@@ -128,8 +107,7 @@ describe("memory search citations", () => {
 });
 
 describe("memory tools", () => {
-  it("does not emit mongodb low-confidence hint when runtime backend falls back to builtin", async () => {
-    setMemoryBackend("builtin");
+  it("emits mongodb low-confidence hint for weak recall results", async () => {
     setMemorySearchImpl(async () => [
       {
         path: "MEMORY.md",
@@ -153,7 +131,7 @@ describe("memory tools", () => {
 
     const result = await tool.execute("call_runtime_fallback_hint", { query: "hello" });
     const details = result.details as { feedbackHint?: string };
-    expect(details.feedbackHint).toBeUndefined();
+    expect(details.feedbackHint).toContain("kb_search");
   });
 
   it("does not throw when memory_search fails (e.g. embeddings 429)", async () => {
@@ -189,6 +167,7 @@ describe("memory tools", () => {
     const result = await tool.execute("call_2", { path: "memory/NOPE.md" });
     expect(result.details).toEqual({
       path: "memory/NOPE.md",
+      locator: "memory/NOPE.md",
       text: "",
       disabled: true,
       error: "path required",

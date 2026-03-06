@@ -3,14 +3,15 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { createKBSearchTool, createMemoryWriteTool } from "./memory-tool.js";
 
 describe("createKBSearchTool", () => {
-  it("returns null when backend is not mongodb", () => {
+  it("returns tool even when legacy backend config is present", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
       memory: { backend: "builtin" },
     } as OpenClawConfig;
 
     const tool = createKBSearchTool({ config: cfg });
-    expect(tool).toBeNull();
+    expect(tool).not.toBeNull();
+    expect(tool!.name).toBe("kb_search");
   });
 
   it("returns tool when mongodb backend is active", () => {
@@ -31,14 +32,15 @@ describe("createKBSearchTool", () => {
 });
 
 describe("createMemoryWriteTool", () => {
-  it("returns null when backend is not mongodb", () => {
+  it("returns tool even when legacy backend config is present", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
       memory: { backend: "qmd" },
     } as OpenClawConfig;
 
     const tool = createMemoryWriteTool({ config: cfg });
-    expect(tool).toBeNull();
+    expect(tool).not.toBeNull();
+    expect(tool!.name).toBe("memory_write");
   });
 
   it("returns tool when mongodb backend is active", () => {

@@ -33,11 +33,8 @@ async function showNoDockerLocalHint(prompter: WizardPrompter): Promise<void> {
 }
 
 /**
- * Interactive memory backend selection for the onboarding wizard.
- * Only shown in advanced mode. Returns updated config with memory backend settings.
- *
- * When running as @romiluz/clawmongo, MongoDB is the recommended default.
- * When running as openclaw (upstream), builtin (SQLite) remains the default.
+ * Interactive memory setup for the onboarding wizard.
+ * ClawMongo is MongoDB-only, so onboarding always configures MongoDB.
  */
 export async function setupMemoryBackend(
   config: OpenClawConfig,
@@ -45,47 +42,13 @@ export async function setupMemoryBackend(
 ): Promise<OpenClawConfig> {
   const packageName = await resolveOpenClawPackageName();
   const isClawMongo = packageName === "@romiluz/clawmongo";
-  const defaultBackend = config.memory?.backend ?? (isClawMongo ? "mongodb" : "builtin");
-
-  const backend = await prompter.select({
-    message: "Memory backend",
-    options: [
-      {
-        value: "builtin" as const,
-        label: "Built-in (SQLite)",
-        hint: isClawMongo
-          ? "Basic. Local-only, no multi-instance support."
-          : "Default. Works everywhere, no setup needed.",
-      },
-      {
-        value: "mongodb" as const,
-        label: isClawMongo ? "MongoDB (Recommended)" : "MongoDB",
-        hint: isClawMongo
-          ? "ACID transactions, vector search, TTL, analytics, change streams."
-          : "Scalable. Requires MongoDB 8.0+ connection.",
-      },
-      {
-        value: "qmd" as const,
-        label: "QMD",
-        hint: "Advanced. Local semantic search with qmd binary.",
-      },
-    ],
-    initialValue: defaultBackend,
-  });
-
-  if (backend === "builtin") {
-    return config;
+  if (config.memory?.backend && config.memory.backend !== "mongodb") {
+    await prompter.note(
+      `Legacy memory backend "${config.memory.backend}" detected. ClawMongo will replace it with MongoDB.`,
+      "MongoDB Memory",
+    );
   }
-
-  if (backend === "mongodb") {
-    return setupMongoDBMemory(config, prompter, isClawMongo);
-  }
-
-  // QMD — set backend, existing QMD config flow handles the rest
-  return {
-    ...config,
-    memory: { ...config.memory, backend: "qmd" },
-  };
+  return setupMongoDBMemory(config, prompter, isClawMongo);
 }
 
 async function setupMongoDBMemory(
@@ -266,12 +229,12 @@ async function continueMongoDBSetup(
     typeof existingEnableChangeStreams === "boolean"
       ? existingEnableChangeStreams
       : defaultEnableChangeStreams;
+  const { backend: _legacyBackend, qmd: _legacyQmd, ...memoryConfig } = config.memory ?? {};
 
   const baseResult: OpenClawConfig = {
     ...config,
     memory: {
-      ...config.memory,
-      backend: "mongodb",
+      ...memoryConfig,
       mongodb: {
         ...config.memory?.mongodb,
         uri: trimmedUri,

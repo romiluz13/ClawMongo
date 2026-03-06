@@ -870,15 +870,131 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   // MemorySearchManager.readFile
   // ---------------------------------------------------------------------------
 
-  async readFile(params: {
-    relPath: string;
-    from?: number;
-    lines?: number;
-  }): Promise<{ text: string; path: string }> {
+  async readFile(params: { relPath: string; from?: number; lines?: number }) {
     const rawPath = params.relPath.trim();
     if (!rawPath) {
       throw new Error("path required");
     }
+
+    if (rawPath.startsWith("structured:")) {
+      const [, type, ...keyParts] = rawPath.split(":");
+      const key = keyParts.join(":").trim();
+      if (!type || !key) {
+        throw new Error("path required");
+      }
+      const record = await structuredMemCollection(this.db, this.prefix).findOne({
+        agentId: this.agentId,
+        type,
+        key,
+      });
+      if (!record) {
+        return { text: "", path: rawPath, locator: rawPath, source: "structured" as const };
+      }
+      const text = [
+        `type: ${String(record.type ?? type)}`,
+        `key: ${String(record.key ?? key)}`,
+        `value: ${String(record.value ?? "")}`,
+        typeof record.context === "string" ? `context: ${record.context}` : null,
+        Array.isArray(record.tags) && record.tags.length > 0
+          ? `tags: ${record.tags.join(", ")}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        text,
+        path: rawPath,
+        locator: rawPath,
+        source: "structured" as const,
+        type,
+        key,
+      };
+    }
+
+    if (rawPath.startsWith("kb:")) {
+      const kbPath = rawPath.slice(3).trim();
+      if (!kbPath) {
+        throw new Error("path required");
+      }
+      const record = await kbCollection(this.db, this.prefix).findOne({
+        $or: [{ "source.path": kbPath }, { title: kbPath }],
+      });
+      if (!record) {
+        return { text: "", path: rawPath, locator: rawPath, source: "kb" as const };
+      }
+      return {
+        text: typeof record.content === "string" ? record.content : "",
+        path: rawPath,
+        locator: rawPath,
+        source: "kb" as const,
+        title: typeof record.title === "string" ? record.title : undefined,
+      };
+    }
+
+    return await this.readMarkdownMemoryFile(rawPath, params.from, params.lines);
+  }
+
+  // ---------------------------------------------------------------------------
+  // MemorySearchManager.status
+  // ---------------------------------------------------------------------------
+
+  status(): MemoryProviderStatus {
+    const mongoCfg = this.config.mongodb!;
+    return {
+      backend: "mongodb",
+      provider:
+        mongoCfg.embeddingMode === "automated"
+          ? "mongodb-automated"
+          : (this.embeddingProvider?.id ?? "none"),
+      model:
+        mongoCfg.embeddingMode === "automated"
+          ? "automated (server-managed)"
+          : this.embeddingProvider?.model,
+      files: this.fileCount,
+      chunks: this.chunkCount,
+      dirty: this.dirty,
+      workspaceDir: this.workspaceDir,
+      sources: ["memory", "sessions", "kb", "structured"],
+      custom: {
+        deploymentProfile: mongoCfg.deploymentProfile,
+        embeddingMode: mongoCfg.embeddingMode,
+        fusionMethod: mongoCfg.fusionMethod,
+        capabilities: this.capabilities,
+        database: mongoCfg.database,
+        collectionPrefix: mongoCfg.collectionPrefix,
+        quantization: mongoCfg.quantization,
+        relevance: this.relevance
+          ? {
+              enabled: mongoCfg.relevance.enabled,
+              telemetry: {
+                state:
+                  mongoCfg.relevance.enabled && mongoCfg.relevance.telemetry.enabled
+                    ? "enabled"
+                    : "disabled",
+              },
+              sampleRate: {
+                current: this.relevance.getSampleState().current,
+              },
+              health: this.relevance.getCurrentHealth(),
+              lastRegressionAt: undefined,
+              profileCapabilities: this.relevance.getProfileCapabilities(),
+            }
+          : {
+              enabled: false,
+              telemetry: { state: "disabled" },
+              sampleRate: { current: 0 },
+              health: "insufficient-data",
+              profileCapabilities: {
+                textExplain: false,
+                vectorExplain: false,
+                fusionExplain: false,
+              },
+            },
+      },
+    };
+  }
+
+  private async readMarkdownMemoryFile(rawPath: string, from?: number, lines?: number) {
     const absPath = path.isAbsolute(rawPath)
       ? path.resolve(rawPath)
       : path.resolve(this.workspaceDir, rawPath);
@@ -921,73 +1037,18 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     const content = await fs.readFile(absPath, "utf-8");
-    if (!params.from && !params.lines) {
-      return { text: content, path: relPath };
+    if (!from && !lines) {
+      return { text: content, path: relPath, locator: relPath, source: "memory" as const };
     }
-    const lines = content.split("\n");
-    const start = Math.max(1, params.from ?? 1);
-    const count = Math.max(1, params.lines ?? lines.length);
-    const slice = lines.slice(start - 1, start - 1 + count);
-    return { text: slice.join("\n"), path: relPath };
-  }
-
-  // ---------------------------------------------------------------------------
-  // MemorySearchManager.status
-  // ---------------------------------------------------------------------------
-
-  status(): MemoryProviderStatus {
-    const mongoCfg = this.config.mongodb!;
+    const contentLines = content.split("\n");
+    const start = Math.max(1, from ?? 1);
+    const count = Math.max(1, lines ?? contentLines.length);
+    const slice = contentLines.slice(start - 1, start - 1 + count);
     return {
-      backend: "mongodb",
-      provider:
-        mongoCfg.embeddingMode === "automated"
-          ? "mongodb-automated"
-          : (this.embeddingProvider?.id ?? "none"),
-      model:
-        mongoCfg.embeddingMode === "automated"
-          ? "automated (server-managed)"
-          : this.embeddingProvider?.model,
-      files: this.fileCount,
-      chunks: this.chunkCount,
-      dirty: this.dirty,
-      workspaceDir: this.workspaceDir,
-      sources: ["memory", "sessions"],
-      custom: {
-        deploymentProfile: mongoCfg.deploymentProfile,
-        embeddingMode: mongoCfg.embeddingMode,
-        fusionMethod: mongoCfg.fusionMethod,
-        capabilities: this.capabilities,
-        database: mongoCfg.database,
-        collectionPrefix: mongoCfg.collectionPrefix,
-        quantization: mongoCfg.quantization,
-        relevance: this.relevance
-          ? {
-              enabled: mongoCfg.relevance.enabled,
-              telemetry: {
-                state:
-                  mongoCfg.relevance.enabled && mongoCfg.relevance.telemetry.enabled
-                    ? "enabled"
-                    : "disabled",
-              },
-              sampleRate: {
-                current: this.relevance.getSampleState().current,
-              },
-              health: this.relevance.getCurrentHealth(),
-              lastRegressionAt: undefined,
-              profileCapabilities: this.relevance.getProfileCapabilities(),
-            }
-          : {
-              enabled: false,
-              telemetry: { state: "disabled" },
-              sampleRate: { current: 0 },
-              health: "insufficient-data",
-              profileCapabilities: {
-                textExplain: false,
-                vectorExplain: false,
-                fusionExplain: false,
-              },
-            },
-      },
+      text: slice.join("\n"),
+      path: relPath,
+      locator: relPath,
+      source: "memory" as const,
     };
   }
 

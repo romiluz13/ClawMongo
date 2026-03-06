@@ -17,8 +17,10 @@ const log = createSubsystemLogger("memory:mongodb:kb-search");
 // ---------------------------------------------------------------------------
 
 function toKBSearchResult(doc: Document): MemorySearchResult {
+  const rawPath = typeof doc.path === "string" ? doc.path : "";
   return {
-    path: typeof doc.path === "string" ? doc.path : "",
+    path: rawPath ? `kb:${rawPath}` : "kb:",
+    filePath: rawPath || undefined,
     startLine: typeof doc.startLine === "number" ? doc.startLine : 0,
     endLine: typeof doc.endLine === "number" ? doc.endLine : 0,
     score: typeof doc.score === "number" ? Number(doc.score.toFixed(6)) : 0,

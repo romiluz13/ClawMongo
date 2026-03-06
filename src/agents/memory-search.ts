@@ -368,7 +368,7 @@ export function resolveMemorySearchConfig(
 ): ResolvedMemorySearchConfig | null {
   const defaults = cfg.agents?.defaults?.memorySearch;
   const overrides = resolveAgentConfig(cfg, agentId)?.memorySearch;
-  const memoryBackend = cfg.memory?.backend;
+  const memoryBackend = cfg.memory?.backend ?? "mongodb";
   const resolved = mergeConfig(defaults, overrides, agentId, memoryBackend);
   if (!resolved.enabled) {
     return null;

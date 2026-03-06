@@ -67,8 +67,9 @@ grow over time and lead to unexpectedly high context usage and more frequent
 compaction.
 
 > **Note:** `memory/*.md` daily files are **not** injected automatically. They
-> are accessed on demand via the `memory_search` and `memory_get` tools, so they
-> do not count against the context window unless the model explicitly reads them.
+> are accessed on demand via the Mongo memory tools (`memory_search`,
+> `memory_get`, `kb_search`, `memory_write` where applicable), so they do not
+> count against the context window unless the model explicitly reads them.
 
 Large files are truncated with a marker. The max per-file size is controlled by
 `agents.defaults.bootstrapMaxChars` (default: 20000). Total injected bootstrap

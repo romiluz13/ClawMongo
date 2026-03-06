@@ -32,8 +32,8 @@ function showNoDockerLocalHint(): void {
 }
 
 /**
- * Memory backend section for the configure wizard.
- * Shows current backend, allows switching, and configures MongoDB settings.
+ * Memory section for the configure wizard.
+ * ClawMongo is MongoDB-only, so this flow only configures MongoDB settings.
  */
 export async function configureMemorySection(
   nextConfig: OpenClawConfig,
@@ -41,61 +41,23 @@ export async function configureMemorySection(
 ): Promise<OpenClawConfig> {
   const packageName = await resolveOpenClawPackageName();
   const isClawMongo = packageName === "@romiluz/clawmongo";
-  const currentBackend = nextConfig.memory?.backend ?? "builtin";
+  const currentBackend = nextConfig.memory?.backend ?? "mongodb";
 
   note(
     [
-      `Current memory backend: ${currentBackend}`,
-      ...(currentBackend === "mongodb" && nextConfig.memory?.mongodb?.uri
+      "ClawMongo memory is MongoDB-only.",
+      ...(currentBackend !== "mongodb"
+        ? [`Legacy backend config detected: ${currentBackend}. It will be replaced by MongoDB.`]
+        : []),
+      ...(nextConfig.memory?.mongodb?.uri
         ? [`MongoDB URI: ${redactUri(nextConfig.memory.mongodb.uri)}`]
         : []),
-      ...(currentBackend === "mongodb" && nextConfig.memory?.mongodb?.deploymentProfile
+      ...(nextConfig.memory?.mongodb?.deploymentProfile
         ? [`Profile: ${nextConfig.memory.mongodb.deploymentProfile}`]
         : []),
     ].join("\n"),
     "Memory",
   );
-
-  const backend = guardCancel(
-    await select({
-      message: "Memory backend",
-      options: [
-        {
-          value: "builtin",
-          label: "Built-in (SQLite)",
-          hint: "Default. Works everywhere, no setup needed.",
-        },
-        {
-          value: "mongodb",
-          label: isClawMongo ? "MongoDB (Recommended)" : "MongoDB",
-          hint: isClawMongo
-            ? "ACID transactions, vector search, TTL, analytics, change streams."
-            : "Scalable. Requires MongoDB 8.0+ connection.",
-        },
-        {
-          value: "qmd",
-          label: "QMD",
-          hint: "Advanced. Local semantic search with qmd binary.",
-        },
-      ],
-      initialValue: currentBackend,
-    }),
-    runtime,
-  );
-
-  if (backend === "builtin") {
-    return {
-      ...nextConfig,
-      memory: { ...nextConfig.memory, backend: "builtin" },
-    };
-  }
-
-  if (backend === "qmd") {
-    return {
-      ...nextConfig,
-      memory: { ...nextConfig.memory, backend: "qmd" },
-    };
-  }
 
   // --- Auto-Setup: try Docker auto-start BEFORE manual URI prompt ---
   // Only for ClawMongo; upstream openclaw skips directly to manual URI
@@ -276,12 +238,12 @@ async function configureMongoDBWithUri(
     typeof existingEnableChangeStreams === "boolean"
       ? existingEnableChangeStreams
       : defaultEnableChangeStreams;
+  const { backend: _legacyBackend, qmd: _legacyQmd, ...memoryConfig } = nextConfig.memory ?? {};
 
   let baseResult: OpenClawConfig = {
     ...nextConfig,
     memory: {
-      ...nextConfig.memory,
-      backend: "mongodb",
+      ...memoryConfig,
       mongodb: {
         ...nextConfig.memory?.mongodb,
         uri: resolvedUri,

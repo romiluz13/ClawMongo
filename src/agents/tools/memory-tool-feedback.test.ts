@@ -24,7 +24,7 @@ describe("memory tool descriptions with MongoDB backend", () => {
     expect(tool!.description).toContain("Example:");
   });
 
-  it("memory_search description does NOT include example when builtin backend", () => {
+  it("memory_search description includes usage example even when legacy backend config is present", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
       memory: { backend: "builtin" },
@@ -32,7 +32,7 @@ describe("memory tool descriptions with MongoDB backend", () => {
 
     const tool = createMemorySearchTool({ config: cfg });
     expect(tool).not.toBeNull();
-    expect(tool!.description).not.toContain("Example:");
+    expect(tool!.description).toContain("Example:");
   });
 
   it("kb_search description includes usage example", () => {

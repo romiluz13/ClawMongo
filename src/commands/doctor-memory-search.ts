@@ -19,24 +19,29 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
   try {
     backendConfig = resolveMemoryBackendConfig({ cfg, agentId });
   } catch {
-    // resolveMemoryBackendConfig throws when mongodb URI is missing
-    if (cfg.memory?.backend === "mongodb") {
+    const legacyBackend = cfg.memory?.backend;
+    if (legacyBackend === "builtin" || legacyBackend === "qmd") {
       note(
         [
-          "MongoDB memory backend is configured but no URI is set.",
+          `Legacy memory backend "${legacyBackend}" is no longer supported in ClawMongo.`,
           "",
-          "Fix (pick one):",
-          `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb+srv://...")}`,
-          "- Set OPENCLAW_MONGODB_URI environment variable",
-          `- Switch backend: ${formatCliCommand("openclaw config set memory.backend builtin")}`,
+          "Fix:",
+          `- Remove legacy backend config and set ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb+srv://...")}`,
         ].join("\n"),
         "Memory (MongoDB)",
       );
+      return;
     }
-    return;
-  }
-
-  if (backendConfig.backend !== "mongodb" || !backendConfig.mongodb) {
+    note(
+      [
+        "MongoDB memory is active but no URI is set.",
+        "",
+        "Fix:",
+        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb+srv://...")}`,
+        "- Or set OPENCLAW_MONGODB_URI in the environment",
+      ].join("\n"),
+      "Memory (MongoDB)",
+    );
     return;
   }
 
@@ -48,13 +53,7 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
     ({ MongoClient } = await import("mongodb"));
   } catch {
     note(
-      [
-        "MongoDB driver is not installed.",
-        "",
-        "Fix (pick one):",
-        "- Install: pnpm add mongodb",
-        `- Switch backend: ${formatCliCommand("openclaw config set memory.backend builtin")}`,
-      ].join("\n"),
+      ["MongoDB driver is not installed.", "", "Fix:", "- Install: pnpm add mongodb"].join("\n"),
       "Memory (MongoDB)",
     );
     return;
@@ -103,11 +102,10 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
       [
         `MongoDB connection failed: ${message}`,
         "",
-        "Fix (pick one):",
+        "Fix:",
         "- Check that MongoDB is running and accessible",
         "- Verify URI credentials and network access",
         `- Test manually: mongosh "${redactDoctorUri(uri)}"`,
-        `- Switch backend: ${formatCliCommand("openclaw config set memory.backend builtin")}`,
       ].join("\n"),
       "Memory (MongoDB)",
     );
@@ -202,10 +200,9 @@ export async function noteMemorySearchHealth(
     return;
   }
 
-  // QMD backend handles embeddings internally (e.g. embeddinggemma) — no
-  // separate embedding provider is needed. Skip the provider check entirely.
-  const backendConfig = resolveMemoryBackendConfig({ cfg, agentId });
-  if (backendConfig.backend === "qmd") {
+  try {
+    resolveMemoryBackendConfig({ cfg, agentId });
+  } catch {
     return;
   }
 
