@@ -207,36 +207,6 @@ const mocks = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock("../memory/manager.js", () => ({
-  MemoryIndexManager: {
-    get: vi.fn(async ({ agentId }: { agentId: string }) => ({
-      probeVectorAvailability: vi.fn(async () => true),
-      status: () => ({
-        files: 2,
-        chunks: 3,
-        dirty: false,
-        workspaceDir: "/tmp/openclaw",
-        dbPath: "/tmp/memory.sqlite",
-        provider: "openai",
-        model: "text-embedding-3-small",
-        requestedProvider: "openai",
-        sources: ["memory"],
-        sourceCounts: [{ source: "memory", files: 2, chunks: 3 }],
-        cache: { enabled: true, entries: 10, maxEntries: 500 },
-        fts: { enabled: true, available: true },
-        vector: {
-          enabled: true,
-          available: true,
-          extensionPath: "/opt/vec0.dylib",
-          dims: 1024,
-        },
-      }),
-      close: vi.fn(async () => {}),
-      __agentId: agentId,
-    })),
-  },
-}));
-
 vi.mock("../config/sessions.js", () => ({
   loadSessionStore: mocks.loadSessionStore,
   resolveMainSessionKey: mocks.resolveMainSessionKey,

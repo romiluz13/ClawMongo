@@ -102,9 +102,9 @@ describe("computeFeedbackHint", () => {
     expect(hint).toBeUndefined();
   });
 
-  it("returns undefined for non-mongodb backend", () => {
+  it("returns undefined for an unexpected legacy backend label", () => {
     const results = [makeResult(0.1)];
-    const hint = computeFeedbackHint(results, "builtin");
+    const hint = computeFeedbackHint(results, "builtin" as never);
     expect(hint).toBeUndefined();
   });
 

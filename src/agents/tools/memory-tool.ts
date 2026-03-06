@@ -100,7 +100,6 @@ export function createMemorySearchTool(options: {
           results,
           provider: status.provider,
           model: status.model,
-          fallback: status.fallback,
           citations: citationsMode,
           ...(feedbackHint ? { feedbackHint } : {}),
         });

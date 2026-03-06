@@ -6,7 +6,7 @@ describe("createKBSearchTool", () => {
   it("returns tool even when legacy backend config is present", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
-      memory: { backend: "builtin" },
+      memory: { backend: "builtin" as never },
     } as OpenClawConfig;
 
     const tool = createKBSearchTool({ config: cfg });
@@ -35,7 +35,7 @@ describe("createMemoryWriteTool", () => {
   it("returns tool even when legacy backend config is present", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
-      memory: { backend: "qmd" },
+      memory: { backend: "qmd" as never },
     } as OpenClawConfig;
 
     const tool = createMemoryWriteTool({ config: cfg });
