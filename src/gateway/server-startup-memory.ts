@@ -13,19 +13,24 @@ export async function startGatewayMemoryBackend(params: {
     if (!resolveMemorySearchConfig(params.cfg, agentId)) {
       continue;
     }
-    const resolved = resolveMemoryBackendConfig({ cfg: params.cfg, agentId });
-    if (resolved.backend !== "qmd" && resolved.backend !== "mongodb") {
+    try {
+      resolveMemoryBackendConfig({ cfg: params.cfg, agentId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      params.log.warn(
+        `mongodb memory startup initialization failed for agent "${agentId}": ${message}`,
+      );
       continue;
     }
 
     const { manager, error } = await getMemorySearchManager({ cfg: params.cfg, agentId });
     if (!manager) {
       params.log.warn(
-        `${resolved.backend} memory startup initialization failed for agent "${agentId}": ${error ?? "unknown error"}`,
+        `mongodb memory startup initialization failed for agent "${agentId}": ${error ?? "unknown error"}`,
       );
       continue;
     }
-    if (resolved.backend === "mongodb" && manager.sync) {
+    if (manager.sync) {
       try {
         await manager.sync({ reason: "startup" });
       } catch (err) {
@@ -33,8 +38,6 @@ export async function startGatewayMemoryBackend(params: {
         params.log.warn(`mongodb memory startup sync failed for agent "${agentId}": ${message}`);
       }
     }
-    params.log.info?.(
-      `${resolved.backend} memory startup initialization armed for agent "${agentId}"`,
-    );
+    params.log.info?.(`mongodb memory startup initialization armed for agent "${agentId}"`);
   }
 }
