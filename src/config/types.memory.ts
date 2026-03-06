@@ -1,12 +1,9 @@
-export type MemoryBackend = "builtin" | "qmd" | "mongodb";
+export type MemoryBackend = "mongodb";
+export type LegacyMemoryBackend = "builtin" | "qmd" | MemoryBackend;
 
-export type MemoryMongoDBDeploymentProfile =
-  | "atlas-default"
-  | "atlas-m0"
-  | "community-mongot"
-  | "community-bare";
+export type MemoryMongoDBDeploymentProfile = "community-mongot";
 
-export type MemoryMongoDBEmbeddingMode = "automated" | "managed";
+export type MemoryMongoDBEmbeddingMode = "automated";
 
 export type MemoryMongoDBFusionMethod = "scoreFusion" | "rankFusion" | "js-merge";
 
@@ -99,7 +96,8 @@ export type MemoryCitationsMode = "auto" | "on" | "off";
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
 
 export type MemoryConfig = {
-  backend?: MemoryBackend;
+  /** Legacy key accepted only for migration detection. */
+  backend?: string;
   citations?: MemoryCitationsMode;
   /** Legacy key accepted only for migration detection. */
   qmd?: Record<string, unknown>;

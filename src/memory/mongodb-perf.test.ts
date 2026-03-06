@@ -55,10 +55,11 @@ describe("Phase 5: Projection excludes embedding", () => {
       }),
     } as unknown as Collection;
 
-    await vectorSearch(mockCollection, [0.1, 0.2], {
+    await vectorSearch(mockCollection, null, {
       maxResults: 5,
       minScore: 0.1,
       indexName: "test_vector",
+      queryText: "test query",
     });
 
     // Inclusion-mode $project excludes embedding by not listing it
@@ -194,7 +195,7 @@ describe("Phase 5: Projection excludes embedding", () => {
         scoreFusion: false,
         rankFusion: false,
       },
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const projectStage = pipeline.find((stage) => "$project" in stage);
@@ -223,7 +224,7 @@ describe("Phase 5: Projection excludes embedding", () => {
         rankFusion: false,
       },
       vectorIndexName: "vec",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const projectStage = pipeline.find((stage) => "$project" in stage);

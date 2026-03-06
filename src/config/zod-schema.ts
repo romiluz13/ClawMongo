@@ -46,20 +46,61 @@ const LoggingLevelSchema = z.union([
   z.literal("trace"),
 ]);
 
+const ClawMongoDeploymentProfileSchema = z
+  .string()
+  .optional()
+  .superRefine((value, ctx) => {
+    if (value === undefined || value === "community-mongot") {
+      return;
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `deploymentProfile "${value}" is not supported in ClawMongo. Use deploymentProfile "community-mongot".`,
+    });
+  });
+
+const ClawMongoEmbeddingModeSchema = z
+  .string()
+  .optional()
+  .superRefine((value, ctx) => {
+    if (value === undefined || value === "automated") {
+      return;
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `embeddingMode "${value}" is not supported in ClawMongo. Use embeddingMode "automated" with community-mongot.`,
+    });
+  });
+
+const ClawMongoLegacyBackendSchema = z
+  .string()
+  .optional()
+  .superRefine((value, ctx) => {
+    if (value === undefined || value === "mongodb") {
+      return;
+    }
+    if (value === "builtin" || value === "qmd") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          `Legacy memory backend "${value}" is no longer supported in ClawMongo. ` +
+          "Remove `memory.backend`, configure `memory.mongodb.uri`, and keep all memory flows on MongoDB.",
+      });
+      return;
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Unsupported memory backend: ${value}`,
+    });
+  });
+
 const MemoryMongoDBSchema = z
   .object({
     uri: z.string().optional(),
     database: z.string().optional(),
     collectionPrefix: z.string().optional(),
-    deploymentProfile: z
-      .union([
-        z.literal("atlas-default"),
-        z.literal("atlas-m0"),
-        z.literal("community-mongot"),
-        z.literal("community-bare"),
-      ])
-      .optional(),
-    embeddingMode: z.union([z.literal("automated"), z.literal("managed")]).optional(),
+    deploymentProfile: ClawMongoDeploymentProfileSchema,
+    embeddingMode: ClawMongoEmbeddingModeSchema,
     fusionMethod: z
       .union([z.literal("scoreFusion"), z.literal("rankFusion"), z.literal("js-merge")])
       .optional(),
@@ -135,7 +176,7 @@ const MemoryMongoDBSchema = z
 
 const MemorySchema = z
   .object({
-    backend: z.union([z.literal("builtin"), z.literal("qmd"), z.literal("mongodb")]).optional(),
+    backend: ClawMongoLegacyBackendSchema,
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
     qmd: z.record(z.string(), z.unknown()).optional(),
     mongodb: MemoryMongoDBSchema,

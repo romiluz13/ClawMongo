@@ -86,23 +86,23 @@ const NO_CAPS: DetectedCapabilities = {
 // ---------------------------------------------------------------------------
 
 describe("vectorSearch", () => {
-  it("builds correct pipeline for managed mode", async () => {
+  it("builds correct pipeline for automated mode", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    const queryVector = [0.1, 0.2, 0.3];
-    const results = await vectorSearch(col, queryVector, {
+    const results = await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0.1,
       indexName: "test_vector",
-      embeddingMode: "managed",
+      queryText: "search query",
+      embeddingMode: "automated",
     });
 
     expect(col.aggregate).toHaveBeenCalledTimes(1);
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const vsStage = pipeline[0].$vectorSearch;
     expect(vsStage.index).toBe("test_vector");
-    expect(vsStage.queryVector).toEqual(queryVector);
-    expect(vsStage.path).toBe("embedding");
-    expect(vsStage.query).toBeUndefined();
+    expect(vsStage.query).toEqual({ text: "search query" });
+    expect(vsStage.path).toBe("text");
+    expect(vsStage.queryVector).toBeUndefined();
     expect(vsStage.numCandidates).toBeGreaterThanOrEqual(100);
     expect(vsStage.limit).toBe(10);
     expect(results).toHaveLength(2);
@@ -126,13 +126,13 @@ describe("vectorSearch", () => {
     expect(results).toHaveLength(2);
   });
 
-  it("returns empty array when no queryVector in managed mode", async () => {
+  it("returns empty array when automated mode has no query text", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
     const results = await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0.1,
       indexName: "test_vector",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(col.aggregate).not.toHaveBeenCalled();
@@ -144,11 +144,12 @@ describe("vectorSearch", () => {
       { path: "a.md", startLine: 1, endLine: 2, text: "t", source: "memory", score: 0.9 },
       { path: "b.md", startLine: 1, endLine: 2, text: "t", source: "memory", score: 0.05 },
     ]);
-    const results = await vectorSearch(col, [0.1], {
+    const results = await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0.1,
       indexName: "idx",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
     });
     expect(results).toHaveLength(1);
     expect(results[0].path).toBe("a.md");
@@ -156,12 +157,13 @@ describe("vectorSearch", () => {
 
   it("applies session filter", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    await vectorSearch(col, [0.1], {
+    await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0.1,
       indexName: "idx",
       sessionKey: "__memory__",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -171,11 +173,12 @@ describe("vectorSearch", () => {
 
   it("caps numCandidates at 10000 when maxResults would exceed it", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    await vectorSearch(col, [0.1, 0.2], {
+    await vectorSearch(col, null, {
       maxResults: 600, // 600 * 20 = 12000 > 10000
       minScore: 0,
       indexName: "test_vector",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -186,11 +189,12 @@ describe("vectorSearch", () => {
 
   it("caps explicit numCandidates at 10000", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    await vectorSearch(col, [0.1, 0.2], {
+    await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0,
       indexName: "test_vector",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
       numCandidates: 15000,
     });
 
@@ -201,11 +205,12 @@ describe("vectorSearch", () => {
 
   it("includes $limit after $vectorSearch", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    await vectorSearch(col, [0.1], {
+    await vectorSearch(col, null, {
       maxResults: 5,
       minScore: 0,
       indexName: "idx",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -215,11 +220,12 @@ describe("vectorSearch", () => {
 
   it("includes $project with vectorSearchScore meta", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
-    await vectorSearch(col, [0.1], {
+    await vectorSearch(col, null, {
       maxResults: 10,
       minScore: 0.1,
       indexName: "idx",
-      embeddingMode: "managed",
+      queryText: "query",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -372,7 +378,7 @@ describe("mongoSearch dispatcher", () => {
       ...baseOpts,
       fusionMethod: "scoreFusion",
       capabilities: FULL_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -385,7 +391,7 @@ describe("mongoSearch dispatcher", () => {
       ...baseOpts,
       fusionMethod: "rankFusion",
       capabilities: FULL_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -419,7 +425,7 @@ describe("mongoSearch dispatcher", () => {
       ...baseOpts,
       fusionMethod: "scoreFusion",
       capabilities: FULL_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     // Should have retried with $rankFusion
@@ -434,7 +440,7 @@ describe("mongoSearch dispatcher", () => {
       ...baseOpts,
       fusionMethod: "js-merge",
       capabilities: FULL_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     // aggregate should be called twice: once for vector, once for keyword
@@ -453,19 +459,19 @@ describe("mongoSearch dispatcher", () => {
     await mongoSearch(col, "test", [0.1], {
       ...baseOpts,
       capabilities: { ...FULL_CAPS, textSearch: false, scoreFusion: false, rankFusion: false },
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(pipeline[0].$vectorSearch).toBeDefined();
   });
 
-  it("falls back to keyword-only when vectorSearch not available (managed, no queryVector)", async () => {
+  it("falls back to keyword-only when vectorSearch is unavailable", async () => {
     const col = mockCollectionWithResults(SAMPLE_DOCS);
     await mongoSearch(col, "test", null, {
       ...baseOpts,
       capabilities: { ...FULL_CAPS, vectorSearch: false },
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -479,7 +485,7 @@ describe("mongoSearch dispatcher", () => {
     await mongoSearch(col, "test", null, {
       ...baseOpts,
       capabilities: NO_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     // Should have used aggregate with $text $match
@@ -495,7 +501,7 @@ describe("mongoSearch dispatcher", () => {
     const results = await mongoSearch(col, "test", null, {
       ...baseOpts,
       capabilities: NO_CAPS,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toEqual([]);

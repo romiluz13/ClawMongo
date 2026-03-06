@@ -1,8 +1,7 @@
 import type { Db, Collection, Document } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import type { EmbeddingProvider } from "./embeddings.js";
-import { retryEmbedding, type EmbeddingStatus } from "./mongodb-embedding-retry.js";
+import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection } from "./mongodb-schema.js";
@@ -50,31 +49,13 @@ export async function writeStructuredMemory(params: {
   prefix: string;
   entry: StructuredMemoryEntry;
   embeddingMode: MemoryMongoDBEmbeddingMode;
-  embeddingProvider?: EmbeddingProvider;
 }): Promise<{ upserted: boolean; id: string }> {
-  const { db, prefix, entry, embeddingMode } = params;
+  const { db, prefix, entry } = params;
   const collection = structuredMemCollection(db, prefix);
 
-  // F13: Generate embedding for value + context combined text in managed mode.
-  // Uses retryEmbedding() with 3 attempts + exponential backoff.
-  let embedding: number[] | undefined;
+  // ClawMongo stores structured memory as text and relies on MongoDB automatic
+  // embeddings during vector search instead of precomputing vectors here.
   let embeddingStatus: EmbeddingStatus = "pending";
-  if (embeddingMode === "managed" && params.embeddingProvider) {
-    const provider = params.embeddingProvider;
-    try {
-      const textToEmbed = entry.context ? `${entry.value} ${entry.context}` : entry.value;
-      const [vec] = await retryEmbedding((t) => provider.embedBatch(t), [textToEmbed]);
-      embedding = vec;
-      embeddingStatus = "success";
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.warn(
-        `structured memory embedding failed after retries: ${msg}. ` +
-          'Storing with embeddingStatus: "failed".',
-      );
-      embeddingStatus = "failed";
-    }
-  }
 
   const now = new Date();
   const setDoc: Document = {
@@ -99,9 +80,6 @@ export async function writeStructuredMemory(params: {
   }
   if (entry.tags !== undefined) {
     setDoc.tags = entry.tags;
-  }
-  if (embedding) {
-    setDoc.embedding = embedding;
   }
 
   const setOnInsert: Document = {

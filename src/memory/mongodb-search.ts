@@ -1,5 +1,8 @@
 import type { Collection, Document } from "mongodb";
-import type { MemoryMongoDBFusionMethod } from "../config/types.memory.js";
+import type {
+  MemoryMongoDBEmbeddingMode,
+  MemoryMongoDBFusionMethod,
+} from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mergeHybridResultsMongoDB } from "./mongodb-hybrid.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
@@ -83,11 +86,8 @@ function resolveLegacySourceFilter(sessionKey?: string): MemorySource | undefine
 // ---------------------------------------------------------------------------
 // $vectorSearch stage builder
 // ---------------------------------------------------------------------------
-// In automated mode, MongoDB generates query embeddings from text. ClawMongo
-// treats this as an advanced community-mongot-only path, not the default.
-// Use `query: { text }` and `path` to the source text field.
-// In managed mode, the application provides pre-computed embeddings.
-// Use `queryVector` and `path` to the embedding field.
+// ClawMongo uses MongoDB Community automatic embeddings. Query text is sent to
+// MongoDB and the server handles query-time embedding generation via autoEmbed.
 // ---------------------------------------------------------------------------
 
 /** Hard maximum for numCandidates — MongoDB server rejects values above 10,000. */
@@ -96,7 +96,7 @@ export const MONGODB_MAX_NUM_CANDIDATES = 10_000;
 export function buildVectorSearchStage(input: {
   queryVector: number[] | null;
   queryText: string | null;
-  embeddingMode: "automated" | "managed";
+  embeddingMode: MemoryMongoDBEmbeddingMode;
   indexName: string;
   numCandidates: number;
   limit: number;
@@ -113,13 +113,8 @@ export function buildVectorSearchStage(input: {
   }
 
   if (input.embeddingMode === "automated" && input.queryText) {
-    // Automated: MongoDB generates the query embedding from text.
     base.query = { text: input.queryText };
     base.path = input.textFieldPath ?? "text";
-  } else if (input.queryVector) {
-    // Managed: application provides pre-computed query embedding
-    base.queryVector = input.queryVector;
-    base.path = "embedding";
   } else {
     return null;
   }
@@ -140,7 +135,7 @@ export async function vectorSearch(
     sessionKey?: string;
     indexName: string;
     queryText?: string;
-    embeddingMode?: "automated" | "managed";
+    embeddingMode?: MemoryMongoDBEmbeddingMode;
     numCandidates?: number;
     explain?: SearchExplainOptions;
   },
@@ -154,7 +149,7 @@ export async function vectorSearch(
   const vsStage = buildVectorSearchStage({
     queryVector,
     queryText: opts.queryText ?? null,
-    embeddingMode: opts.embeddingMode ?? "managed",
+    embeddingMode: opts.embeddingMode ?? "automated",
     indexName: opts.indexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults,
@@ -288,7 +283,7 @@ export async function hybridSearchScoreFusion(
     textIndexName: string;
     vectorWeight: number;
     textWeight: number;
-    embeddingMode?: "automated" | "managed";
+    embeddingMode?: MemoryMongoDBEmbeddingMode;
     numCandidates?: number;
     explain?: SearchExplainOptions;
   },
@@ -307,7 +302,7 @@ export async function hybridSearchScoreFusion(
   const vsStage = buildVectorSearchStage({
     queryVector,
     queryText: query,
-    embeddingMode: opts.embeddingMode ?? "managed",
+    embeddingMode: opts.embeddingMode ?? "automated",
     indexName: opts.vectorIndexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
@@ -394,7 +389,7 @@ export async function hybridSearchRankFusion(
     textIndexName: string;
     vectorWeight: number;
     textWeight: number;
-    embeddingMode?: "automated" | "managed";
+    embeddingMode?: MemoryMongoDBEmbeddingMode;
     numCandidates?: number;
     explain?: SearchExplainOptions;
   },
@@ -413,7 +408,7 @@ export async function hybridSearchRankFusion(
   const vsStage = buildVectorSearchStage({
     queryVector,
     queryText: query,
-    embeddingMode: opts.embeddingMode ?? "managed",
+    embeddingMode: opts.embeddingMode ?? "automated",
     indexName: opts.vectorIndexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
@@ -520,22 +515,15 @@ export async function mongoSearch(
     textIndexName: string;
     vectorWeight?: number;
     textWeight?: number;
-    embeddingMode?: "automated" | "managed";
+    embeddingMode?: MemoryMongoDBEmbeddingMode;
     explain?: SearchExplainOptions;
     onTrace?: (event: SearchTraceEvent) => void;
   },
 ): Promise<MemorySearchResult[]> {
   const vectorWeight = opts.vectorWeight ?? 0.7;
   const textWeight = opts.textWeight ?? 0.3;
-  const embeddingMode = opts.embeddingMode ?? "managed";
-
-  // In automated mode, MongoDB generates query embeddings via Voyage AI —
-  // no queryVector needed from the application. In managed mode, we require
-  // a pre-computed queryVector.
-  const canVector =
-    embeddingMode === "automated"
-      ? opts.capabilities.vectorSearch
-      : queryVector != null && opts.capabilities.vectorSearch;
+  const embeddingMode = opts.embeddingMode ?? "automated";
+  const canVector = embeddingMode === "automated" && opts.capabilities.vectorSearch;
 
   const searchOpts = {
     ...opts,

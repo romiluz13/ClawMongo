@@ -105,8 +105,8 @@ function makeConfig(
     uri: "mongodb://localhost:27017",
     database: "testdb",
     collectionPrefix: "test_",
-    deploymentProfile: "community-bare",
-    embeddingMode: "managed",
+    deploymentProfile: "community-mongot",
+    embeddingMode: "automated",
     fusionMethod: "js-merge",
     quantization: "none",
     watchDebounceMs: 500,
@@ -125,6 +125,25 @@ function makeConfig(
       autoImportPaths: [],
       maxDocumentSize: 10 * 1024 * 1024,
       autoRefreshHours: 24,
+    },
+    relevance: {
+      enabled: true,
+      telemetry: {
+        enabled: true,
+        baseSampleRate: 0.01,
+        adaptive: {
+          enabled: true,
+          maxSampleRate: 0.1,
+          minWindowSize: 200,
+        },
+        persistRawExplain: true,
+        queryPrivacyMode: "redacted-hash",
+      },
+      retention: { days: 14 },
+      benchmark: {
+        enabled: true,
+        datasetPath: "~/.openclaw/relevance/golden.jsonl",
+      },
     },
     ...overrides,
   } as ResolvedMemoryBackendConfig["mongodb"];

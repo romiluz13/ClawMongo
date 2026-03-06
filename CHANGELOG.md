@@ -2,6 +2,18 @@
 
 Docs: https://docs.openclaw.ai
 
+## 2026.3.7
+
+### Changes
+
+- Memory/ClawMongo: finalize the MongoDB-only community runtime around `community-mongot` + automatic embeddings, with MongoDB owning chunk, KB, and structured-memory retrieval end to end while Markdown remains the operator-authored input surface.
+- Memory/agent routing: align `memory_search`, `memory_get`, `kb_search`, and `memory_write` with the MongoDB-first runtime and bundled ClawMongo memory-routing skill so the shipped tool model matches actual behavior.
+- Memory/OpenClaw parity: preserve OpenClaw workspace and bootstrap semantics for heart files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`) while keeping MongoDB as the runtime memory brain.
+
+### Fixes
+
+- Memory/release cleanup: remove stale Atlas, `community-bare`, and app-managed embedding runtime branches from shipped MongoDB memory code, and update the MongoDB search, schema, watcher, perf, sync, KB, and structured-memory tests to validate the supported production contract.
+
 ## 2026.3.3
 
 ### Changes

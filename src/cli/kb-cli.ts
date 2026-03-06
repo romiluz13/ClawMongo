@@ -122,35 +122,6 @@ export function registerKBCli(program: Command) {
         try {
           const resolvedPaths = paths.map((p) => path.resolve(p));
 
-          // Optionally set up an embedding provider for managed mode
-          let embeddingProvider: import("../memory/embeddings.js").EmbeddingProvider | undefined;
-          if (mongoCfg.embeddingMode === "managed") {
-            try {
-              const { createEmbeddingProvider } = await import("../memory/embeddings.js");
-              const { resolveMemorySearchConfig } = await import("../agents/memory-search.js");
-              const settings = resolveMemorySearchConfig(cfg, agentId);
-              if (settings) {
-                const { resolveAgentDir } = await import("../agents/agent-scope.js");
-                const result = await createEmbeddingProvider({
-                  config: cfg,
-                  agentDir: resolveAgentDir(cfg, agentId),
-                  provider: settings.provider,
-                  remote: settings.remote,
-                  model: settings.model,
-                  fallback: settings.fallback,
-                  local: settings.local,
-                });
-                if (result.provider) {
-                  embeddingProvider = result.provider;
-                }
-              }
-            } catch {
-              defaultRuntime.log(
-                "Note: embedding provider unavailable — importing without vector embeddings. Text search will still work.",
-              );
-            }
-          }
-
           const { ingestFilesToKB } = await import("../memory/mongodb-kb.js");
           let result: Awaited<ReturnType<typeof ingestFilesToKB>>;
 
@@ -164,7 +135,6 @@ export function registerKBCli(program: Command) {
               category: opts.category,
               importedBy: "cli",
               embeddingMode: mongoCfg.embeddingMode,
-              embeddingProvider,
               chunking: mongoCfg.kb.chunking,
               force: opts.force,
               progress: (p) => {
@@ -299,36 +269,7 @@ export function registerKBCli(program: Command) {
         const capabilities = await detectCapabilities(db);
         const maxResults = opts.maxResults ?? 10;
 
-        // Generate query embedding for managed mode
-        let queryVector: number[] | null = null;
-        if (mongoCfg.embeddingMode === "managed") {
-          try {
-            const { createEmbeddingProvider } = await import("../memory/embeddings.js");
-            const { resolveMemorySearchConfig } = await import("../agents/memory-search.js");
-            const settings = resolveMemorySearchConfig(cfg, agentId);
-            if (settings) {
-              const { resolveAgentDir } = await import("../agents/agent-scope.js");
-              const result = await createEmbeddingProvider({
-                config: cfg,
-                agentDir: resolveAgentDir(cfg, agentId),
-                provider: settings.provider,
-                remote: settings.remote,
-                model: settings.model,
-                fallback: settings.fallback,
-                local: settings.local,
-              });
-              if (result.provider) {
-                queryVector = await result.provider.embedQuery(query);
-              }
-            }
-          } catch {
-            defaultRuntime.log(
-              "Note: embedding provider unavailable — falling back to text search only.",
-            );
-          }
-        }
-
-        const results = await searchKB(kbChunksCollection(db, prefix), query, queryVector, {
+        const results = await searchKB(kbChunksCollection(db, prefix), query, null, {
           maxResults,
           minScore: 0.1,
           vectorIndexName: `${prefix}kb_chunks_vector`,

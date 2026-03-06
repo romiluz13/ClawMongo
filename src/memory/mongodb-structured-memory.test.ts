@@ -79,7 +79,7 @@ describe("writeStructuredMemory", () => {
       db: mockDb(),
       prefix: "test_",
       entry,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.upserted).toBe(true);
@@ -115,23 +115,16 @@ describe("writeStructuredMemory", () => {
       db: mockDb(),
       prefix: "test_",
       entry,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.upserted).toBe(false);
     expect(result.id).toBe("editor");
   });
 
-  it("embeds value + context combined text (F13)", async () => {
+  it("stores pending embedding status for combined value + context text", async () => {
     const col = createMockStructuredCol();
     vi.mocked(structuredMemCollection).mockReturnValue(col);
-
-    const mockProvider = {
-      id: "test",
-      model: "test-model",
-      embedBatch: vi.fn(async () => [[0.1, 0.2, 0.3]]),
-      embedQuery: vi.fn(async () => [0.1, 0.2, 0.3]),
-    };
 
     const entry: StructuredMemoryEntry = {
       type: "decision",
@@ -145,26 +138,17 @@ describe("writeStructuredMemory", () => {
       db: mockDb(),
       prefix: "test_",
       entry,
-      embeddingMode: "managed",
-      embeddingProvider: mockProvider,
+      embeddingMode: "automated",
     });
 
-    // F13: Should embed value + context combined
-    expect(mockProvider.embedBatch).toHaveBeenCalledWith([
-      "Using MongoDB Team decided on 2025-01-01 during architecture review",
-    ]);
+    const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[1].$set.embeddingStatus).toBe("pending");
+    expect(updateCall[1].$set.embedding).toBeUndefined();
   });
 
-  it("includes embedding when provider is available", async () => {
+  it("does not include embedding vectors in ClawMongo write path", async () => {
     const col = createMockStructuredCol();
     vi.mocked(structuredMemCollection).mockReturnValue(col);
-
-    const mockProvider = {
-      id: "test",
-      model: "test-model",
-      embedBatch: vi.fn(async () => [[0.1, 0.2, 0.3]]),
-      embedQuery: vi.fn(async () => [0.1, 0.2, 0.3]),
-    };
 
     const entry: StructuredMemoryEntry = {
       type: "fact",
@@ -177,14 +161,13 @@ describe("writeStructuredMemory", () => {
       db: mockDb(),
       prefix: "test_",
       entry,
-      embeddingMode: "managed",
-      embeddingProvider: mockProvider,
+      embeddingMode: "automated",
     });
 
-    expect(mockProvider.embedBatch).toHaveBeenCalledWith(["Pi is approximately 3.14159"]);
     const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
     const setDoc = updateCall[1].$set;
-    expect(setDoc.embedding).toEqual([0.1, 0.2, 0.3]);
+    expect(setDoc.embeddingStatus).toBe("pending");
+    expect(setDoc.embedding).toBeUndefined();
   });
 });
 
@@ -201,7 +184,7 @@ describe("searchStructuredMemory", () => {
       maxResults: 5,
       capabilities: baseCapabilities,
       vectorIndexName: "test_structured_mem_vector",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(1);
@@ -217,7 +200,7 @@ describe("searchStructuredMemory", () => {
       maxResults: 5,
       capabilities: noSearchCapabilities,
       vectorIndexName: "test_structured_mem_vector",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(0);
@@ -233,7 +216,7 @@ describe("searchStructuredMemory", () => {
       maxResults: 5,
       capabilities: baseCapabilities,
       vectorIndexName: "test_vec",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       numCandidates: 15000,
     });
 
@@ -252,7 +235,7 @@ describe("searchStructuredMemory", () => {
       maxResults: 3,
       capabilities: baseCapabilities,
       vectorIndexName: "test_vec",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -291,7 +274,7 @@ describe("searchStructuredMemory", () => {
       filter: { type: "preference" },
       capabilities: baseCapabilities,
       vectorIndexName: "test_structured_mem_vector",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(1);
@@ -313,7 +296,7 @@ describe("searchStructuredMemory", () => {
       filter: { agentId: "main" },
       capabilities: baseCapabilities,
       vectorIndexName: "test_structured_mem_vector",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];

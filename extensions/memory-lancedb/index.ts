@@ -9,8 +9,9 @@
 import { randomUUID } from "node:crypto";
 import type * as LanceDB from "@lancedb/lancedb";
 import { Type } from "@sinclair/typebox";
+import type { Command } from "commander";
 import OpenAI from "openai";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/memory-lancedb";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   DEFAULT_CAPTURE_MAX_CHARS,
   MEMORY_CATEGORIES,
@@ -321,7 +322,7 @@ const memoryPlugin = {
           query: Type.String({ description: "Search query" }),
           limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: unknown) {
           const { query, limit = 5 } = params as { query: string; limit?: number };
 
           const vector = await embeddings.embed(query);
@@ -375,7 +376,7 @@ const memoryPlugin = {
             }),
           ),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: unknown) {
           const {
             text,
             importance = 0.7,
@@ -431,7 +432,7 @@ const memoryPlugin = {
           query: Type.Optional(Type.String({ description: "Search to find memory" })),
           memoryId: Type.Optional(Type.String({ description: "Specific memory ID" })),
         }),
-        async execute(_toolCallId, params) {
+        async execute(_toolCallId: string, params: unknown) {
           const { query, memoryId } = params as { query?: string; memoryId?: string };
 
           if (memoryId) {
@@ -498,7 +499,7 @@ const memoryPlugin = {
     // ========================================================================
 
     api.registerCli(
-      ({ program }) => {
+      ({ program }: { program: Command }) => {
         const memory = program.command("ltm").description("LanceDB memory plugin commands");
 
         memory
@@ -514,7 +515,7 @@ const memoryPlugin = {
           .description("Search memories")
           .argument("<query>", "Search query")
           .option("--limit <n>", "Max results", "5")
-          .action(async (query, opts) => {
+          .action(async (query: string, opts: { limit: string }) => {
             const vector = await embeddings.embed(query);
             const results = await db.search(vector, parseInt(opts.limit), 0.3);
             // Strip vectors for output

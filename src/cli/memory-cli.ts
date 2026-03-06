@@ -8,6 +8,7 @@ import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
+import { generateSecureUuid } from "../infra/secure-random.js";
 import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
 import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
@@ -811,7 +812,7 @@ async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
       throw new Error("runtime manager missing structured memory write capability");
     }
 
-    const marker = `smoke-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const marker = `smoke-${generateSecureUuid()}`;
     const payload = `clawmongo smoke marker ${marker}`;
     await writer.writeStructuredMemory({
       type: "custom",

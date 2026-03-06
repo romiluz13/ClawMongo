@@ -63,7 +63,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(1);
@@ -81,7 +81,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(0);
@@ -98,7 +98,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(0);
@@ -115,7 +115,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: noSearchCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(1);
@@ -133,7 +133,7 @@ describe("searchKB", () => {
       vectorIndexName: "idx",
       textIndexName: "txt",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       numCandidates: 15000,
     });
 
@@ -153,7 +153,7 @@ describe("searchKB", () => {
       vectorIndexName: "idx",
       textIndexName: "txt",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -175,7 +175,7 @@ describe("searchKB", () => {
       vectorIndexName: "idx",
       textIndexName: "txt",
       capabilities: hybridCaps,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(1);
@@ -217,7 +217,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results).toHaveLength(0);
@@ -238,7 +238,7 @@ describe("searchKB", () => {
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];

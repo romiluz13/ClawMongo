@@ -111,9 +111,10 @@ export function resolveMemoryBackendConfig(params: {
         ].join(" "),
       );
     }
-    const deploymentProfile: MemoryMongoDBDeploymentProfile =
-      mongoCfg?.deploymentProfile ?? DEFAULT_MONGODB_PROFILE;
-    const embeddingMode = mongoCfg?.embeddingMode ?? DEFAULT_MONGODB_EMBEDDING_MODE;
+    const rawDeploymentProfile = mongoCfg?.deploymentProfile ?? DEFAULT_MONGODB_PROFILE;
+    const deploymentProfile: MemoryMongoDBDeploymentProfile = DEFAULT_MONGODB_PROFILE;
+    const rawEmbeddingMode = mongoCfg?.embeddingMode ?? DEFAULT_MONGODB_EMBEDDING_MODE;
+    const embeddingMode: MemoryMongoDBEmbeddingMode = DEFAULT_MONGODB_EMBEDDING_MODE;
 
     if (uri.includes(".mongodb.net")) {
       throw new Error(
@@ -123,18 +124,20 @@ export function resolveMemoryBackendConfig(params: {
         ].join(" "),
       );
     }
-    if (deploymentProfile !== "community-mongot") {
+    if (rawDeploymentProfile !== "community-mongot") {
+      const unsupportedDeploymentProfile = String(mongoCfg?.deploymentProfile);
       throw new Error(
         [
-          `deploymentProfile "${deploymentProfile}" is not supported in ClawMongo.`,
+          `deploymentProfile "${unsupportedDeploymentProfile}" is not supported in ClawMongo.`,
           'Use deploymentProfile "community-mongot".',
         ].join(" "),
       );
     }
-    if (embeddingMode !== "automated") {
+    if (rawEmbeddingMode !== "automated") {
+      const unsupportedEmbeddingMode = String(mongoCfg?.embeddingMode);
       throw new Error(
         [
-          `embeddingMode "${embeddingMode}" is not supported in ClawMongo.`,
+          `embeddingMode "${unsupportedEmbeddingMode}" is not supported in ClawMongo.`,
           'Use embeddingMode "automated" with community-mongot.',
         ].join(" "),
       );

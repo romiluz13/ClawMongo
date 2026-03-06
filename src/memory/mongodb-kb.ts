@@ -4,9 +4,8 @@ import path from "node:path";
 import type { Db, MongoClient, ClientSession } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import type { EmbeddingProvider } from "./embeddings.js";
 import { chunkMarkdown, hashText } from "./internal.js";
-import { retryEmbedding, type EmbeddingStatus } from "./mongodb-embedding-retry.js";
+import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { kbCollection, kbChunksCollection } from "./mongodb-schema.js";
 
 const log = createSubsystemLogger("memory:mongodb:kb");
@@ -63,7 +62,6 @@ export async function ingestToKB(params: {
   prefix: string;
   documents: KBDocument[];
   embeddingMode: MemoryMongoDBEmbeddingMode;
-  embeddingProvider?: EmbeddingProvider;
   chunking?: { tokens: number; overlap: number };
   model?: string;
   force?: boolean;
@@ -71,7 +69,7 @@ export async function ingestToKB(params: {
   client?: MongoClient;
   progress?: (update: { completed: number; total: number; label: string }) => void;
 }): Promise<KBIngestResult> {
-  const { db, prefix, documents, embeddingMode, force, progress } = params;
+  const { db, prefix, documents, force, progress } = params;
   const maxDocSize = params.maxDocumentSize ?? 10 * 1024 * 1024; // default 10MB
   const chunking = params.chunking ?? { tokens: 600, overlap: 100 };
   const model = params.model ?? "voyage-4-large";
@@ -129,25 +127,9 @@ export async function ingestToKB(params: {
       // Chunk the document content — OUTSIDE transaction body (CPU-bound)
       const chunks = chunkMarkdown(doc.content, chunking);
 
-      // Generate embeddings if managed mode — with retry + exponential backoff
-      // OUTSIDE transaction body (network I/O, keeps txn short per ops-transaction-runtime-limit)
-      let embeddings: number[][] | null = null;
+      // ClawMongo uses MongoDB community automatic embeddings. KB chunks stay
+      // embedding-free on write and rely on autoEmbed indexes at query time.
       let embeddingStatus: EmbeddingStatus = "pending";
-      if (embeddingMode === "managed" && params.embeddingProvider) {
-        const provider = params.embeddingProvider;
-        try {
-          const texts = chunks.map((c) => c.text);
-          embeddings = await retryEmbedding((t) => provider.embedBatch(t), texts);
-          embeddingStatus = "success";
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          log.warn(
-            `embedding generation failed for ${doc.title} after retries: ${msg}. ` +
-              'Storing chunks with embeddingStatus: "failed".',
-          );
-          embeddingStatus = "failed";
-        }
-      }
 
       // Generate a document ID
       const docId = crypto.randomUUID();
@@ -164,7 +146,7 @@ export async function ingestToKB(params: {
       }
 
       // Build the chunk operation list (data prep, not DB I/O)
-      const chunkOps = chunks.map((chunk, idx) => {
+      const chunkOps = chunks.map((chunk) => {
         const chunkDoc: Record<string, unknown> = {
           docId,
           path: doc.source.path ?? doc.title,
@@ -177,9 +159,6 @@ export async function ingestToKB(params: {
           embeddingStatus,
           updatedAt: new Date(),
         };
-        if (embeddings && embeddings[idx]) {
-          chunkDoc.embedding = embeddings[idx];
-        }
         return {
           updateOne: {
             filter: {
@@ -371,7 +350,6 @@ export async function ingestFilesToKB(params: {
   category?: string;
   importedBy: "wizard" | "cli" | "api" | "agent";
   embeddingMode: MemoryMongoDBEmbeddingMode;
-  embeddingProvider?: EmbeddingProvider;
   chunking?: { tokens: number; overlap: number };
   model?: string;
   force?: boolean;

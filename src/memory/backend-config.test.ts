@@ -17,7 +17,7 @@ describe("resolveMemoryBackendConfig", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: { backend: "builtin" },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
       /Legacy memory backend "builtin"/,
     );
@@ -27,7 +27,7 @@ describe("resolveMemoryBackendConfig", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: { backend: "qmd", qmd: {} },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
       /Legacy memory backend "qmd"/,
     );
@@ -46,7 +46,7 @@ describe("resolveMemoryBackendConfig", () => {
           uri: "mongodb://localhost:27017",
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.backend).toBe("mongodb");
     expect(resolved.mongodb).toBeDefined();
@@ -87,7 +87,7 @@ describe("resolveMemoryBackendConfig", () => {
           quantization: "scalar",
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("mydb");
@@ -126,7 +126,7 @@ describe("resolveMemoryBackendConfig", () => {
           },
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.relevance.enabled).toBe(false);
     expect(resolved.mongodb!.relevance.telemetry.enabled).toBe(true);
@@ -167,7 +167,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017" },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.numDimensions).toBe(1024);
   });
@@ -179,7 +179,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017", numDimensions: 768 },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.numDimensions).toBe(768);
   });
@@ -191,7 +191,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017" },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.maxPoolSize).toBe(10);
   });
@@ -203,7 +203,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017", maxPoolSize: 20 },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.maxPoolSize).toBe(20);
   });
@@ -215,7 +215,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017" },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.embeddingCacheTtlDays).toBe(30);
   });
@@ -227,7 +227,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017", embeddingCacheTtlDays: 7 },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.embeddingCacheTtlDays).toBe(7);
   });
@@ -239,7 +239,7 @@ describe("resolveMemoryBackendConfig", () => {
         backend: "mongodb",
         mongodb: { uri: "mongodb://localhost:27017" },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.memoryTtlDays).toBe(0);
   });
@@ -305,7 +305,7 @@ describe("resolveMemoryBackendConfig", () => {
           deploymentProfile: "community-bare",
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
       /deploymentProfile "community-bare" is not supported/,
     );
@@ -321,7 +321,7 @@ describe("resolveMemoryBackendConfig", () => {
           deploymentProfile: "atlas-m0",
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
       /deploymentProfile "atlas-m0" is not supported/,
     );
@@ -338,7 +338,7 @@ describe("resolveMemoryBackendConfig", () => {
           embeddingMode: "managed",
         },
       },
-    } as OpenClawConfig;
+    } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
       /embeddingMode "managed" is not supported/,
     );

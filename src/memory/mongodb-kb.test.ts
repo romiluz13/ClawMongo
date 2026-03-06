@@ -103,7 +103,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.documentsProcessed).toBe(1);
@@ -131,7 +131,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.documentsProcessed).toBe(0);
@@ -156,7 +156,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       force: true,
     });
 
@@ -188,7 +188,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.skipped).toBe(1);
@@ -216,7 +216,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.documentsProcessed).toBe(1);
@@ -237,7 +237,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.documentsProcessed).toBe(1);
@@ -265,7 +265,7 @@ describe("ingestToKB", () => {
       db: mockDb(),
       prefix: "test_",
       documents: docs,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       progress: (update) => progressUpdates.push(update),
     });
 
@@ -288,7 +288,7 @@ describe("ingestFilesToKB", () => {
       prefix: "test_",
       paths: [docsDir],
       importedBy: "cli",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     // Should process .md and .txt but skip .js
@@ -302,7 +302,7 @@ describe("ingestFilesToKB", () => {
       prefix: "test_",
       paths: ["/nonexistent/path"],
       importedBy: "cli",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(result.documentsProcessed).toBe(0);
@@ -318,7 +318,7 @@ describe("ingestFilesToKB", () => {
       prefix: "test_",
       paths: [filePath],
       importedBy: "agent",
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       tags: ["auto"],
       category: "docs",
     });
@@ -433,7 +433,7 @@ describe("ingestToKB — transaction wrapping for re-ingestion", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       client: clientMock as unknown as import("mongodb").MongoClient,
     });
 
@@ -475,7 +475,7 @@ describe("ingestToKB — transaction wrapping for re-ingestion", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       client: clientMock as unknown as import("mongodb").MongoClient,
     });
 
@@ -518,7 +518,7 @@ describe("ingestToKB — transaction wrapping for re-ingestion", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       client: clientMock as unknown as import("mongodb").MongoClient,
     });
 
@@ -556,7 +556,7 @@ describe("ingestToKB — transaction wrapping for re-ingestion", () => {
       db: mockDb(),
       prefix: "test_",
       documents: [doc],
-      embeddingMode: "managed",
+      embeddingMode: "automated",
       client: clientMock as unknown as import("mongodb").MongoClient,
     });
 

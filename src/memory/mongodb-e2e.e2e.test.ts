@@ -5,8 +5,9 @@
  *   docker run -d --name clawmongo-test -p 27117:27017 mongo:8.2
  *   MONGODB_TEST_URI=mongodb://localhost:27117 npx vitest run src/memory/mongodb-e2e.e2e.test.ts
  *
- * These tests exercise the real MongoDB driver and server operations
- * against a Community Edition instance WITHOUT mongot (community-bare profile).
+ * These tests exercise the real MongoDB driver and server operations.
+ * They are useful both for the supported community-mongot path and for
+ * degraded behavior when Search is unavailable on the test server.
  */
 
 import fs from "node:fs/promises";
@@ -152,8 +153,8 @@ describe("E2E: MongoDB Collections and Indexes", () => {
     expect(applied1).toBe(applied2);
   });
 
-  it("search index creation fails gracefully on community-bare", async () => {
-    const result = await ensureSearchIndexes(db, TEST_PREFIX, "community-bare", "automated");
+  it("search index creation fails gracefully when Search is unavailable", async () => {
+    const result = await ensureSearchIndexes(db, TEST_PREFIX, "community-mongot", "automated");
     expect(result.text).toBe(false);
     expect(result.vector).toBe(false);
   });
@@ -284,7 +285,7 @@ describe("E2E: Sync Workflow", () => {
       "# Decisions",
       "",
       "## Embedding Mode",
-      "We chose managed embedding mode with local provider.",
+      "We chose automated embedding mode with MongoDB-generated vectors.",
       "CHANGED: This line is new and different.",
       "",
       "## Search Strategy",
@@ -374,10 +375,10 @@ describe("E2E: Sync Workflow", () => {
 });
 
 // ===========================================================================
-// $text Search Fallback Tests (community-bare)
+// $text Search fallback tests when Search is unavailable
 // ===========================================================================
 
-describe("E2E: $text Search (community-bare fallback)", () => {
+describe("E2E: $text Search fallback", () => {
   let workspaceDir: string;
 
   beforeAll(async () => {
@@ -496,10 +497,10 @@ describe("E2E: $text Search (community-bare fallback)", () => {
 });
 
 // ===========================================================================
-// Full Search Dispatcher (community-bare path)
+// Full Search Dispatcher fallback path
 // ===========================================================================
 
-describe("E2E: mongoSearch dispatcher (community-bare)", () => {
+describe("E2E: mongoSearch dispatcher fallback", () => {
   // Import mongoSearch to test the full dispatcher cascade
   let mongoSearchFn: typeof import("./mongodb-search.js").mongoSearch;
 
@@ -508,7 +509,7 @@ describe("E2E: mongoSearch dispatcher (community-bare)", () => {
     mongoSearchFn = mod.mongoSearch;
   });
 
-  it("falls through to $text search on community without mongot", async () => {
+  it("falls through to $text search when Search is unavailable", async () => {
     const col = chunksCollection(db, TEST_PREFIX);
     const caps = await detectCapabilities(db);
 
@@ -521,7 +522,7 @@ describe("E2E: mongoSearch dispatcher (community-bare)", () => {
       textIndexName: `${TEST_PREFIX}chunks_text`,
       vectorWeight: 0.7,
       textWeight: 0.3,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results.length).toBeGreaterThan(0);
@@ -544,7 +545,7 @@ describe("E2E: mongoSearch dispatcher (community-bare)", () => {
       textIndexName: `${TEST_PREFIX}chunks_text`,
       vectorWeight: 0.7,
       textWeight: 0.3,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results.length).toBe(0);
@@ -563,7 +564,7 @@ describe("E2E: mongoSearch dispatcher (community-bare)", () => {
       textIndexName: `${TEST_PREFIX}chunks_text`,
       vectorWeight: 0.7,
       textWeight: 0.3,
-      embeddingMode: "managed",
+      embeddingMode: "automated",
     });
 
     expect(results.length).toBeLessThanOrEqual(1);

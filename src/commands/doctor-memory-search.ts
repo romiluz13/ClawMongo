@@ -46,7 +46,22 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
     return;
   }
 
-  const { uri, deploymentProfile } = backendConfig.mongodb;
+  const mongoConfig = backendConfig.mongodb;
+  if (!mongoConfig) {
+    note(
+      [
+        "MongoDB memory is active but the resolved MongoDB config is incomplete.",
+        "",
+        "Fix:",
+        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb://localhost:27017/openclaw?replicaSet=rs0")}`,
+        "- Or set OPENCLAW_MONGODB_URI in the environment",
+      ].join("\n"),
+      "Memory (MongoDB)",
+    );
+    return;
+  }
+
+  const { uri, deploymentProfile } = mongoConfig;
 
   // Connection test with timeout
   let MongoClient: typeof import("mongodb").MongoClient;
@@ -96,7 +111,7 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
     }
 
     // Check embedding coverage (embeddingStatus) while connection is still open
-    await noteEmbeddingCoverage(client, backendConfig.mongodb);
+    await noteEmbeddingCoverage(client, mongoConfig);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     note(

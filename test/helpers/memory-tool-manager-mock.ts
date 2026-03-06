@@ -12,7 +12,11 @@ let readFileImpl: (params: MemoryReadParams) => Promise<MemoryReadResult> = asyn
   path: params.relPath,
 });
 let searchKBImpl: SearchImpl = async () => [];
-let writeStructuredMemoryImpl = vi.fn(async () => ({ upserted: true, id: "mock-id" }));
+type MemoryWriteImpl = (...args: unknown[]) => Promise<{ upserted: boolean; id: string }>;
+let writeStructuredMemoryImpl: MemoryWriteImpl = vi.fn(async () => ({
+  upserted: true,
+  id: "mock-id",
+}));
 
 const stubManager = {
   search: vi.fn(async () => await searchImpl()),
@@ -66,7 +70,7 @@ export function setMemoryReadFileImpl(
   readFileImpl = next;
 }
 
-export function setMemoryWriteImpl(next: typeof writeStructuredMemoryImpl): void {
+export function setMemoryWriteImpl(next: MemoryWriteImpl): void {
   writeStructuredMemoryImpl = next;
 }
 
@@ -75,7 +79,7 @@ export function resetMemoryToolMockState(overrides?: {
   searchImpl?: SearchImpl;
   searchKBImpl?: SearchImpl;
   readFileImpl?: (params: MemoryReadParams) => Promise<MemoryReadResult>;
-  writeStructuredMemoryImpl?: typeof writeStructuredMemoryImpl;
+  writeStructuredMemoryImpl?: MemoryWriteImpl;
 }): void {
   backend = overrides?.backend ?? "mongodb";
   searchImpl = overrides?.searchImpl ?? (async () => []);
@@ -84,6 +88,7 @@ export function resetMemoryToolMockState(overrides?: {
     overrides?.readFileImpl ??
     (async (params: MemoryReadParams) => ({ text: "", path: params.relPath }));
   writeStructuredMemoryImpl =
-    overrides?.writeStructuredMemoryImpl ?? vi.fn(async () => ({ upserted: true, id: "mock-id" }));
+    overrides?.writeStructuredMemoryImpl ??
+    (vi.fn(async () => ({ upserted: true, id: "mock-id" })) as MemoryWriteImpl);
   vi.clearAllMocks();
 }

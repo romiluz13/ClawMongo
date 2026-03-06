@@ -1,8 +1,9 @@
 import { Command } from "commander";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 
 const getMemorySearchManager = vi.fn();
-const loadConfig = vi.fn(() => ({
+const loadConfig = vi.fn<() => OpenClawConfig>(() => ({
   memory: { mongodb: { uri: "mongodb://localhost:27017/openclaw" } },
 }));
 const resolveMemoryBackendConfig = vi.fn(() => ({ backend: "mongodb" }));
@@ -160,7 +161,7 @@ describe("memory cli", () => {
           },
         },
       },
-    });
+    } as unknown as OpenClawConfig);
     const close = vi.fn(async () => {});
     mockManager({
       probeVectorAvailability: vi.fn(async () => true),

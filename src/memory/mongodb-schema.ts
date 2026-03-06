@@ -21,7 +21,7 @@ export type DetectedCapabilities = {
 export type MongoIndexBudgetCheck = {
   profile: MemoryMongoDBDeploymentProfile;
   plannedSearchIndexes: number;
-  budget: number | "managed" | "self-managed";
+  budget: number | "self-managed";
   withinBudget: boolean;
 };
 
@@ -119,7 +119,7 @@ const KB_CHUNKS_SCHEMA: Document = {
       startLine: { bsonType: "number" },
       endLine: { bsonType: "number" },
       source: { bsonType: "string", description: "Source identifier (e.g., 'kb')" },
-      embedding: { bsonType: "array", description: "Vector embedding (managed mode)" },
+      embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
     },
   },
@@ -141,7 +141,7 @@ const STRUCTURED_MEM_SCHEMA: Document = {
       confidence: { bsonType: "double", minimum: 0, maximum: 1 },
       tags: { bsonType: "array", items: { bsonType: "string" } },
       agentId: { bsonType: "string" },
-      embedding: { bsonType: "array", description: "Vector embedding (managed mode)" },
+      embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
     },
   },
@@ -324,8 +324,8 @@ export async function ensureStandardIndexes(
   applied++;
   await chunks.createIndex({ updatedAt: -1 }, { name: "idx_chunks_updated" });
   applied++;
-  // $text index on text field — required for community-bare $text search fallback
-  // (last resort when mongot is not available). Only one $text index per collection.
+  // Keep a BSON $text index as a defensive last-resort fallback if Search is unavailable.
+  // Only one $text index is allowed per collection.
   await chunks.createIndex({ text: "text" }, { name: "idx_chunks_text" });
   applied++;
 
@@ -530,8 +530,13 @@ export async function ensureSearchIndexes(
   quantization: "none" | "scalar" | "binary" = "none",
   numDimensions: number = 1024,
 ): Promise<{ text: boolean; vector: boolean }> {
-  // 6 search indexes total: chunks (text + vector), kb_chunks (text + vector), structured_mem (text + vector).
-  // For budget-constrained profiles (atlas-m0 has 3), create only the core chunks indexes.
+  void embeddingMode;
+  void quantization;
+  void numDimensions;
+
+  // 6 search indexes total: chunks (text + vector), kb_chunks (text + vector),
+  // structured_mem (text + vector). ClawMongo ships one self-managed profile,
+  // but we keep the budget helper for explicit reporting.
   const budget = assertIndexBudget(profile, 6);
   const reducedBudget =
     !budget.withinBudget && typeof budget.budget === "number" && budget.budget >= 2;
@@ -545,11 +550,6 @@ export async function ensureSearchIndexes(
     log.warn(
       `search index budget tight (${budget.budget}/${budget.plannedSearchIndexes}): creating core chunks indexes only, skipping KB and structured memory search indexes`,
     );
-  }
-
-  if (profile === "community-bare") {
-    log.info("community-bare profile: skipping MongoDB Search/Vector Search index creation");
-    return { text: false, vector: false };
   }
 
   const chunks = chunksCollection(db, prefix);
@@ -592,38 +592,17 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "path" },
     ];
 
-    let vectorDef: Document;
-    if (embeddingMode === "automated") {
-      // autoEmbed is its own field type — MongoDB generates and manages
-      // embeddings at index-time and query-time using Voyage AI.
-      // path points to the TEXT field (not an embedding field).
-      vectorDef = {
-        fields: [
-          {
-            type: "autoEmbed",
-            modality: "text",
-            path: "text",
-            model: "voyage-4-large",
-          },
-          ...filterFields,
-        ],
-      };
-    } else {
-      // Manual/managed mode: application stores pre-computed embeddings
-      // in the "embedding" field. path points to the EMBEDDING field.
-      vectorDef = {
-        fields: [
-          {
-            type: "vector",
-            path: "embedding",
-            numDimensions,
-            similarity: "cosine",
-            ...(quantization !== "none" ? { quantization } : {}),
-          },
-          ...filterFields,
-        ],
-      };
-    }
+    const vectorDef: Document = {
+      fields: [
+        {
+          type: "autoEmbed",
+          modality: "text",
+          path: "text",
+          model: "voyage-4-large",
+        },
+        ...filterFields,
+      ],
+    };
 
     await chunks.createSearchIndex({
       name: `${prefix}chunks_vector`,
@@ -676,28 +655,12 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "path" },
     ];
 
-    let kbVectorDef: Document;
-    if (embeddingMode === "automated") {
-      kbVectorDef = {
-        fields: [
-          { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
-          ...kbFilterFields,
-        ],
-      };
-    } else {
-      kbVectorDef = {
-        fields: [
-          {
-            type: "vector",
-            path: "embedding",
-            numDimensions,
-            similarity: "cosine",
-            ...(quantization !== "none" ? { quantization } : {}),
-          },
-          ...kbFilterFields,
-        ],
-      };
-    }
+    const kbVectorDef: Document = {
+      fields: [
+        { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
+        ...kbFilterFields,
+      ],
+    };
 
     await kbChunks.createSearchIndex({
       name: `${prefix}kb_chunks_vector`,
@@ -746,28 +709,12 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "agentId" },
     ];
 
-    let structVectorDef: Document;
-    if (embeddingMode === "automated") {
-      structVectorDef = {
-        fields: [
-          { type: "autoEmbed", modality: "text", path: "value", model: "voyage-4-large" },
-          ...structFilterFields,
-        ],
-      };
-    } else {
-      structVectorDef = {
-        fields: [
-          {
-            type: "vector",
-            path: "embedding",
-            numDimensions,
-            similarity: "cosine",
-            ...(quantization !== "none" ? { quantization } : {}),
-          },
-          ...structFilterFields,
-        ],
-      };
-    }
+    const structVectorDef: Document = {
+      fields: [
+        { type: "autoEmbed", modality: "text", path: "value", model: "voyage-4-large" },
+        ...structFilterFields,
+      ],
+    };
 
     await structured.createSearchIndex({
       name: `${prefix}structured_mem_vector`,
@@ -788,13 +735,9 @@ export async function ensureSearchIndexes(
 // Index budget
 // ---------------------------------------------------------------------------
 
-const PROFILE_BUDGETS: Record<MemoryMongoDBDeploymentProfile, number | "managed" | "self-managed"> =
-  {
-    "atlas-default": "managed",
-    "atlas-m0": 3,
-    "community-mongot": "self-managed",
-    "community-bare": "self-managed",
-  };
+const PROFILE_BUDGETS: Record<MemoryMongoDBDeploymentProfile, "self-managed"> = {
+  "community-mongot": "self-managed",
+};
 
 export function assertIndexBudget(
   profile: MemoryMongoDBDeploymentProfile,
