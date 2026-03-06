@@ -194,7 +194,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   });
 
@@ -213,7 +213,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expect(note).not.toHaveBeenCalled();
+    expectOnlyBackendHealthNote();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   });
 

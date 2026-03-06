@@ -20,6 +20,7 @@ packages/moltbot/
 pnpm-lock.yaml
 scripts/sync-upstream.sh
 scripts/upstream-drift-allowlist.txt
+scripts/upstream-drift-baseline.txt
 skills/clawmongo-memory-routing/
 src/agents/
 src/auto-reply/reply/commands-system-prompt.ts
