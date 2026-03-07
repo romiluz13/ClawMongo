@@ -520,6 +520,16 @@ export async function runOnboardingWizard(
     );
   }
 
+  if (opts.skipSearch) {
+    await prompter.note("Skipping search setup.", "Search");
+  } else {
+    const { setupSearch } = await import("../commands/onboard-search.js");
+    nextConfig = await setupSearch(nextConfig, runtime, prompter, {
+      quickstartDefaults: flow === "quickstart",
+      secretInputMode: opts.secretInputMode,
+    });
+  }
+
   if (opts.skipSkills) {
     await prompter.note("Skipping skills setup.", "Skills");
   } else {
