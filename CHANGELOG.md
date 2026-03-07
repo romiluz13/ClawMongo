@@ -248,6 +248,7 @@ Docs: https://docs.openclaw.ai
 - Auto-reply/allowlist store account scoping: keep `/allowlist ... --store` writes scoped to the selected account and clear legacy unscoped entries when removing default-account store access, preventing cross-account default allowlist bleed-through from legacy pairing-store reads. Thanks @tdjackey for reporting and @vincentkoc for the fix.
 - Security/Nostr: harden profile mutation/import loopback guards by failing closed on non-loopback forwarded client headers (`x-forwarded-for` / `x-real-ip`) and rejecting `sec-fetch-site: cross-site`; adds regression coverage for proxy-forwarded and browser cross-site mutation attempts.
 - CLI/bootstrap Node version hint maintenance: replace hardcoded nvm `22` instructions in `openclaw.mjs` with `MIN_NODE_MAJOR` interpolation so future minimum-Node bumps keep startup guidance in sync automatically. (#39056) Thanks @onstash.
+- Discord/native slash command auth: honor `commands.allowFrom.discord` (and `commands.allowFrom["*"]`) in guild slash-command pre-dispatch authorization so allowlisted senders are no longer incorrectly rejected as unauthorized. (#38794) Thanks @jskoiz and @thewilloftheshadow.
 
 ## 2026.3.2
 
@@ -606,6 +607,7 @@ Docs: https://docs.openclaw.ai
 ### Fixes
 
 - Models/provider config precedence: prefer exact `models.providers.<name>` matches before normalized provider aliases in embedded model resolution, preventing alias/canonical key collisions from applying the wrong provider `api`, `baseUrl`, or headers. (#35934) thanks @RealKai42.
+- Hooks/auth throttling: reject non-`POST` `/hooks/*` requests before auth-failure accounting so unsupported methods can no longer burn the hook auth lockout budget and block legitimate webhook delivery. Thanks @JNX03 for reporting.
 - Network/fetch guard redirect auth stripping: switch cross-origin redirect handling in `fetchWithSsrFGuard` from a narrow sensitive-header denylist to a safe-header allowlist so custom auth headers like `X-Api-Key` and `Private-Token` no longer leak on origin changes. Thanks @Rickidevs for reporting.
 - Logging/Subsystem console timestamps: route subsystem console timestamp rendering through `formatConsoleTimestamp(...)` so `pretty` and timestamp-prefix output use local timezone formatting consistently instead of inline UTC `toISOString()` paths. (#25970) Thanks @openperf.
 - Feishu/Multi-account + reply reliability: add `channels.feishu.defaultAccount` outbound routing support with schema validation, prevent inbound preview text from leaking into prompt system events, keep quoted-message extraction text-first (post/interactive/file placeholders instead of raw JSON), route Feishu video sends as `msg_type: "file"`, and avoid websocket event blocking by using non-blocking event handling in monitor dispatch. Landed from contributor PRs #31209, #29610, #30432, #30331, and #29501. Thanks @stakeswky, @hclsys, @bmendonca3, @patrick-yingxi-pan, and @zwffff.
