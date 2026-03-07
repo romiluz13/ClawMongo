@@ -175,7 +175,7 @@ describe("memory search config", () => {
             provider: "openai",
             remote: {
               baseUrl: "https://default.example/v1",
-              apiKey: "default-key",
+              apiKey: "default-key", // pragma: allowlist secret
               headers: { "X-Default": "on" },
             },
           },
@@ -196,7 +196,7 @@ describe("memory search config", () => {
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.remote).toEqual({
       baseUrl: "https://agent.example/v1",
-      apiKey: "default-key",
+      apiKey: "default-key", // pragma: allowlist secret
       headers: { "X-Default": "on" },
       batch: {
         enabled: false,
@@ -215,7 +215,7 @@ describe("memory search config", () => {
           memorySearch: {
             provider: "openai",
             remote: {
-              apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" },
+              apiKey: { source: "env", provider: "default", id: "OPENAI_API_KEY" }, // pragma: allowlist secret
               headers: { "X-Default": "on" },
             },
           },

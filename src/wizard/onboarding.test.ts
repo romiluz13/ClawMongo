@@ -401,7 +401,7 @@ describe("runOnboardingWizard", () => {
 
   it("resolves gateway.auth.password SecretRef for local onboarding probe", async () => {
     const previous = process.env.OPENCLAW_GATEWAY_PASSWORD;
-    process.env.OPENCLAW_GATEWAY_PASSWORD = "gateway-ref-password";
+    process.env.OPENCLAW_GATEWAY_PASSWORD = "gateway-ref-password"; // pragma: allowlist secret
     probeGatewayReachable.mockClear();
     readConfigFileSnapshot.mockResolvedValueOnce({
       path: "/tmp/.openclaw/openclaw.json",
@@ -463,7 +463,7 @@ describe("runOnboardingWizard", () => {
     expect(probeGatewayReachable).toHaveBeenCalledWith(
       expect.objectContaining({
         url: "ws://127.0.0.1:18789",
-        password: "gateway-ref-password",
+        password: "gateway-ref-password", // pragma: allowlist secret
       }),
     );
   });
@@ -485,7 +485,7 @@ describe("runOnboardingWizard", () => {
         skipSearch: true,
         skipHealth: true,
         skipUi: true,
-        secretInputMode: "ref",
+        secretInputMode: "ref", // pragma: allowlist secret
       },
       runtime,
       prompter,
@@ -493,7 +493,7 @@ describe("runOnboardingWizard", () => {
 
     expect(configureGatewayForOnboarding).toHaveBeenCalledWith(
       expect.objectContaining({
-        secretInputMode: "ref",
+        secretInputMode: "ref", // pragma: allowlist secret
       }),
     );
   });
