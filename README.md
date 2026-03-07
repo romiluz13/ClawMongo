@@ -30,14 +30,16 @@ New install? Start here: [Getting started](https://docs.openclaw.ai/start/gettin
 
 ## Why ClawMongo Is Different
 
-ClawMongo keeps the OpenClaw agent experience but upgrades memory into a real data system:
+ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB-native system:
 
-- **MongoDB as canonical runtime memory**: session recall, KB chunks, and structured memory are queryable, indexable, and durable.
-- **Automatic embeddings mode**: with `memory.mongodb.embeddingMode = "automated"`, semantic retrieval works without adding a separate embedding pipeline.
-- **Managed embeddings mode**: in local/community setups, ClawMongo can generate embeddings with local/OpenAI/Gemini/Voyage providers.
-- **Change streams for freshness**: cross-instance sync can update retrieval state in near real-time when replica set features are available.
-- **Hybrid retrieval by design**: results merge from memory chunks, KB chunks, and structured memory with score/rank fusion.
-- **Operational controls**: TTL, pool sizing, index management, sync probes, and memory status are first-class.
+- **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
+- **MongoDB-native automatic embeddings**: with `memory.mongodb.embeddingMode = "automated"`, MongoDB handles index-time and query-time text embedding so ClawMongo does not need a separate embedding service in the app.
+- **Unified runtime memory**: bridge Markdown, session recall, KB chunks, and structured memory all live behind one queryable backend.
+- **Hybrid retrieval with graceful degradation**: ClawMongo uses Search + Vector Search + fusion where available, and falls back to lexical retrieval instead of collapsing the memory path.
+- **Real agent memory tools**: `memory_search`, `memory_get`, `kb_search`, and `memory_write` give the agent a clean recall/read/write model instead of ad-hoc file-only memory.
+- **Operational guarantees**: change streams, schema validation, transactions where available, retention controls, sync probes, and memory status are first-class.
+
+ClawMongo intentionally uses the MongoDB features that materially improve agent memory without turning setup into a science project.
 
 ### Why Move From Default OpenClaw Memory
 
@@ -58,11 +60,11 @@ Decision rule:
 
 ### Markdown and MongoDB Ownership (No Conflicts)
 
-| Keep in Markdown (source of truth)            | Keep in MongoDB (source of truth)                               | Why                                                                                                  |
-| --------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `SOUL.md`, `AGENTS.md`, `BOOT.md`, `SKILL.md` | Runtime memory chunks, KB docs/chunks, structured memory writes | Identity/policy instructions stay human-authored and auditable; runtime recall stays query-optimized |
-| Human operator notes and guardrails           | Imported business knowledge bases and long corpora              | Large knowledge should be indexed/retrievable, not manually maintained as flat files                 |
-| Prompting/process docs                        | Search indexes, embeddings, retrieval metadata                  | Retrieval infra belongs in the database layer, not instruction files                                 |
+| Keep in Markdown (source of truth)                                                           | Keep in MongoDB (source of truth)                               | Why                                                                                                  |
+| -------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` | Runtime memory chunks, KB docs/chunks, structured memory writes | Identity/policy instructions stay human-authored and auditable; runtime recall stays query-optimized |
+| `MEMORY.md`, `memory.md`, `memory/*.md`                                                      | Imported business knowledge bases and long corpora              | Human notes stay editable as Markdown; large knowledge stays indexed and queryable                   |
+| Prompting/process docs                                                                       | Search indexes, embeddings, retrieval metadata                  | Retrieval infra belongs in the database layer, not instruction files                                 |
 
 If you export MongoDB data into `.md` for readability, treat it as a projection, not canonical state.
 
@@ -71,13 +73,16 @@ If you export MongoDB data into `.md` for readability, treat it as a projection,
 ```text
 Inbound event
   -> routing/policy checks
-  -> durable write (MongoDB)
-  -> optional enrichment (chunking/embeddings)
-  -> retrieval query fans out to:
+  -> bridge files and sessions sync into MongoDB
+  -> memory_search recalls across:
        1) memory chunks
-       2) KB chunks
-       3) structured memory
-  -> fused ranking
+       2) session chunks
+       3) KB chunks
+       4) structured memory
+  -> kb_search targets imported reference material
+  -> memory_get reads exact Markdown / KB / structured locators
+  -> memory_write stores durable structured facts
+  -> fused ranking or lexical fallback
   -> response
 ```
 
