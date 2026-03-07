@@ -64,15 +64,18 @@ docker compose -f docker/mongodb/docker-compose.mongodb.yml --profile standalone
 
 ## Environment Variables
 
-| Variable              | Default          | Description                               |
-| --------------------- | ---------------- | ----------------------------------------- |
-| `ADMIN_PASSWORD`      | `admin`          | Root admin password                       |
-| `MONGOT_PASSWORD`     | `mongotPassword` | Password for mongot search coordinator    |
-| `MONGODB_PORT`        | `27017`          | MongoDB port mapping                      |
-| `MONGOT_GRPC_PORT`    | `27028`          | mongot gRPC port (fullstack only)         |
-| `MONGOT_HEALTH_PORT`  | `8080`           | mongot health check port (fullstack only) |
-| `MONGOT_METRICS_PORT` | `9946`           | mongot metrics port (fullstack only)      |
-| `VOYAGE_API_KEY`      | _(empty)_        | Voyage AI API key for auto-embedding      |
+| Variable                             | Default                                  | Description                                   |
+| ------------------------------------ | ---------------------------------------- | --------------------------------------------- |
+| `ADMIN_PASSWORD`                     | `admin`                                  | Root admin password                           |
+| `MONGOT_PASSWORD`                    | `mongotPassword`                         | Password for mongot search coordinator        |
+| `MONGODB_PORT`                       | `27017`                                  | MongoDB port mapping                          |
+| `MONGOT_GRPC_PORT`                   | `27028`                                  | mongot gRPC port (fullstack only)             |
+| `MONGOT_HEALTH_PORT`                 | `8080`                                   | mongot health check port (fullstack only)     |
+| `MONGOT_METRICS_PORT`                | `9946`                                   | mongot metrics port (fullstack only)          |
+| `VOYAGE_API_KEY`                     | _(empty)_                                | Shared embedding API key for query + indexing |
+| `VOYAGE_API_QUERY_KEY`               | _(empty)_                                | Optional query-time embedding key override    |
+| `VOYAGE_API_INDEXING_KEY`            | _(empty)_                                | Optional indexing embedding key override      |
+| `MONGOT_EMBEDDING_PROVIDER_ENDPOINT` | `https://api.voyageai.com/v1/embeddings` | Embedding provider endpoint                   |
 
 ### Custom Passwords
 
@@ -90,8 +93,14 @@ To enable server-side automatic embeddings (no application-level embedding code 
    export VOYAGE_API_KEY=your-voyage-api-key
    ./docker/mongodb/start.sh fullstack
    ```
-3. Edit `docker/mongodb/mongot.conf` and uncomment the `embedding` section
-4. Restart mongot: `docker compose -f docker/mongodb/docker-compose.mongodb.yml --profile fullstack restart mongot`
+3. The setup step now generates `docker/mongodb/.runtime/mongot.generated.yml` with the `embedding` block automatically when keys are present.
+4. Restart mongot if you changed keys after startup:
+   ```bash
+   docker compose -f docker/mongodb/docker-compose.mongodb.yml --profile fullstack restart mongot
+   ```
+
+If you use separate credentials, set `VOYAGE_API_QUERY_KEY` and `VOYAGE_API_INDEXING_KEY` instead of `VOYAGE_API_KEY`.
+If your keys come from a different provider endpoint, override `MONGOT_EMBEDDING_PROVIDER_ENDPOINT`.
 
 ## Architecture
 

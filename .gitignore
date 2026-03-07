@@ -129,6 +129,7 @@ Swabble/build/
 dist/protocol.schema.json
 .ant-colony/
 openclaw-source-ref-only/
+docker/mongodb/.runtime/
 
 # Eclipse
 **/.project

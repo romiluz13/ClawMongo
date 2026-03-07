@@ -68,11 +68,11 @@ case "${1:-fullstack}" in
     echo "  - \$text keyword search"
     echo "  - \$vectorSearch (semantic/vector search)"
     echo "  - \$search with \$rankFusion and \$scoreFusion"
-    echo "  - Automated embeddings (with Voyage API key)"
+    echo "  - Automated embeddings (when embedding API keys are provided)"
     echo "  - Change streams"
-    if [ -n "${VOYAGE_API_KEY:-}" ]; then
+    if [ -n "${VOYAGE_API_KEY:-}" ] || [ -n "${VOYAGE_API_QUERY_KEY:-}" ] || [ -n "${VOYAGE_API_INDEXING_KEY:-}" ]; then
       echo ""
-      echo -e "${GREEN}Voyage API key detected - auto-embedding available.${NC}"
+      echo -e "${GREEN}Embedding API key detected - mongot config includes auto-embedding.${NC}"
     else
       echo ""
       echo -e "${YELLOW}For auto-embedding: export VOYAGE_API_KEY=your-key && ./start.sh fullstack${NC}"

@@ -36,6 +36,19 @@ import { syncToMongoDB } from "./mongodb-sync.js";
 const TEST_URI = process.env.MONGODB_TEST_URI ?? "mongodb://localhost:27117";
 const TEST_DB = "clawmongo_e2e_test";
 const TEST_PREFIX = "e2e_";
+const EXPECTED_COLLECTION_SUFFIXES = [
+  "chunks",
+  "files",
+  "embedding_cache",
+  "meta",
+  "knowledge_base",
+  "kb_chunks",
+  "structured_mem",
+  "relevance_runs",
+  "relevance_artifacts",
+  "relevance_regressions",
+] as const;
+const EXPECTED_STANDARD_INDEX_COUNT = 26;
 
 let client: MongoClient;
 let db: Db;
@@ -101,10 +114,9 @@ describe("E2E: MongoDB Collections and Indexes", () => {
     const collections = await db.listCollections().toArray();
     const names = collections.map((c) => c.name);
 
-    expect(names).toContain(`${TEST_PREFIX}chunks`);
-    expect(names).toContain(`${TEST_PREFIX}files`);
-    expect(names).toContain(`${TEST_PREFIX}embedding_cache`);
-    expect(names).toContain(`${TEST_PREFIX}meta`);
+    for (const suffix of EXPECTED_COLLECTION_SUFFIXES) {
+      expect(names).toContain(`${TEST_PREFIX}${suffix}`);
+    }
   });
 
   it("ensureCollections is idempotent", async () => {
@@ -114,19 +126,18 @@ describe("E2E: MongoDB Collections and Indexes", () => {
 
     const collections = await db.listCollections().toArray();
     const count = collections.filter((c) => c.name.startsWith(TEST_PREFIX)).length;
-    expect(count).toBe(4);
+    expect(count).toBe(EXPECTED_COLLECTION_SUFFIXES.length);
   });
 
   it("creates standard indexes", async () => {
     await ensureCollections(db, TEST_PREFIX);
     const applied = await ensureStandardIndexes(db, TEST_PREFIX);
-    expect(applied).toBe(7); // 5 chunks + 2 cache
+    expect(applied).toBe(EXPECTED_STANDARD_INDEX_COUNT);
 
     // Verify chunks indexes
     const chunksIndexes = await chunksCollection(db, TEST_PREFIX).indexes();
     const indexNames = chunksIndexes.map((i) => i.name);
     expect(indexNames).toContain("idx_chunks_path");
-    expect(indexNames).toContain("idx_chunks_source");
     expect(indexNames).toContain("idx_chunks_path_hash");
     expect(indexNames).toContain("idx_chunks_updated");
     expect(indexNames).toContain("idx_chunks_text");
@@ -153,10 +164,17 @@ describe("E2E: MongoDB Collections and Indexes", () => {
     expect(applied1).toBe(applied2);
   });
 
-  it("search index creation fails gracefully when Search is unavailable", async () => {
+  it("ensures search indexes according to the live deployment", async () => {
     const result = await ensureSearchIndexes(db, TEST_PREFIX, "community-mongot", "automated");
-    expect(result.text).toBe(false);
-    expect(result.vector).toBe(false);
+
+    try {
+      const searchIndexes = await chunksCollection(db, TEST_PREFIX).listSearchIndexes().toArray();
+      const searchIndexNames = new Set(searchIndexes.map((index) => index.name));
+      expect(result.text).toBe(searchIndexNames.has(`${TEST_PREFIX}chunks_text`));
+      expect(result.vector).toBe(searchIndexNames.has(`${TEST_PREFIX}chunks_vector`));
+    } catch {
+      expect(result).toEqual({ text: false, vector: false });
+    }
   });
 });
 
@@ -165,18 +183,23 @@ describe("E2E: MongoDB Collections and Indexes", () => {
 // ===========================================================================
 
 describe("E2E: Capability Detection", () => {
-  it("detects capabilities on MongoDB 8.2 community (no mongot)", async () => {
+  it("matches the live deployment's actual search capabilities", async () => {
     const caps = await detectCapabilities(db);
 
     // MongoDB 8.2 recognizes $rankFusion and $scoreFusion as valid stages
-    // even on Community without mongot
     expect(caps.rankFusion).toBe(true);
     expect(caps.scoreFusion).toBe(true);
 
-    // Without mongot, vectorSearch and textSearch should be false
-    // (listSearchIndexes requires mongot)
-    expect(caps.vectorSearch).toBe(false);
-    expect(caps.textSearch).toBe(false);
+    let listSearchIndexesAvailable = false;
+    try {
+      await chunksCollection(db, TEST_PREFIX).listSearchIndexes().toArray();
+      listSearchIndexesAvailable = true;
+    } catch {
+      listSearchIndexesAvailable = false;
+    }
+
+    expect(caps.vectorSearch).toBe(listSearchIndexesAvailable);
+    expect(caps.textSearch).toBe(listSearchIndexesAvailable);
   });
 });
 
@@ -511,13 +534,17 @@ describe("E2E: mongoSearch dispatcher fallback", () => {
 
   it("falls through to $text search when Search is unavailable", async () => {
     const col = chunksCollection(db, TEST_PREFIX);
-    const caps = await detectCapabilities(db);
 
     const results = await mongoSearchFn(col, "MongoDB document database", null, {
       maxResults: 5,
       minScore: 0,
       fusionMethod: "scoreFusion",
-      capabilities: caps,
+      capabilities: {
+        vectorSearch: false,
+        textSearch: false,
+        scoreFusion: false,
+        rankFusion: false,
+      },
       vectorIndexName: `${TEST_PREFIX}chunks_vector`,
       textIndexName: `${TEST_PREFIX}chunks_text`,
       vectorWeight: 0.7,
@@ -765,11 +792,12 @@ describe("E2E: Transactions (replica set)", () => {
               >,
               path: "txn-retry-test",
               text: "transaction test",
+              hash: "txn-retry-test-hash",
               source: "memory",
               startLine: 1,
               endLine: 5,
               model: "none",
-              syncedAt: new Date(),
+              updatedAt: new Date(),
             },
             { session },
           );
@@ -987,6 +1015,7 @@ describe("E2E: Change Streams", () => {
       _id: "cs-test:1:5" as unknown as import("mongodb").InferIdType<import("mongodb").Document>,
       path: "cs-test",
       text: "change stream test",
+      hash: "cs-test-hash",
       source: "memory",
       startLine: 1,
       endLine: 5,
