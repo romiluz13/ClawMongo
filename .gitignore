@@ -100,6 +100,7 @@ CLAWMONGO_FRESH_START.md
 # Temporary/test files
 temp-*.ts
 temp-*.js
+!src/media/temp-files.ts
 scripts/stress-test-*.ts
 
 # local tooling
