@@ -63,6 +63,7 @@ import {
   buildTogetherModelDefinition,
 } from "./together-models.js";
 import { discoverVeniceModels, VENICE_BASE_URL } from "./venice-models.js";
+import { discoverVercelAiGatewayModels, VERCEL_AI_GATEWAY_BASE_URL } from "./vercel-ai-gateway.js";
 
 type ModelsConfig = NonNullable<OpenClawConfig["models"]>;
 export type ProviderConfig = NonNullable<ModelsConfig["providers"]>[string];
@@ -205,6 +206,8 @@ const NVIDIA_DEFAULT_COST = {
   cacheRead: 0,
   cacheWrite: 0,
 };
+
+const OPENAI_CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 
 const log = createSubsystemLogger("agents/model-providers");
 
@@ -400,8 +403,11 @@ function normalizeApiKeyConfig(value: string): string {
   return match?.[1] ?? trimmed;
 }
 
-function resolveEnvApiKeyVarName(provider: string): string | undefined {
-  const resolved = resolveEnvApiKey(provider);
+function resolveEnvApiKeyVarName(
+  provider: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const resolved = resolveEnvApiKey(provider, env);
   if (!resolved) {
     return undefined;
   }
@@ -467,6 +473,7 @@ function toDiscoveryApiKey(value: string | undefined): string | undefined {
 
 function resolveApiKeyFromCredential(
   cred: ReturnType<typeof ensureAuthProfileStore>["profiles"][string] | undefined,
+  env: NodeJS.ProcessEnv = process.env,
 ): ProfileApiKeyResolution | undefined {
   if (!cred) {
     return undefined;
@@ -479,7 +486,7 @@ function resolveApiKeyFromCredential(
         return {
           apiKey: envVar,
           source: "env-ref",
-          discoveryApiKey: toDiscoveryApiKey(process.env[envVar]),
+          discoveryApiKey: toDiscoveryApiKey(env[envVar]),
         };
       }
       return {
@@ -504,7 +511,7 @@ function resolveApiKeyFromCredential(
         return {
           apiKey: envVar,
           source: "env-ref",
-          discoveryApiKey: toDiscoveryApiKey(process.env[envVar]),
+          discoveryApiKey: toDiscoveryApiKey(env[envVar]),
         };
       }
       return {
@@ -526,10 +533,11 @@ function resolveApiKeyFromCredential(
 function resolveApiKeyFromProfiles(params: {
   provider: string;
   store: ReturnType<typeof ensureAuthProfileStore>;
+  env?: NodeJS.ProcessEnv;
 }): ProfileApiKeyResolution | undefined {
   const ids = listProfilesForProvider(params.store, params.provider);
   for (const id of ids) {
-    const resolved = resolveApiKeyFromCredential(params.store.profiles[id]);
+    const resolved = resolveApiKeyFromCredential(params.store.profiles[id], params.env);
     if (resolved) {
       return resolved;
     }
@@ -953,6 +961,14 @@ async function buildHuggingfaceProvider(discoveryApiKey?: string): Promise<Provi
   };
 }
 
+async function buildVercelAiGatewayProvider(): Promise<ProviderConfig> {
+  return {
+    baseUrl: VERCEL_AI_GATEWAY_BASE_URL,
+    api: "anthropic-messages",
+    models: await discoverVercelAiGatewayModels(),
+  };
+}
+
 function buildTogetherProvider(): ProviderConfig {
   return {
     baseUrl: TOGETHER_BASE_URL,
@@ -982,6 +998,16 @@ function buildOpenrouterProvider(): ProviderConfig {
         maxTokens: OPENROUTER_DEFAULT_MAX_TOKENS,
       },
     ],
+  };
+}
+
+function buildOpenAICodexProvider(): ProviderConfig {
+  return {
+    baseUrl: OPENAI_CODEX_BASE_URL,
+    api: "openai-codex-responses",
+    // Like Copilot, Codex resolves OAuth credentials from auth-profiles at
+    // runtime, so the snapshot only needs the canonical API surface.
+    models: [],
   };
 }
 
@@ -1096,23 +1122,26 @@ async function buildKilocodeProviderWithDiscovery(): Promise<ProviderConfig> {
 
 export async function resolveImplicitProviders(params: {
   agentDir: string;
+  config?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
   explicitProviders?: Record<string, ProviderConfig> | null;
 }): Promise<ModelsConfig["providers"]> {
   const providers: Record<string, ProviderConfig> = {};
+  const env = params.env ?? process.env;
   const authStore = ensureAuthProfileStore(params.agentDir, {
     allowKeychainPrompt: false,
   });
   const resolveProviderApiKey = (
     provider: string,
   ): { apiKey: string | undefined; discoveryApiKey?: string } => {
-    const envVar = resolveEnvApiKeyVarName(provider);
+    const envVar = resolveEnvApiKeyVarName(provider, env);
     if (envVar) {
       return {
         apiKey: envVar,
-        discoveryApiKey: toDiscoveryApiKey(process.env[envVar]),
+        discoveryApiKey: toDiscoveryApiKey(env[envVar]),
       };
     }
-    const fromProfiles = resolveApiKeyFromProfiles({ provider, store: authStore });
+    const fromProfiles = resolveApiKeyFromProfiles({ provider, store: authStore, env });
     return {
       apiKey: fromProfiles?.apiKey,
       discoveryApiKey: fromProfiles?.discoveryApiKey,
@@ -1124,7 +1153,7 @@ export async function resolveImplicitProviders(params: {
     providers.minimax = { ...buildMinimaxProvider(), apiKey: minimaxKey };
   }
 
-  const minimaxPortalEnvKey = resolveEnvApiKeyVarName("minimax-portal");
+  const minimaxPortalEnvKey = resolveEnvApiKeyVarName("minimax-portal", env);
   const minimaxOauthProfile = listProfilesForProvider(authStore, "minimax-portal");
   if (minimaxPortalEnvKey || minimaxOauthProfile.length > 0) {
     providers["minimax-portal"] = {
@@ -1199,8 +1228,8 @@ export async function resolveImplicitProviders(params: {
     if (!baseUrl) {
       continue;
     }
-    const envVarApiKey = resolveEnvApiKeyVarName("cloudflare-ai-gateway");
-    const profileApiKey = resolveApiKeyFromCredential(cred)?.apiKey;
+    const envVarApiKey = resolveEnvApiKeyVarName("cloudflare-ai-gateway", env);
+    const profileApiKey = resolveApiKeyFromCredential(cred, env)?.apiKey;
     const apiKey = envVarApiKey ?? profileApiKey ?? "";
     if (!apiKey) {
       continue;
@@ -1212,6 +1241,14 @@ export async function resolveImplicitProviders(params: {
       models: [buildCloudflareAiGatewayModelDefinition()],
     };
     break;
+  }
+
+  const vercelAiGatewayKey = resolveProviderApiKey("vercel-ai-gateway").apiKey;
+  if (vercelAiGatewayKey) {
+    providers["vercel-ai-gateway"] = {
+      ...(await buildVercelAiGatewayProvider()),
+      apiKey: vercelAiGatewayKey,
+    };
   }
 
   // Ollama provider - auto-discover if running locally, or add if explicitly configured.
@@ -1285,6 +1322,11 @@ export async function resolveImplicitProviders(params: {
     providers.openrouter = { ...buildOpenrouterProvider(), apiKey: openrouterKey };
   }
 
+  const openaiCodexProfiles = listProfilesForProvider(authStore, "openai-codex");
+  if (openaiCodexProfiles.length > 0) {
+    providers["openai-codex"] = buildOpenAICodexProvider();
+  }
+
   const nvidiaKey = resolveProviderApiKey("nvidia").apiKey;
   if (nvidiaKey) {
     providers.nvidia = { ...buildNvidiaProvider(), apiKey: nvidiaKey };
@@ -1293,6 +1335,35 @@ export async function resolveImplicitProviders(params: {
   const kilocodeKey = resolveProviderApiKey("kilocode").apiKey;
   if (kilocodeKey) {
     providers.kilocode = { ...(await buildKilocodeProviderWithDiscovery()), apiKey: kilocodeKey };
+  }
+
+  if (!providers["github-copilot"]) {
+    const implicitCopilot = await resolveImplicitCopilotProvider({
+      agentDir: params.agentDir,
+      env,
+    });
+    if (implicitCopilot) {
+      providers["github-copilot"] = implicitCopilot;
+    }
+  }
+
+  const implicitBedrock = await resolveImplicitBedrockProvider({
+    agentDir: params.agentDir,
+    config: params.config,
+    env,
+  });
+  if (implicitBedrock) {
+    const existing = providers["amazon-bedrock"];
+    providers["amazon-bedrock"] = existing
+      ? {
+          ...implicitBedrock,
+          ...existing,
+          models:
+            Array.isArray(existing.models) && existing.models.length > 0
+              ? existing.models
+              : implicitBedrock.models,
+        }
+      : implicitBedrock;
   }
 
   return providers;

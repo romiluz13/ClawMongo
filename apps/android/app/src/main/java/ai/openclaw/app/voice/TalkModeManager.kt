@@ -59,8 +59,7 @@ class TalkModeManager(
     private const val tag = "TalkMode"
     private const val defaultModelIdFallback = "eleven_v3"
     private const val defaultOutputFormatFallback = "pcm_24000"
-private const val defaultTalkProvider = "elevenlabs"
-    private const val silenceWindowMs = 500L
+    private const val defaultTalkProvider = "elevenlabs"
     private const val listenWatchdogMs = 12_000L
     private const val chatFinalWaitWithSubscribeMs = 45_000L
     private const val chatFinalWaitWithoutSubscribeMs = 6_000L
@@ -77,33 +76,41 @@ private const val defaultTalkProvider = "elevenlabs"
       return trimmed.takeIf { it.isNotEmpty() }
     }
 
+    private fun selectResolvedTalkProviderConfig(talk: JsonObject): TalkProviderConfigSelection? {
+      val resolved = talk["resolved"].asObjectOrNull() ?: return null
+      val providerId = normalizeTalkProviderId(resolved["provider"].asStringOrNull()) ?: return null
+      return TalkProviderConfigSelection(
+        provider = providerId,
+        config = resolved["config"].asObjectOrNull() ?: buildJsonObject {},
+        normalizedPayload = true,
+      )
+    }
+
     internal fun selectTalkProviderConfig(talk: JsonObject?): TalkProviderConfigSelection? {
       if (talk == null) return null
+      selectResolvedTalkProviderConfig(talk)?.let { return it }
       val rawProvider = talk["provider"].asStringOrNull()
       val rawProviders = talk["providers"].asObjectOrNull()
       val hasNormalizedPayload = rawProvider != null || rawProviders != null
       if (hasNormalizedPayload) {
-        val providers =
-          rawProviders?.entries?.mapNotNull { (key, value) ->
-            val providerId = normalizeTalkProviderId(key) ?: return@mapNotNull null
-            val providerConfig = value.asObjectOrNull() ?: return@mapNotNull null
-            providerId to providerConfig
-          }?.toMap().orEmpty()
-        val providerId =
-          normalizeTalkProviderId(rawProvider)
-            ?: providers.keys.sorted().firstOrNull()
-            ?: defaultTalkProvider
-        return TalkProviderConfigSelection(
-          provider = providerId,
-          config = providers[providerId] ?: buildJsonObject {},
-          normalizedPayload = true,
-        )
+        return null
       }
       return TalkProviderConfigSelection(
         provider = defaultTalkProvider,
         config = talk,
         normalizedPayload = false,
       )
+    }
+
+    internal fun resolvedSilenceTimeoutMs(talk: JsonObject?): Long {
+      val fallback = TalkDefaults.defaultSilenceTimeoutMs
+      val primitive = talk?.get("silenceTimeoutMs") as? JsonPrimitive ?: return fallback
+      if (primitive.isString) return fallback
+      val timeout = primitive.content.toDoubleOrNull() ?: return fallback
+      if (timeout <= 0 || timeout % 1.0 != 0.0 || timeout > Long.MAX_VALUE.toDouble()) {
+        return fallback
+      }
+      return timeout.toLong()
     }
   }
 
@@ -134,7 +141,7 @@ private const val defaultTalkProvider = "elevenlabs"
   private var listeningMode = false
 
   private var silenceJob: Job? = null
-  private val silenceWindowMs = 700L
+  private var silenceWindowMs = TalkDefaults.defaultSilenceTimeoutMs
   private var lastTranscript: String = ""
   private var lastHeardAtMs: Long? = null
   private var lastSpokenText: String? = null
@@ -1393,60 +1400,64 @@ private const val defaultTalkProvider = "elevenlabs"
     try {
       val res = session.request("talk.config", """{"includeSecrets":true}""")
       val root = json.parseToJsonElement(res).asObjectOrNull()
-      val config = root?.get("config").asObjectOrNull()
-      val talk = config?.get("talk").asObjectOrNull()
-      val selection = selectTalkProviderConfig(talk)
-      val activeProvider = selection?.provider ?: defaultTalkProvider
-      val activeConfig = selection?.config
-      val sessionCfg = config?.get("session").asObjectOrNull()
-      val mainKey = normalizeMainKey(sessionCfg?.get("mainKey").asStringOrNull())
-      val voice = activeConfig?.get("voiceId")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-      val aliases =
-        activeConfig?.get("voiceAliases").asObjectOrNull()?.entries?.mapNotNull { (key, value) ->
-          val id = value.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-          normalizeAliasKey(key).takeIf { it.isNotEmpty() }?.let { it to id }
-        }?.toMap().orEmpty()
-      val model = activeConfig?.get("modelId")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-      val outputFormat =
-        activeConfig?.get("outputFormat")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-      val key = activeConfig?.get("apiKey")?.asStringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
-      val interrupt = talk?.get("interruptOnSpeech")?.asBooleanOrNull()
+      val parsed =
+        TalkModeGatewayConfigParser.parse(
+          config = root?.get("config").asObjectOrNull(),
+          defaultProvider = defaultTalkProvider,
+          defaultModelIdFallback = defaultModelIdFallback,
+          defaultOutputFormatFallback = defaultOutputFormatFallback,
+          envVoice = envVoice,
+          sagVoice = sagVoice,
+          envKey = envKey,
+        )
+      if (parsed.missingResolvedPayload) {
+        Log.w(tag, "talk config ignored: normalized payload missing talk.resolved")
+      }
 
       if (!isCanonicalMainSessionKey(mainSessionKey)) {
-        mainSessionKey = mainKey
+        mainSessionKey = parsed.mainSessionKey
       }
-      defaultVoiceId =
-        if (activeProvider == defaultTalkProvider) {
-          voice ?: envVoice?.takeIf { it.isNotEmpty() } ?: sagVoice?.takeIf { it.isNotEmpty() }
-        } else {
-          voice
-        }
-      voiceAliases = aliases
+      defaultVoiceId = parsed.defaultVoiceId
+      voiceAliases = parsed.voiceAliases
       if (!voiceOverrideActive) currentVoiceId = defaultVoiceId
-      defaultModelId = model ?: defaultModelIdFallback
+      defaultModelId = parsed.defaultModelId
       if (!modelOverrideActive) currentModelId = defaultModelId
-      defaultOutputFormat = outputFormat ?: defaultOutputFormatFallback
-      apiKey = key ?: envKey?.takeIf { it.isNotEmpty() }
-      Log.d(tag, "reloadConfig apiKey=${if (apiKey != null) "set" else "null"} voiceId=$defaultVoiceId")
-      if (interrupt != null) interruptOnSpeech = interrupt
-      activeProviderIsElevenLabs = activeProvider == defaultTalkProvider
+      defaultOutputFormat = parsed.defaultOutputFormat
+      apiKey = parsed.apiKey
+      silenceWindowMs = parsed.silenceTimeoutMs
+      Log.d(
+        tag,
+        "reloadConfig apiKey=${if (apiKey != null) "set" else "null"} voiceId=$defaultVoiceId silenceTimeoutMs=${parsed.silenceTimeoutMs}",
+      )
+      if (parsed.interruptOnSpeech != null) interruptOnSpeech = parsed.interruptOnSpeech
+      activeProviderIsElevenLabs = parsed.activeProvider == defaultTalkProvider
       if (!activeProviderIsElevenLabs) {
         // Clear ElevenLabs credentials so playAssistant won't attempt ElevenLabs calls
         apiKey = null
         defaultVoiceId = null
         if (!voiceOverrideActive) currentVoiceId = null
-        Log.w(tag, "talk provider $activeProvider unsupported; using system voice fallback")
-      } else if (selection?.normalizedPayload == true) {
+        Log.w(tag, "talk provider ${parsed.activeProvider} unsupported; using system voice fallback")
+      } else if (parsed.normalizedPayload) {
         Log.d(tag, "talk config provider=elevenlabs")
       }
       configLoaded = true
     } catch (_: Throwable) {
-      defaultVoiceId = envVoice?.takeIf { it.isNotEmpty() } ?: sagVoice?.takeIf { it.isNotEmpty() }
-      defaultModelId = defaultModelIdFallback
+      val fallback =
+        TalkModeGatewayConfigParser.fallback(
+          defaultProvider = defaultTalkProvider,
+          defaultModelIdFallback = defaultModelIdFallback,
+          defaultOutputFormatFallback = defaultOutputFormatFallback,
+          envVoice = envVoice,
+          sagVoice = sagVoice,
+          envKey = envKey,
+        )
+      silenceWindowMs = fallback.silenceTimeoutMs
+      defaultVoiceId = fallback.defaultVoiceId
+      defaultModelId = fallback.defaultModelId
       if (!modelOverrideActive) currentModelId = defaultModelId
-      apiKey = envKey?.takeIf { it.isNotEmpty() }
-      voiceAliases = emptyMap()
-      defaultOutputFormat = defaultOutputFormatFallback
+      apiKey = fallback.apiKey
+      voiceAliases = fallback.voiceAliases
+      defaultOutputFormat = fallback.defaultOutputFormat
       // Keep config load retryable after transient fetch failures.
       configLoaded = false
     }
