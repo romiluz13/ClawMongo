@@ -277,6 +277,7 @@ export async function syncToMongoDB(params: {
   db: Db;
   prefix: string;
   agentId?: string;
+  sessionMemoryEnabled?: boolean;
   workspaceDir: string;
   extraPaths?: string[];
   embeddingMode: MemoryMongoDBEmbeddingMode;
@@ -387,7 +388,7 @@ export async function syncToMongoDB(params: {
   let sessionFilesProcessed = 0;
   let sessionChunksUpserted = 0;
 
-  if (params.agentId) {
+  if (params.agentId && params.sessionMemoryEnabled !== false) {
     try {
       const sessionResult = await syncSessionFiles({
         client: params.client,

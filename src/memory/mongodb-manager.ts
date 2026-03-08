@@ -121,6 +121,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private readonly agentId: string;
   private readonly workspaceDir: string;
   private readonly extraPaths: string[];
+  private readonly sessionMemoryEnabled: boolean;
   private readonly capabilities: DetectedCapabilities;
   private readonly config: ResolvedMemoryBackendConfig;
   private syncing: Promise<void> | null = null;
@@ -140,6 +141,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     agentId: string;
     workspaceDir: string;
     extraPaths: string[];
+    sessionMemoryEnabled: boolean;
     capabilities: DetectedCapabilities;
     config: ResolvedMemoryBackendConfig;
     relevance?: MongoDBRelevanceRuntime | null;
@@ -150,6 +152,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
     this.extraPaths = params.extraPaths;
+    this.sessionMemoryEnabled = params.sessionMemoryEnabled;
     this.capabilities = params.capabilities;
     this.config = params.config;
     this.relevance = params.relevance ?? null;
@@ -174,6 +177,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       workspaceDir,
       params.cfg.agents?.defaults?.memorySearch?.extraPaths,
     );
+    const sessionMemoryEnabled =
+      params.cfg.agents?.defaults?.memorySearch?.experimental?.sessionMemory ?? false;
 
     // Connect to MongoDB with a timeout to avoid hanging
     const safeUri = redactMongoURI(mongoCfg.uri);
@@ -242,6 +247,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       agentId: params.agentId,
       workspaceDir,
       extraPaths,
+      sessionMemoryEnabled,
       capabilities,
       config: params.resolved,
       relevance,
@@ -1025,6 +1031,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         db: this.db,
         prefix: this.prefix,
         agentId: this.agentId,
+        sessionMemoryEnabled: this.sessionMemoryEnabled,
         workspaceDir: this.workspaceDir,
         extraPaths: this.extraPaths,
         embeddingMode: mongoCfg.embeddingMode,

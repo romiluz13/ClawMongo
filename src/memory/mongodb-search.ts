@@ -542,8 +542,17 @@ export async function mongoSearch(
     if (opts.fusionMethod === "scoreFusion" && opts.capabilities.scoreFusion) {
       try {
         const results = await hybridSearchScoreFusion(collection, query, queryVector, searchOpts);
-        opts.onTrace?.({ event: "method", method: "scoreFusion", ok: true });
-        return results;
+        if (results.length > 0) {
+          opts.onTrace?.({ event: "method", method: "scoreFusion", ok: true });
+          return results;
+        }
+        opts.onTrace?.({
+          event: "method",
+          method: "scoreFusion",
+          ok: false,
+          message: "empty results",
+        });
+        log.warn("$scoreFusion returned no hits, trying fallback path");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         opts.onTrace?.({ event: "method", method: "scoreFusion", ok: false, message: msg });
@@ -555,8 +564,17 @@ export async function mongoSearch(
     if (opts.fusionMethod !== "js-merge" && opts.capabilities.rankFusion) {
       try {
         const results = await hybridSearchRankFusion(collection, query, queryVector, searchOpts);
-        opts.onTrace?.({ event: "method", method: "rankFusion", ok: true });
-        return results;
+        if (results.length > 0) {
+          opts.onTrace?.({ event: "method", method: "rankFusion", ok: true });
+          return results;
+        }
+        opts.onTrace?.({
+          event: "method",
+          method: "rankFusion",
+          ok: false,
+          message: "empty results",
+        });
+        log.warn("$rankFusion returned no hits, trying fallback path");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         opts.onTrace?.({ event: "method", method: "rankFusion", ok: false, message: msg });
@@ -574,12 +592,22 @@ export async function mongoSearch(
         }),
         keywordSearch(collection, query, { ...searchOpts, indexName: opts.textIndexName }),
       ]);
-      opts.onTrace?.({ event: "method", method: "js-merge", ok: true });
-      return hybridSearchJSFallback(vResults, kResults, {
+      const merged = hybridSearchJSFallback(vResults, kResults, {
         maxResults: opts.maxResults,
         vectorWeight,
         textWeight,
       });
+      if (merged.length > 0) {
+        opts.onTrace?.({ event: "method", method: "js-merge", ok: true });
+        return merged;
+      }
+      opts.onTrace?.({
+        event: "method",
+        method: "js-merge",
+        ok: false,
+        message: "empty results",
+      });
+      log.warn("hybrid JS merge returned no hits, trying fallback path");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       opts.onTrace?.({ event: "method", method: "js-merge", ok: false, message: msg });
@@ -595,8 +623,12 @@ export async function mongoSearch(
         indexName: opts.vectorIndexName,
         queryText: query,
       });
-      opts.onTrace?.({ event: "method", method: "vector", ok: true });
-      return results;
+      if (results.length > 0) {
+        opts.onTrace?.({ event: "method", method: "vector", ok: true });
+        return results;
+      }
+      opts.onTrace?.({ event: "method", method: "vector", ok: false, message: "empty results" });
+      log.warn("vector search returned no hits, trying fallback path");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       opts.onTrace?.({ event: "method", method: "vector", ok: false, message: msg });
@@ -611,8 +643,12 @@ export async function mongoSearch(
         ...searchOpts,
         indexName: opts.textIndexName,
       });
-      opts.onTrace?.({ event: "method", method: "keyword", ok: true });
-      return results;
+      if (results.length > 0) {
+        opts.onTrace?.({ event: "method", method: "keyword", ok: true });
+        return results;
+      }
+      opts.onTrace?.({ event: "method", method: "keyword", ok: false, message: "empty results" });
+      log.warn("keyword search returned no hits, trying $text fallback");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       opts.onTrace?.({ event: "method", method: "keyword", ok: false, message: msg });

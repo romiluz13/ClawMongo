@@ -433,6 +433,38 @@ describe("mongoSearch dispatcher", () => {
     expect(results).toHaveLength(2);
   });
 
+  it("falls back when $scoreFusion returns empty results", async () => {
+    let callCount = 0;
+    const col = {
+      aggregate: vi.fn(() => ({
+        toArray: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return [];
+          }
+          return SAMPLE_DOCS;
+        }),
+      })),
+      find: vi.fn(() => ({
+        sort: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            toArray: vi.fn(async () => SAMPLE_DOCS),
+          })),
+        })),
+      })),
+    } as unknown as Collection;
+
+    const results = await mongoSearch(col, "test query", [0.1, 0.2], {
+      ...baseOpts,
+      fusionMethod: "scoreFusion",
+      capabilities: FULL_CAPS,
+      embeddingMode: "automated",
+    });
+
+    expect(col.aggregate).toHaveBeenCalledTimes(2);
+    expect(results).toHaveLength(2);
+  });
+
   it("skips server-side fusion for js-merge fusionMethod", async () => {
     // When fusionMethod is js-merge, should run separate vector + keyword queries
     const col = mockCollectionWithResults(SAMPLE_DOCS);
@@ -476,6 +508,36 @@ describe("mongoSearch dispatcher", () => {
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(pipeline[0].$search).toBeDefined();
+  });
+
+  it("falls back to keyword-only when vector search returns empty results", async () => {
+    let callCount = 0;
+    const col = {
+      aggregate: vi.fn(() => ({
+        toArray: vi.fn(async () => {
+          callCount++;
+          return callCount === 1 ? [] : SAMPLE_DOCS;
+        }),
+      })),
+      find: vi.fn(() => ({
+        sort: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            toArray: vi.fn(async () => SAMPLE_DOCS),
+          })),
+        })),
+      })),
+    } as unknown as Collection;
+
+    const results = await mongoSearch(col, "test", null, {
+      ...baseOpts,
+      capabilities: { ...FULL_CAPS, textSearch: true, scoreFusion: false, rankFusion: false },
+      embeddingMode: "automated",
+    });
+
+    expect(col.aggregate).toHaveBeenCalled();
+    expect(results).toHaveLength(2);
+    const pipelines = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls.map((call) => call[0]);
+    expect(pipelines.some((pipeline) => pipeline[0].$search != null)).toBe(true);
   });
 
   it("falls back to $text search when all Atlas Search methods fail", async () => {

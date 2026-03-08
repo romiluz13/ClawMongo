@@ -362,6 +362,21 @@ describe("syncToMongoDB — session files", () => {
     expect(listSessionFilesForAgent).not.toHaveBeenCalled();
   });
 
+  it("does not sync sessions when sessionMemory is disabled", async () => {
+    const result = await syncToMongoDB({
+      db: {} as Db,
+      prefix: "test_",
+      workspaceDir: tmpDir,
+      agentId: "agent-1",
+      sessionMemoryEnabled: false,
+      embeddingMode: "automated",
+    });
+
+    expect(result.sessionFilesProcessed).toBe(0);
+    expect(result.sessionChunksUpserted).toBe(0);
+    expect(listSessionFilesForAgent).not.toHaveBeenCalled();
+  });
+
   it("stores session chunks with source='sessions'", async () => {
     const sessionEntry = {
       path: "sessions/chat.jsonl",
