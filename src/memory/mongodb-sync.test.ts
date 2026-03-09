@@ -54,6 +54,7 @@ function createMockFilesCol(
     })),
     updateOne: vi.fn(async () => ({})),
     deleteOne: vi.fn(async () => ({ deletedCount: 1 })),
+    deleteMany: vi.fn(async () => ({ deletedCount: 0 })),
   } as unknown as Collection;
 }
 
@@ -97,7 +98,7 @@ async function writeMemoryFiles(
 // ---------------------------------------------------------------------------
 
 describe("syncToMongoDB", () => {
-  it("syncs memory files from disk to MongoDB", async () => {
+  it("ignores legacy markdown runtime memory files on disk", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nHello world content here for chunking",
       "notes.md": "# Notes\n\nSome notes here for indexing",
@@ -110,10 +111,11 @@ describe("syncToMongoDB", () => {
       embeddingMode: "automated",
     });
 
-    expect(result.filesProcessed).toBe(2);
-    expect(result.chunksUpserted).toBeGreaterThanOrEqual(2);
-    expect(mockChunks.bulkWrite).toHaveBeenCalled();
-    expect(mockFiles.updateOne).toHaveBeenCalled();
+    expect(result.filesProcessed).toBe(0);
+    expect(result.chunksUpserted).toBe(0);
+    expect(result.sessionFilesProcessed).toBe(0);
+    expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
+    expect(mockFiles.updateOne).not.toHaveBeenCalled();
   });
 
   it("returns zero when no memory files exist", async () => {
@@ -129,45 +131,32 @@ describe("syncToMongoDB", () => {
     expect(result.staleDeleted).toBe(0);
   });
 
-  it("skips unchanged files based on hash comparison", async () => {
+  it("does not treat stored legacy markdown file metadata as active runtime memory", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nHello world",
     });
 
-    // First sync: file is new
-    const result1 = await syncToMongoDB({
-      db: {} as Db,
-      prefix: "test_",
-      workspaceDir: tmpDir,
-      embeddingMode: "automated",
-    });
-    expect(result1.filesProcessed).toBe(1);
-
-    // Extract the hash from the upserted file metadata
-    const updateCall = (mockFiles.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
-    const fileHash = updateCall[1].$set.hash;
-
-    // Rebuild mock files collection with stored hash
-    const storedFiles = new Map([["memory/test.md", { hash: fileHash, mtime: 0, size: 0 }]]);
+    const storedFiles = new Map([["memory/test.md", { hash: "legacy-hash", mtime: 0, size: 0 }]]);
     mockFiles = createMockFilesCol(storedFiles);
     vi.mocked(filesCollection).mockReturnValue(mockFiles);
-
-    // Reset chunks bulkWrite tracking
     mockChunks = createMockChunksCol();
     vi.mocked(chunksCollection).mockReturnValue(mockChunks);
 
-    // Second sync: file unchanged
-    const result2 = await syncToMongoDB({
+    const result = await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
       embeddingMode: "automated",
     });
-    expect(result2.filesProcessed).toBe(0);
+
+    expect(result.filesProcessed).toBe(0);
     expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
+    expect(mockFiles.deleteMany).toHaveBeenCalledWith({
+      _id: { $in: ["memory/test.md"] },
+    });
   });
 
-  it("forces re-index when force=true", async () => {
+  it("does not revive legacy markdown indexing even when force=true", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nContent",
     });
@@ -187,18 +176,29 @@ describe("syncToMongoDB", () => {
       force: true,
     });
 
-    expect(result.filesProcessed).toBe(1);
+    expect(result.filesProcessed).toBe(0);
+    expect(result.chunksUpserted).toBe(0);
+    expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
   });
 
-  it("does not include embedding field in automated mode", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent here for automated mode",
-    });
+  it("does not include embedding field in automated mode for conversation sync", async () => {
+    const sessionEntry = {
+      path: "sessions/embed-check.jsonl",
+      absPath: "/tmp/sessions/embed-check.jsonl",
+      mtimeMs: Date.now(),
+      size: 200,
+      hash: "session-embed-check",
+      content: "User: Hello\nAssistant: Mongo handles embeddings",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/embed-check.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
@@ -210,9 +210,17 @@ describe("syncToMongoDB", () => {
   });
 
   it("does not include embedding field even when a legacy provider object is passed", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for automated embedding",
-    });
+    const sessionEntry = {
+      path: "sessions/provider-check.jsonl",
+      absPath: "/tmp/sessions/provider-check.jsonl",
+      mtimeMs: Date.now(),
+      size: 200,
+      hash: "session-provider-check",
+      content: "User: Hello\nAssistant: Provider ignored",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/provider-check.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     const mockProvider = {
       id: "mock",
@@ -225,6 +233,7 @@ describe("syncToMongoDB", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       model: "mock-model",
     });
@@ -237,17 +246,39 @@ describe("syncToMongoDB", () => {
     }
   });
 
-  it("reports progress during sync", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "a.md": "# A\n\nContent A for testing",
-      "b.md": "# B\n\nContent B for testing",
-    });
+  it("reports progress during conversation sync", async () => {
+    const sessionEntryA = {
+      path: "sessions/a.jsonl",
+      absPath: "/tmp/sessions/a.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "session-a",
+      content: "User: A\nAssistant: A",
+      lineMap: [1, 2],
+    };
+    const sessionEntryB = {
+      path: "sessions/b.jsonl",
+      absPath: "/tmp/sessions/b.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "session-b",
+      content: "User: B\nAssistant: B",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue([
+      "/tmp/sessions/a.jsonl",
+      "/tmp/sessions/b.jsonl",
+    ]);
+    vi.mocked(buildSessionEntry)
+      .mockResolvedValueOnce(sessionEntryA)
+      .mockResolvedValueOnce(sessionEntryB);
 
     const progressUpdates: Array<{ completed: number; total: number; label?: string }> = [];
     await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       progress: (update) => progressUpdates.push(update),
     });
@@ -258,7 +289,7 @@ describe("syncToMongoDB", () => {
     expect(last.completed).toBe(last.total);
   });
 
-  it("deletes stale chunks for removed files", async () => {
+  it("deletes stale legacy markdown chunks for removed files", async () => {
     await writeMemoryFiles(tmpDir, {
       "keep.md": "# Keep\n\nKeep this file",
     });
@@ -278,20 +309,29 @@ describe("syncToMongoDB", () => {
     });
 
     expect(mockChunks.deleteMany).toHaveBeenCalledWith({
-      path: { $in: ["memory/deleted.md"] },
+      path: { $in: ["memory/keep.md", "memory/deleted.md"] },
     });
     expect(result.staleDeleted).toBe(3);
   });
 
-  it("sets correct chunk document structure", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nSome content for chunk structure test",
-    });
+  it("sets correct chunk document structure for conversation chunks", async () => {
+    const sessionEntry = {
+      path: "sessions/structure.jsonl",
+      absPath: "/tmp/sessions/structure.jsonl",
+      mtimeMs: Date.now(),
+      size: 120,
+      hash: "session-structure",
+      content: "User: Structure\nAssistant: Test",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/structure.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
@@ -301,12 +341,12 @@ describe("syncToMongoDB", () => {
     const firstOp = bulkOps[0].updateOne;
     // Check filter uses composite _id
     expect(typeof firstOp.filter._id).toBe("string");
-    expect(firstOp.filter._id).toContain("memory/test.md:");
+    expect(firstOp.filter._id).toContain("sessions/structure.jsonl:");
 
     // Check set fields
     const doc = firstOp.update.$set;
-    expect(doc.path).toBe("memory/test.md");
-    expect(doc.source).toBe("memory");
+    expect(doc.path).toBe("sessions/structure.jsonl");
+    expect(doc.source).toBe("sessions");
     expect(typeof doc.startLine).toBe("number");
     expect(typeof doc.endLine).toBe("number");
     expect(typeof doc.hash).toBe("string");
@@ -626,9 +666,17 @@ function createMockClient(session: ClientSession): MongoClient {
 
 describe("syncToMongoDB — transaction wrapping", () => {
   it("uses withTransaction when client is provided", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for transaction test",
-    });
+    const sessionEntry = {
+      path: "sessions/tx-basic.jsonl",
+      absPath: "/tmp/sessions/tx-basic.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "tx-basic",
+      content: "User: tx\nAssistant: tx",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/tx-basic.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     const mockSession = createMockSession();
     const mockClient = createMockClient(mockSession);
@@ -637,6 +685,7 @@ describe("syncToMongoDB — transaction wrapping", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       client: mockClient,
     });
@@ -647,9 +696,17 @@ describe("syncToMongoDB — transaction wrapping", () => {
   });
 
   it("passes session to bulkWrite and deleteMany inside transaction", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for session propagation test",
-    });
+    const sessionEntry = {
+      path: "sessions/tx-propagation.jsonl",
+      absPath: "/tmp/sessions/tx-propagation.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "tx-propagation",
+      content: "User: propagation\nAssistant: propagation",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/tx-propagation.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     const mockSession = createMockSession();
     const mockClient = createMockClient(mockSession);
@@ -658,6 +715,7 @@ describe("syncToMongoDB — transaction wrapping", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       client: mockClient,
     });
@@ -688,6 +746,7 @@ describe("syncToMongoDB — transaction wrapping", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       client: mockClient,
     });
@@ -703,9 +762,17 @@ describe("syncToMongoDB — transaction wrapping", () => {
   });
 
   it("falls back to non-transactional when transactions are not supported", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for fallback test",
-    });
+    const sessionEntry = {
+      path: "sessions/tx-fallback.jsonl",
+      absPath: "/tmp/sessions/tx-fallback.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "tx-fallback",
+      content: "User: fallback\nAssistant: fallback",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/tx-fallback.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     // Simulate standalone MongoDB error
     const mockSession = createMockSession();
@@ -718,31 +785,41 @@ describe("syncToMongoDB — transaction wrapping", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
       client: mockClient,
     });
 
     // Should still succeed with non-transactional fallback
-    expect(result.filesProcessed).toBe(1);
-    expect(result.chunksUpserted).toBeGreaterThanOrEqual(1);
+    expect(result.sessionFilesProcessed).toBe(1);
+    expect(result.sessionChunksUpserted).toBeGreaterThanOrEqual(1);
     expect(mockSession.endSession).toHaveBeenCalled();
   });
 
   it("does not use transactions when client is not provided", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent without client",
-    });
+    const sessionEntry = {
+      path: "sessions/no-client.jsonl",
+      absPath: "/tmp/sessions/no-client.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "no-client",
+      content: "User: no client\nAssistant: no client",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/no-client.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     const result = await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
     // Should still work normally without transactions
-    expect(result.filesProcessed).toBe(1);
-    expect(result.chunksUpserted).toBeGreaterThanOrEqual(1);
+    expect(result.sessionFilesProcessed).toBe(1);
+    expect(result.sessionChunksUpserted).toBeGreaterThanOrEqual(1);
   });
 
   it("session files also use transactions when client is provided", async () => {
@@ -786,14 +863,23 @@ describe("syncToMongoDB — transaction wrapping", () => {
 
 describe("syncToMongoDB — embeddingStatus and retry", () => {
   it("keeps embeddingStatus='pending' even if a legacy provider is passed", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for embeddingStatus success",
-    });
+    const sessionEntry = {
+      path: "sessions/pending-success.jsonl",
+      absPath: "/tmp/sessions/pending-success.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "pending-success",
+      content: "User: pending\nAssistant: pending",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/pending-success.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
@@ -805,9 +891,17 @@ describe("syncToMongoDB — embeddingStatus and retry", () => {
   });
 
   it("ignores legacy embedding provider failures and keeps pending status", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for embeddingStatus failed",
-    });
+    const sessionEntry = {
+      path: "sessions/pending-failed.jsonl",
+      absPath: "/tmp/sessions/pending-failed.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "pending-failed",
+      content: "User: pending failed\nAssistant: pending failed",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/pending-failed.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     const mockProvider = {
       id: "mock",
@@ -820,6 +914,7 @@ describe("syncToMongoDB — embeddingStatus and retry", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
@@ -832,14 +927,23 @@ describe("syncToMongoDB — embeddingStatus and retry", () => {
   });
 
   it("sets embeddingStatus='pending' in automated mode (MongoDB manages embeddings)", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for automated mode pending status",
-    });
+    const sessionEntry = {
+      path: "sessions/pending-auto.jsonl",
+      absPath: "/tmp/sessions/pending-auto.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "pending-auto",
+      content: "User: pending auto\nAssistant: pending auto",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/pending-auto.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     await syncToMongoDB({
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 
@@ -850,9 +954,17 @@ describe("syncToMongoDB — embeddingStatus and retry", () => {
   });
 
   it("does not retry legacy embedding generation on the automated write path", async () => {
-    await writeMemoryFiles(tmpDir, {
-      "test.md": "# Test\n\nContent for retry test",
-    });
+    const sessionEntry = {
+      path: "sessions/retry-test.jsonl",
+      absPath: "/tmp/sessions/retry-test.jsonl",
+      mtimeMs: Date.now(),
+      size: 100,
+      hash: "retry-test",
+      content: "User: retry\nAssistant: retry",
+      lineMap: [1, 2],
+    };
+    vi.mocked(listSessionFilesForAgent).mockResolvedValue(["/tmp/sessions/retry-test.jsonl"]);
+    vi.mocked(buildSessionEntry).mockResolvedValue(sessionEntry);
 
     let callCount = 0;
     const mockProvider = {
@@ -872,6 +984,7 @@ describe("syncToMongoDB — embeddingStatus and retry", () => {
       db: {} as Db,
       prefix: "test_",
       workspaceDir: tmpDir,
+      agentId: "agent-1",
       embeddingMode: "automated",
     });
 

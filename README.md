@@ -34,7 +34,7 @@ ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB
 
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
 - **MongoDB-native automatic embeddings**: with `memory.mongodb.embeddingMode = "automated"`, MongoDB handles index-time and query-time text embedding so ClawMongo does not need a separate embedding service in the app.
-- **Unified runtime memory**: bridge Markdown, session recall, KB chunks, and structured memory all live behind one queryable backend.
+- **Unified runtime memory**: MongoDB is the canonical runtime backend for conversation history, reference knowledge, and structured memory.
 - **Hybrid retrieval with graceful degradation**: ClawMongo uses Search + Vector Search + fusion where available, and falls back to lexical retrieval instead of collapsing the memory path.
 - **Real agent memory tools**: `memory_search`, `memory_get`, `kb_search`, and `memory_write` give the agent a clean recall/read/write model instead of ad-hoc file-only memory.
 - **Operational guarantees**: change streams, schema validation, transactions where available, retention controls, sync probes, and memory status are first-class.
@@ -63,24 +63,24 @@ Decision rule:
 | Keep in Markdown (source of truth)                                                           | Keep in MongoDB (source of truth)                               | Why                                                                                                  |
 | -------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md` | Runtime memory chunks, KB docs/chunks, structured memory writes | Identity/policy instructions stay human-authored and auditable; runtime recall stays query-optimized |
-| `MEMORY.md`, `memory.md`, `memory/*.md`                                                      | Imported business knowledge bases and long corpora              | Human notes stay editable as Markdown; large knowledge stays indexed and queryable                   |
+| `MEMORY.md`                                                                                  | Runtime retrieval guidance only                                 | `MEMORY.md` stays injected, but it is guidance for Mongo-backed retrieval, not runtime knowledge     |
+| Legacy `memory.md`, `memory/*.md`                                                            | Imported reference knowledge in MongoDB                         | Legacy Markdown runtime memory is migrated into MongoDB and removed from the live runtime surface    |
 | Prompting/process docs                                                                       | Search indexes, embeddings, retrieval metadata                  | Retrieval infra belongs in the database layer, not instruction files                                 |
 
-If you export MongoDB data into `.md` for readability, treat it as a projection, not canonical state.
+If you export MongoDB data into `.md` for readability, treat it as a projection, not canonical state. `MEMORY.md` is retrieval guidance, not runtime memory.
 
 ### Retrieval and Write Flow
 
 ```text
 Inbound event
   -> routing/policy checks
-  -> bridge files and sessions sync into MongoDB
+  -> runtime knowledge lives in MongoDB
   -> memory_search recalls across:
-       1) memory chunks
-       2) session chunks
-       3) KB chunks
-       4) structured memory
+       1) conversation/history
+       2) reference knowledge
+       3) structured memory
   -> kb_search targets imported reference material
-  -> memory_get reads exact Markdown / KB / structured locators
+  -> memory_get reads exact Mongo-backed locators
   -> memory_write stores durable structured facts
   -> fused ranking or lexical fallback
   -> response

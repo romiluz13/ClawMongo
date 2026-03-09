@@ -114,6 +114,7 @@ function toStructuredResult(doc: Document): MemorySearchResult {
     score: typeof doc.score === "number" ? Number(doc.score.toFixed(6)) : 0,
     snippet: typeof doc.value === "string" ? doc.value.slice(0, 700) : "",
     source: "structured",
+    sourceType: "structured",
   };
 }
 

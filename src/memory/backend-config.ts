@@ -70,6 +70,12 @@ export type ResolvedMongoDBConfig = {
       datasetPath: string;
     };
   };
+  runtimeMode: "mongo_canonical";
+  sources: {
+    reference: { enabled: boolean };
+    conversation: { enabled: boolean };
+    structured: { enabled: boolean };
+  };
 };
 
 export type ResolvedMemoryBackendConfig = {
@@ -82,6 +88,7 @@ const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
 const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "automated";
+const DEFAULT_RUNTIME_MODE = "mongo_canonical" as const;
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -95,9 +102,15 @@ export function resolveMemoryBackendConfig(params: {
 }): ResolvedMemoryBackendConfig {
   const backend = params.cfg.memory?.backend ?? DEFAULT_BACKEND;
   const citations = params.cfg.memory?.citations ?? DEFAULT_CITATIONS;
+  const runtimeMode = params.cfg.memory?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
 
   if (backend === "builtin" || backend === "qmd") {
     throw new Error(buildLegacyBackendError(backend));
+  }
+  if (runtimeMode !== "mongo_canonical") {
+    throw new Error(
+      `Unsupported memory.runtimeMode "${String(runtimeMode)}". ClawMongo supports only "mongo_canonical".`,
+    );
   }
 
   if (backend === "mongodb") {
@@ -296,6 +309,18 @@ export function resolveMemoryBackendConfig(params: {
               mongoCfg.relevance.benchmark.datasetPath.trim().length > 0
                 ? resolveUserPath(mongoCfg.relevance.benchmark.datasetPath.trim())
                 : resolveUserPath(DEFAULT_RELEVANCE_DATASET),
+          },
+        },
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        sources: {
+          reference: {
+            enabled: params.cfg.memory?.sources?.reference?.enabled !== false,
+          },
+          conversation: {
+            enabled: params.cfg.memory?.sources?.conversation?.enabled !== false,
+          },
+          structured: {
+            enabled: params.cfg.memory?.sources?.structured?.enabled !== false,
           },
         },
       },

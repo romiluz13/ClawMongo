@@ -196,10 +196,8 @@ describe("MongoDBMemoryManager file watcher", () => {
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
 
-    // Should watch MEMORY.md, memory.md, and memory/ directory
-    expect(watchedPaths).toContain(path.join("/workspace", "MEMORY.md"));
-    expect(watchedPaths).toContain(path.join("/workspace", "memory.md"));
-    expect(watchedPaths).toContain(path.join("/workspace", "memory"));
+    expect(watchedPaths).toHaveLength(1);
+    expect(watchedPaths[0]).toContain(path.join("agents", "main", "sessions"));
 
     await manager.close();
   });
@@ -228,7 +226,7 @@ describe("MongoDBMemoryManager file watcher", () => {
     await manager.close();
   });
 
-  it("includes extraPaths in the watch list", async () => {
+  it("does not include extraPaths in the watch list", async () => {
     const { normalizeExtraMemoryPaths } = await import("./internal.js");
     vi.mocked(normalizeExtraMemoryPaths).mockReturnValue(["/extra/path1.md", "/extra/path2"]);
 
@@ -236,8 +234,9 @@ describe("MongoDBMemoryManager file watcher", () => {
 
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
-    expect(watchedPaths).toContain("/extra/path1.md");
-    expect(watchedPaths).toContain("/extra/path2");
+    expect(watchedPaths).not.toContain("/extra/path1.md");
+    expect(watchedPaths).not.toContain("/extra/path2");
+    expect(normalizeExtraMemoryPaths).not.toHaveBeenCalled();
 
     await manager.close();
   });

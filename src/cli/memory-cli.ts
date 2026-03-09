@@ -1,9 +1,8 @@
-import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { Command } from "commander";
-import { resolveDefaultAgentId } from "../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
@@ -11,7 +10,8 @@ import { setVerbose } from "../globals.js";
 import { generateSecureUuid } from "../infra/secure-random.js";
 import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
-import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
+import { listLegacyMarkdownMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
+import { ingestFilesToKB } from "../memory/mongodb-kb.js";
 import { defaultRuntime } from "../runtime.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
@@ -29,6 +29,10 @@ type MemoryCommandOptions = {
   index?: boolean;
   force?: boolean;
   verbose?: boolean;
+};
+
+type MemoryMigrateMarkdownOptions = MemoryCommandOptions & {
+  category?: string;
 };
 
 type MemoryManager = NonNullable<MemorySearchManagerResult["manager"]>;
@@ -102,7 +106,7 @@ type RelevanceCapableManager = MemoryManager & {
   };
 };
 
-type MemorySourceName = "memory" | "sessions";
+type MemorySourceName = "conversation";
 
 type SourceScan = {
   source: MemorySourceName;
@@ -152,16 +156,17 @@ function emitMemorySecretResolveDiagnostics(
 }
 
 function formatSourceLabel(source: string, workspaceDir: string, agentId: string): string {
-  if (source === "memory") {
-    return shortenHomeInString(
-      `memory (MEMORY.md + ${path.join(workspaceDir, "memory")}${path.sep}*.md)`,
-    );
-  }
-  if (source === "sessions") {
+  if (source === "conversation") {
     const stateDir = resolveStateDir(process.env, os.homedir);
     return shortenHomeInString(
-      `sessions (${path.join(stateDir, "agents", agentId, "sessions")}${path.sep}*.jsonl)`,
+      `conversation (${path.join(stateDir, "agents", agentId, "sessions")}${path.sep}*.jsonl)`,
     );
+  }
+  if (source === "reference") {
+    return "reference (MongoDB canonical runtime knowledge)";
+  }
+  if (source === "structured") {
+    return "structured (MongoDB durable facts/preferences/decisions)";
   }
   return source;
 }
@@ -219,22 +224,6 @@ async function withMemoryManagerForAgent(params: {
     run: params.run,
   });
 }
-async function checkReadableFile(pathname: string): Promise<{ exists: boolean; issue?: string }> {
-  try {
-    await fs.access(pathname, fsSync.constants.R_OK);
-    return { exists: true };
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return { exists: false };
-    }
-    return {
-      exists: true,
-      issue: `${shortenHomePath(pathname)} not readable (${code ?? "error"})`,
-    };
-  }
-}
-
 async function scanSessionFiles(agentId: string): Promise<SourceScan> {
   const issues: string[] = [];
   const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
@@ -243,114 +232,18 @@ async function scanSessionFiles(agentId: string): Promise<SourceScan> {
     const totalFiles = entries.filter(
       (entry) => entry.isFile() && entry.name.endsWith(".jsonl"),
     ).length;
-    return { source: "sessions", totalFiles, issues };
+    return { source: "conversation", totalFiles, issues };
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
       issues.push(`sessions directory missing (${shortenHomePath(sessionsDir)})`);
-      return { source: "sessions", totalFiles: 0, issues };
+      return { source: "conversation", totalFiles: 0, issues };
     }
     issues.push(
       `sessions directory not accessible (${shortenHomePath(sessionsDir)}): ${code ?? "error"}`,
     );
-    return { source: "sessions", totalFiles: null, issues };
+    return { source: "conversation", totalFiles: null, issues };
   }
-}
-
-async function scanMemoryFiles(
-  workspaceDir: string,
-  extraPaths: string[] = [],
-): Promise<SourceScan> {
-  const issues: string[] = [];
-  const memoryFile = path.join(workspaceDir, "MEMORY.md");
-  const altMemoryFile = path.join(workspaceDir, "memory.md");
-  const memoryDir = path.join(workspaceDir, "memory");
-
-  const primary = await checkReadableFile(memoryFile);
-  const alt = await checkReadableFile(altMemoryFile);
-  if (primary.issue) {
-    issues.push(primary.issue);
-  }
-  if (alt.issue) {
-    issues.push(alt.issue);
-  }
-
-  const resolvedExtraPaths = normalizeExtraMemoryPaths(workspaceDir, extraPaths);
-  for (const extraPath of resolvedExtraPaths) {
-    try {
-      const stat = await fs.lstat(extraPath);
-      if (stat.isSymbolicLink()) {
-        continue;
-      }
-      const extraCheck = await checkReadableFile(extraPath);
-      if (extraCheck.issue) {
-        issues.push(extraCheck.issue);
-      }
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
-        issues.push(`additional memory path missing (${shortenHomePath(extraPath)})`);
-      } else {
-        issues.push(
-          `additional memory path not accessible (${shortenHomePath(extraPath)}): ${code ?? "error"}`,
-        );
-      }
-    }
-  }
-
-  let dirReadable: boolean | null = null;
-  try {
-    await fs.access(memoryDir, fsSync.constants.R_OK);
-    dirReadable = true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      issues.push(`memory directory missing (${shortenHomePath(memoryDir)})`);
-      dirReadable = false;
-    } else {
-      issues.push(
-        `memory directory not accessible (${shortenHomePath(memoryDir)}): ${code ?? "error"}`,
-      );
-      dirReadable = null;
-    }
-  }
-
-  let listed: string[] = [];
-  let listedOk = false;
-  try {
-    listed = await listMemoryFiles(workspaceDir, resolvedExtraPaths);
-    listedOk = true;
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (dirReadable !== null) {
-      issues.push(
-        `memory directory scan failed (${shortenHomePath(memoryDir)}): ${code ?? "error"}`,
-      );
-      dirReadable = null;
-    }
-  }
-
-  let totalFiles: number | null = 0;
-  if (dirReadable === null) {
-    totalFiles = null;
-  } else {
-    const files = new Set<string>(listedOk ? listed : []);
-    if (!listedOk) {
-      if (primary.exists) {
-        files.add(memoryFile);
-      }
-      if (alt.exists) {
-        files.add(altMemoryFile);
-      }
-    }
-    totalFiles = files.size;
-  }
-
-  if ((totalFiles ?? 0) === 0 && issues.length === 0) {
-    issues.push(`no memory files found in ${shortenHomePath(workspaceDir)}`);
-  }
-
-  return { source: "memory", totalFiles, issues };
 }
 
 async function scanMemorySources(params: {
@@ -360,12 +253,8 @@ async function scanMemorySources(params: {
   extraPaths?: string[];
 }): Promise<MemorySourceScan> {
   const scans: SourceScan[] = [];
-  const extraPaths = params.extraPaths ?? [];
   for (const source of params.sources) {
-    if (source === "memory") {
-      scans.push(await scanMemoryFiles(params.workspaceDir, extraPaths));
-    }
-    if (source === "sessions") {
+    if (source === "conversation") {
       scans.push(await scanSessionFiles(params.agentId));
     }
   }
@@ -451,8 +340,8 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         }
         const status = manager.status();
         const sources = status.sources?.filter(
-          (source): source is MemorySourceName => source === "memory" || source === "sessions",
-        ) ?? ["memory"];
+          (source): source is MemorySourceName => source === "conversation",
+        ) ?? ["conversation"];
         const workspaceDir = status.workspaceDir;
         const scan = workspaceDir
           ? await scanMemorySources({
@@ -881,6 +770,64 @@ async function runMemorySmoke(opts: MemoryCommandOptions): Promise<void> {
   }
 }
 
+async function runMemoryMigrateMarkdown(opts: MemoryMigrateMarkdownOptions): Promise<void> {
+  setVerbose(Boolean(opts.verbose));
+  const { config: cfg, diagnostics } = await loadMemoryCommandConfig("memory migrate-markdown");
+  emitMemorySecretResolveDiagnostics(diagnostics, { json: Boolean(opts.json) });
+  const agentId = resolveAgent(cfg, opts.agent);
+  const resolved = resolveMemoryBackendConfig({ cfg, agentId });
+  const mongoCfg = resolved.mongodb!;
+  const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
+  const extraPaths = normalizeExtraMemoryPaths(
+    workspaceDir,
+    cfg.agents?.defaults?.memorySearch?.extraPaths,
+  );
+  const legacyPaths = await listLegacyMarkdownMemoryFiles(workspaceDir, extraPaths);
+  if (legacyPaths.length === 0) {
+    defaultRuntime.log("No legacy Markdown runtime memory files found.");
+    return;
+  }
+  await withMemoryManagerForAgent({
+    cfg,
+    agentId,
+    run: async (manager) => {
+      const db = (manager as unknown as { db?: unknown }).db;
+      if (!db) {
+        throw new Error("MongoDB manager unavailable for markdown migration");
+      }
+      const result = await ingestFilesToKB({
+        db: db as never,
+        prefix: mongoCfg.collectionPrefix,
+        paths: legacyPaths,
+        recursive: true,
+        importedBy: "cli",
+        embeddingMode: mongoCfg.embeddingMode,
+        category: opts.category?.trim() || "legacy-markdown-memory",
+        tags: ["legacy-memory-migration"],
+        force: Boolean(opts.force),
+      });
+      if (opts.json) {
+        defaultRuntime.log(
+          JSON.stringify({ agentId, importedPaths: legacyPaths, result }, null, 2),
+        );
+        return;
+      }
+      defaultRuntime.log(
+        `Imported ${result.documentsProcessed} legacy Markdown document(s) into Mongo reference corpus.`,
+      );
+      defaultRuntime.log(
+        `Skipped ${result.skipped}; chunks ${result.chunksCreated}; errors ${result.errors.length}.`,
+      );
+      if (result.errors.length > 0) {
+        for (const error of result.errors) {
+          defaultRuntime.error(`  - ${error}`);
+        }
+        process.exitCode = 1;
+      }
+    },
+  });
+}
+
 function parseWindowMs(raw?: string): number {
   const value = raw?.trim();
   if (!value) {
@@ -1103,7 +1050,7 @@ async function runRelevanceSampleRate(opts: MemoryCommandOptions): Promise<void>
 export function registerMemoryCli(program: Command) {
   const memory = program
     .command("memory")
-    .description("Search, inspect, and reindex memory files")
+    .description("Search, inspect, and migrate MongoDB runtime memory")
     .addHelpText(
       "after",
       () =>
@@ -1111,6 +1058,10 @@ export function registerMemoryCli(program: Command) {
           ["openclaw memory status", "Show index and provider status."],
           ["openclaw memory status --deep", "Probe embedding provider readiness."],
           ["openclaw memory index --force", "Force a full reindex."],
+          [
+            "openclaw memory migrate-markdown",
+            "Import legacy Markdown runtime memory into Mongo reference corpus.",
+          ],
           [
             'openclaw memory relevance explain --query "deployment notes" --deep',
             "Run explain-driven relevance diagnostics for one query.",
@@ -1142,7 +1093,7 @@ export function registerMemoryCli(program: Command) {
 
   memory
     .command("index")
-    .description("Reindex memory files")
+    .description("Reindex MongoDB-backed runtime memory sources")
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--force", "Force full reindex", false)
     .option("--verbose", "Verbose logging", false)
@@ -1262,6 +1213,18 @@ export function registerMemoryCli(program: Command) {
           },
         });
       }
+    });
+
+  memory
+    .command("migrate-markdown")
+    .description("Import legacy MEMORY.md and memory/*.md into Mongo reference corpus")
+    .option("--agent <id>", "Agent id (default: default agent)")
+    .option("--force", "Force re-import of already-imported content", false)
+    .option("--category <name>", "Reference category label", "legacy-markdown-memory")
+    .option("--json", "Print JSON")
+    .option("--verbose", "Verbose logging", false)
+    .action(async (opts: MemoryMigrateMarkdownOptions) => {
+      await runMemoryMigrateMarkdown(opts);
     });
 
   memory

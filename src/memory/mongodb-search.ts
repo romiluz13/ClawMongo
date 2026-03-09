@@ -7,7 +7,11 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 import { mergeHybridResultsMongoDB } from "./mongodb-hybrid.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
-import type { MemorySearchResult, MemorySource } from "./types.js";
+import type {
+  InternalMemoryStoredSource,
+  LegacyMemorySource,
+  MemorySearchResult,
+} from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:search");
 
@@ -54,14 +58,26 @@ async function captureAggregateExplain(
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-function toSearchResult(doc: Document, source: MemorySource): MemorySearchResult {
+function mapLegacySourceToRuntime(source: unknown): MemorySearchResult["source"] {
+  if (source === "structured") {
+    return "structured";
+  }
+  if (source === "kb") {
+    return "reference";
+  }
+  return "conversation";
+}
+
+function toSearchResult(doc: Document, source: LegacyMemorySource): MemorySearchResult {
+  const sourceType = mapLegacySourceToRuntime(doc.source ?? source);
   return {
     path: typeof doc.path === "string" ? doc.path : "",
     startLine: typeof doc.startLine === "number" ? doc.startLine : 0,
     endLine: typeof doc.endLine === "number" ? doc.endLine : 0,
     score: typeof doc.score === "number" ? Number(doc.score.toFixed(6)) : 0,
     snippet: typeof doc.text === "string" ? doc.text.slice(0, 700) : "",
-    source: (doc.source as MemorySource) ?? source,
+    source: sourceType,
+    sourceType,
   };
 }
 
@@ -69,7 +85,7 @@ function filterByScore(results: MemorySearchResult[], minScore: number): MemoryS
   return results.filter((r) => r.score >= minScore);
 }
 
-function resolveLegacySourceFilter(sessionKey?: string): MemorySource | undefined {
+function resolveLegacySourceFilter(sessionKey?: string): InternalMemoryStoredSource | undefined {
   const normalized = sessionKey?.trim().toLowerCase();
   if (!normalized) {
     return undefined;

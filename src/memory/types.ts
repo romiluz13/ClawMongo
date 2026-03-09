@@ -1,4 +1,6 @@
-export type MemorySource = "memory" | "sessions" | "kb" | "structured";
+export type MemorySource = "reference" | "conversation" | "structured";
+export type LegacyMemorySource = "memory" | "sessions" | "kb" | "structured";
+export type InternalMemoryStoredSource = LegacyMemorySource | "conversation";
 
 export type MemorySearchResult = {
   path: string;
@@ -8,6 +10,7 @@ export type MemorySearchResult = {
   score: number;
   snippet: string;
   source: MemorySource;
+  sourceType?: MemorySource;
   citation?: string;
 };
 
@@ -16,6 +19,7 @@ export type MemoryReadResult = {
   path: string;
   locator?: string;
   source?: MemorySource;
+  sourceType?: MemorySource;
   title?: string;
   key?: string;
   type?: string;

@@ -68,7 +68,7 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      'Mandatory recall step: semantically search your knowledge base, structured memory, memory files, and session transcripts. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
+      'Mandatory recall step: semantically search MongoDB-backed runtime knowledge across conversation history, reference knowledge, and structured memory. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -124,7 +124,7 @@ export function createMemoryGetTool(options: {
     label: "Memory Get",
     name: "memory_get",
     description:
-      "Read an exact memory object by locator. Supports Markdown memory files, knowledge-base documents, and structured memory records. Use after memory_search or kb_search to pull the exact item you need.",
+      "Read an exact Mongo-backed memory object by locator. Supports conversation chunks, reference documents, and structured memory records. Use after memory_search or kb_search to pull the exact item you need.",
     parameters: MemoryGetSchema,
     execute: async (_toolCallId, params) => {
       const relPath = readStringParam(params, "path", { required: true });
@@ -329,7 +329,7 @@ export function createKBSearchTool(options: {
           });
         } else {
           const results = await manager.search(query, { maxResults });
-          kbResults = results.filter((r) => r.source === "kb");
+          kbResults = results.filter((r) => r.source === "reference");
         }
         return jsonResult({ results: kbResults });
       } catch (err) {

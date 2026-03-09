@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { MongoClient, type Db } from "mongodb";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
-import { isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
@@ -120,7 +118,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private readonly prefix: string;
   private readonly agentId: string;
   private readonly workspaceDir: string;
-  private readonly extraPaths: string[];
   private readonly sessionMemoryEnabled: boolean;
   private readonly capabilities: DetectedCapabilities;
   private readonly config: ResolvedMemoryBackendConfig;
@@ -140,7 +137,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     prefix: string;
     agentId: string;
     workspaceDir: string;
-    extraPaths: string[];
     sessionMemoryEnabled: boolean;
     capabilities: DetectedCapabilities;
     config: ResolvedMemoryBackendConfig;
@@ -151,7 +147,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.prefix = params.prefix;
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
-    this.extraPaths = params.extraPaths;
     this.sessionMemoryEnabled = params.sessionMemoryEnabled;
     this.capabilities = params.capabilities;
     this.config = params.config;
@@ -173,10 +168,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
-    const extraPaths = normalizeExtraMemoryPaths(
-      workspaceDir,
-      params.cfg.agents?.defaults?.memorySearch?.extraPaths,
-    );
     const sessionMemoryEnabled =
       params.cfg.agents?.defaults?.memorySearch?.experimental?.sessionMemory ?? false;
 
@@ -246,7 +237,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       prefix,
       agentId: params.agentId,
       workspaceDir,
-      extraPaths,
       sessionMemoryEnabled,
       capabilities,
       config: params.resolved,
@@ -348,8 +338,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     // Search all sources in parallel with Promise.all for performance.
     // Legacy search does NOT have .catch() — it's the primary search,
     // so total failure propagates. KB and structured keep their .catch(() => []).
-    const [legacyResults, kbResults, structuredResults] = await Promise.all([
-      // Legacy chunks (memory + sessions) — no .catch() (primary search)
+    const [conversationResults, kbResults, structuredResults] = await Promise.all([
+      // Conversation chunks — no .catch() (primary search)
       mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
         maxResults,
         minScore,
@@ -406,7 +396,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     //   - KB and structured: same as legacy (depends on underlying method)
     // We classify each source's search method and normalize accordingly.
     const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
-    const normalizedLegacy = normalizeSearchResults(legacyResults, legacyMethod);
+    const normalizedLegacy = normalizeSearchResults(conversationResults, legacyMethod);
     const normalizedKb = normalizeSearchResults(kbResults, "kb");
     const normalizedStructured = normalizeSearchResults(structuredResults, "structured");
 
@@ -568,7 +558,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         },
       );
     } else {
-      const [legacyResults, kbResults, structuredResults] = await Promise.all([
+      const [conversationResults, kbResults, structuredResults] = await Promise.all([
         mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
           maxResults,
           minScore,
@@ -607,7 +597,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         }).catch(() => [] as MemorySearchResult[]),
       ]);
       const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
-      const normalizedLegacy = normalizeSearchResults(legacyResults, legacyMethod);
+      const normalizedLegacy = normalizeSearchResults(conversationResults, legacyMethod);
       const normalizedKb = normalizeSearchResults(kbResults, "kb");
       const normalizedStructured = normalizeSearchResults(structuredResults, "structured");
       const merged = [...normalizedLegacy, ...normalizedKb, ...normalizedStructured].toSorted(
@@ -826,7 +816,13 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         key,
       });
       if (!record) {
-        return { text: "", path: rawPath, locator: rawPath, source: "structured" as const };
+        return {
+          text: "",
+          path: rawPath,
+          locator: rawPath,
+          source: "structured" as const,
+          sourceType: "structured" as const,
+        };
       }
       const text = [
         `type: ${String(record.type ?? type)}`,
@@ -844,13 +840,14 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         path: rawPath,
         locator: rawPath,
         source: "structured" as const,
+        sourceType: "structured" as const,
         type,
         key,
       };
     }
 
-    if (rawPath.startsWith("kb:")) {
-      const kbPath = rawPath.slice(3).trim();
+    if (rawPath.startsWith("kb:") || rawPath.startsWith("reference:")) {
+      const kbPath = rawPath.replace(/^kb:|^reference:/, "").trim();
       if (!kbPath) {
         throw new Error("path required");
       }
@@ -858,18 +855,25 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         $or: [{ "source.path": kbPath }, { title: kbPath }],
       });
       if (!record) {
-        return { text: "", path: rawPath, locator: rawPath, source: "kb" as const };
+        return {
+          text: "",
+          path: rawPath,
+          locator: rawPath,
+          source: "reference" as const,
+          sourceType: "reference" as const,
+        };
       }
       return {
         text: typeof record.content === "string" ? record.content : "",
         path: rawPath,
         locator: rawPath,
-        source: "kb" as const,
+        source: "reference" as const,
+        sourceType: "reference" as const,
         title: typeof record.title === "string" ? record.title : undefined,
       };
     }
 
-    return await this.readMarkdownMemoryFile(rawPath, params.from, params.lines);
+    return await this.readConversationChunk(rawPath, params.from, params.lines);
   }
 
   // ---------------------------------------------------------------------------
@@ -889,7 +893,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       chunks: this.chunkCount,
       dirty: this.dirty,
       workspaceDir: this.workspaceDir,
-      sources: ["memory", "sessions", "kb", "structured"],
+      sources: ["conversation", "reference", "structured"],
       custom: {
         deploymentProfile: mongoCfg.deploymentProfile,
         embeddingMode: mongoCfg.embeddingMode,
@@ -901,10 +905,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           hybrid: hybridEnabled,
         },
         sourceCoverage: {
-          memory: true,
-          sessions: true,
-          kb: mongoCfg.kb.enabled,
-          structured: true,
+          reference: mongoCfg.sources?.reference?.enabled && mongoCfg.kb.enabled,
+          conversation: mongoCfg.sources?.conversation?.enabled,
+          structured: mongoCfg.sources?.structured?.enabled,
         },
         database: mongoCfg.database,
         collectionPrefix: mongoCfg.collectionPrefix,
@@ -940,61 +943,50 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     };
   }
 
-  private async readMarkdownMemoryFile(rawPath: string, from?: number, lines?: number) {
-    const absPath = path.isAbsolute(rawPath)
-      ? path.resolve(rawPath)
-      : path.resolve(this.workspaceDir, rawPath);
-    const relPath = path.relative(this.workspaceDir, absPath).replace(/\\/g, "/");
-
-    const inWorkspace =
-      relPath.length > 0 && !relPath.startsWith("..") && !path.isAbsolute(relPath);
-    const allowedWorkspace = inWorkspace && isMemoryPath(relPath);
-    let allowedAdditional = false;
-    if (!allowedWorkspace && this.extraPaths.length > 0) {
-      for (const additionalPath of this.extraPaths) {
-        try {
-          const stat = await fs.lstat(additionalPath);
-          if (stat.isSymbolicLink()) {
-            continue;
-          }
-          if (stat.isDirectory()) {
-            if (absPath === additionalPath || absPath.startsWith(`${additionalPath}${path.sep}`)) {
-              allowedAdditional = true;
-              break;
-            }
-            continue;
-          }
-          if (stat.isFile() && absPath === additionalPath && absPath.endsWith(".md")) {
-            allowedAdditional = true;
-            break;
-          }
-        } catch {}
-      }
-    }
-    if (!allowedWorkspace && !allowedAdditional) {
+  private async readConversationChunk(rawPath: string, from?: number, lines?: number) {
+    const normalizedPath = rawPath.startsWith("conversation:")
+      ? rawPath.slice("conversation:".length).trim()
+      : rawPath;
+    if (!normalizedPath) {
       throw new Error("path required");
     }
-    if (!absPath.endsWith(".md")) {
-      throw new Error("path required");
-    }
-    const stat = await fs.lstat(absPath);
-    if (stat.isSymbolicLink() || !stat.isFile()) {
-      throw new Error("path required");
-    }
-
-    const content = await fs.readFile(absPath, "utf-8");
-    if (!from && !lines) {
-      return { text: content, path: relPath, locator: relPath, source: "memory" as const };
-    }
-    const contentLines = content.split("\n");
     const start = Math.max(1, from ?? 1);
-    const count = Math.max(1, lines ?? contentLines.length);
-    const slice = contentLines.slice(start - 1, start - 1 + count);
+    const count = Math.max(1, lines ?? Number.MAX_SAFE_INTEGER);
+    const end = start + count - 1;
+    const docs = await chunksCollection(this.db, this.prefix)
+      .find({
+        path: normalizedPath,
+        source: { $in: ["sessions", "conversation"] },
+        ...(from || lines
+          ? {
+              $or: [
+                { startLine: { $gte: start, $lte: end } },
+                { endLine: { $gte: start, $lte: end } },
+                { startLine: { $lte: start }, endLine: { $gte: end } },
+              ],
+            }
+          : {}),
+      })
+      .toSorted({ startLine: 1 })
+      .toArray();
+    if (docs.length === 0) {
+      return {
+        text: "",
+        path: `conversation:${normalizedPath}`,
+        locator: `conversation:${normalizedPath}`,
+        source: "conversation" as const,
+        sourceType: "conversation" as const,
+      };
+    }
     return {
-      text: slice.join("\n"),
-      path: relPath,
-      locator: relPath,
-      source: "memory" as const,
+      text: docs
+        .map((doc) => (typeof doc.text === "string" ? doc.text : ""))
+        .filter(Boolean)
+        .join("\n"),
+      path: `conversation:${normalizedPath}`,
+      locator: `conversation:${normalizedPath}`,
+      source: "conversation" as const,
+      sourceType: "conversation" as const,
     };
   }
 
@@ -1033,7 +1025,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         agentId: this.agentId,
         sessionMemoryEnabled: this.sessionMemoryEnabled,
         workspaceDir: this.workspaceDir,
-        extraPaths: this.extraPaths,
         embeddingMode: mongoCfg.embeddingMode,
         reason: params?.reason,
         force: params?.force,
@@ -1176,12 +1167,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
     const mongoCfg = this.config.mongodb!;
     const debounceMs = mongoCfg.watchDebounceMs;
-    const watchPaths = new Set<string>([
-      path.join(this.workspaceDir, "MEMORY.md"),
-      path.join(this.workspaceDir, "memory.md"),
-      path.join(this.workspaceDir, "memory"),
-      ...this.extraPaths,
-    ]);
+    const watchPaths = [resolveSessionTranscriptsDirForAgent(this.agentId)];
     this.watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
       awaitWriteFinish: {

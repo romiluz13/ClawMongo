@@ -83,7 +83,7 @@ describe("createKBSearchTool direct searchKB path", () => {
         endLine: 10,
         score: 0.9,
         snippet: "API docs",
-        source: "kb" as const,
+        source: "reference" as const,
       },
     ];
     const searchKBMock = vi.fn().mockResolvedValue(kbResults);
@@ -118,7 +118,7 @@ describe("createKBSearchTool direct searchKB path", () => {
     expect(searchMock).not.toHaveBeenCalled();
     // Results should come through
     expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].source).toBe("kb");
+    expect(parsed.results[0].source).toBe("reference");
   });
 
   it("forwards tags/category/source filters to direct searchKB()", async () => {
@@ -168,15 +168,15 @@ describe("createKBSearchTool direct searchKB path", () => {
         endLine: 10,
         score: 0.9,
         snippet: "API docs",
-        source: "kb" as const,
+        source: "reference" as const,
       },
       {
-        path: "memory/notes.md",
+        path: "conversation/chat.jsonl",
         startLine: 1,
         endLine: 5,
         score: 0.7,
         snippet: "notes",
-        source: "memory" as const,
+        source: "conversation" as const,
       },
     ];
     const searchMock = vi.fn().mockResolvedValue(mixedResults);
@@ -208,6 +208,6 @@ describe("createKBSearchTool direct searchKB path", () => {
     );
     // Results should be filtered to KB only
     expect(parsed.results).toHaveLength(1);
-    expect(parsed.results[0].source).toBe("kb");
+    expect(parsed.results[0].source).toBe("reference");
   });
 });

@@ -56,6 +56,10 @@ export function isMemoryPath(relPath: string): boolean {
   return normalized.startsWith("memory/");
 }
 
+export function isLegacyMarkdownMemoryPath(relPath: string): boolean {
+  return isMemoryPath(relPath);
+}
+
 async function walkDir(dir: string, files: string[]) {
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
@@ -78,6 +82,13 @@ async function walkDir(dir: string, files: string[]) {
 }
 
 export async function listMemoryFiles(
+  workspaceDir: string,
+  extraPaths?: string[],
+): Promise<string[]> {
+  return listLegacyMarkdownMemoryFiles(workspaceDir, extraPaths);
+}
+
+export async function listLegacyMarkdownMemoryFiles(
   workspaceDir: string,
   extraPaths?: string[],
 ): Promise<string[]> {

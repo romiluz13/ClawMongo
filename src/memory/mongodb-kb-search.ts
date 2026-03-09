@@ -25,7 +25,8 @@ function toKBSearchResult(doc: Document): MemorySearchResult {
     endLine: typeof doc.endLine === "number" ? doc.endLine : 0,
     score: typeof doc.score === "number" ? Number(doc.score.toFixed(6)) : 0,
     snippet: typeof doc.text === "string" ? doc.text.slice(0, 700) : "",
-    source: "kb",
+    source: "reference",
+    sourceType: "reference",
   };
 }
 

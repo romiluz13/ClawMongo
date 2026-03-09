@@ -6,6 +6,10 @@ export type MemoryMongoDBDeploymentProfile = "community-mongot";
 export type MemoryMongoDBEmbeddingMode = "automated";
 
 export type MemoryMongoDBFusionMethod = "scoreFusion" | "rankFusion" | "js-merge";
+export type MemoryRuntimeMode = "mongo_canonical";
+export type MemorySourceToggleConfig = {
+  enabled?: boolean;
+};
 
 export type MemoryMongoDBConfig = {
   /** MongoDB connection string. Env fallback: OPENCLAW_MONGODB_URI */
@@ -99,6 +103,12 @@ export type MemoryConfig = {
   /** Legacy key accepted only for migration detection. */
   backend?: string;
   citations?: MemoryCitationsMode;
+  runtimeMode?: MemoryRuntimeMode;
+  sources?: {
+    reference?: MemorySourceToggleConfig;
+    conversation?: MemorySourceToggleConfig;
+    structured?: MemorySourceToggleConfig;
+  };
   /** Legacy key accepted only for migration detection. */
   qmd?: Record<string, unknown>;
   mongodb?: MemoryMongoDBConfig;

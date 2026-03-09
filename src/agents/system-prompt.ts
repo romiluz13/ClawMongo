@@ -33,7 +33,7 @@ function buildMongoDBBridgeSection(params: {
   const tools = params.availableTools;
   const lines: string[] = [
     "## MongoDB Memory Integration",
-    "The MongoDB memory backend is active. These rules define runtime memory routing without changing the workspace/bootstrap file roles above:",
+    "The MongoDB memory backend is active. Runtime knowledge is Mongo-canonical while heart/bootstrap files remain Markdown guidance:",
     "- To recall: always call memory_search FIRST (not file reads)",
   ];
   if (!tools || tools.has("memory_write")) {
@@ -43,7 +43,8 @@ function buildMongoDBBridgeSection(params: {
     lines.push("- To find reference docs: use kb_search");
   }
   lines.push(
-    "- MEMORY.md and memory/*.md stay useful for operator-authored notes, but durable structured memory belongs in memory_write",
+    "- MEMORY.md is retrieval guidance only, not a runtime knowledge store",
+    "- Do not treat MEMORY.md or memory/*.md as evidence for fresh answers",
     "",
   );
   return lines;
@@ -83,12 +84,12 @@ function buildMemorySection(params: {
   const lines = ["## Memory Recall"];
   if (isMongoDBBackend) {
     lines.push(
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from your knowledge base, structured memory, and memory files. Results come from all active sources, ranked by relevance.",
+      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed conversation history, reference knowledge, and structured memory. Results come from all active sources, ranked by relevance.",
     );
     lines.push("");
     lines.push("### When to use each tool");
     lines.push(
-      "- **memory_search** — Your primary recall tool. Searches across ALL sources (memory files, knowledge base, structured memory, sessions). Use for any question about what you know.",
+      "- **memory_search** — Your primary recall tool. Searches across all MongoDB runtime sources (conversation history, reference knowledge, structured memory). Use for any question about what you know.",
     );
     if (params.availableTools.has("kb_search")) {
       lines.push(
@@ -107,7 +108,7 @@ function buildMemorySection(params: {
           '  - **project**: project-level info (e.g., "Project codename is Phoenix")',
           '  - **architecture**: technical decisions (e.g., "Using event-driven architecture")',
           "  Type+key is the dedup key — writing the same type+key updates the existing record.",
-          "  Use MEMORY.md and memory/*.md for informal scratch notes and working observations.",
+          "  Use heart/bootstrap Markdown for guidance only; do not store runtime knowledge there.",
         ].join("\n"),
       );
     }
@@ -118,17 +119,17 @@ function buildMemorySection(params: {
     if (params.availableTools.has("memory_write")) {
       lines.push("- Structured data (decisions, preferences, facts) -> memory_write");
     }
-    lines.push("- Informal notes, observations, plans -> MEMORY.md");
+    lines.push("- Runtime knowledge -> MongoDB-backed sources only");
     lines.push("");
     lines.push("When searching:");
     if (params.availableTools.has("kb_search")) {
       lines.push("- Reference docs, imported files, architecture specs -> kb_search");
     }
-    lines.push("- Personal memory + sessions -> memory_search");
+    lines.push("- Conversation/history recall -> memory_search");
     lines.push('- Broad "what do I know about X?" -> memory_search (searches all sources)');
   } else {
     lines.push(
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search against the configured runtime memory backend; then use memory_get only for the specific Mongo-backed locator you need. If low confidence after search, say you checked.",
     );
   }
   if (params.citationsMode === "off") {
