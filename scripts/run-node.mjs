@@ -106,10 +106,9 @@ const hasDirtySourceTree = (deps) => {
   }
   const meaningful = output
     .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) => line.trim().length > 0)
     .filter((line) => {
-      const candidate = line.slice(3).replace(/\\/g, "/");
+      const candidate = line.slice(3).trimStart().replace(/\\/g, "/");
       if (!candidate.startsWith("src/")) {
         return true;
       }
