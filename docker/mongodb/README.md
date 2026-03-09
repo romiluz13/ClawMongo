@@ -94,7 +94,8 @@ To enable server-side automatic embeddings (no application-level embedding code 
    ./docker/mongodb/start.sh fullstack
    ```
 3. The setup step now generates `docker/mongodb/.runtime/mongot.generated.yml` with the `embedding` block automatically when keys are present.
-4. Restart mongot if you changed keys after startup:
+4. `start.sh fullstack` restarts `mongot` after regenerating `docker/mongodb/.runtime/mongot.generated.yml`, so changed keys/config are loaded automatically on the next fullstack start.
+5. If you changed keys outside `start.sh fullstack`, restart `mongot` manually:
    ```bash
    docker compose -f docker/mongodb/docker-compose.mongodb.yml --profile fullstack restart mongot
    ```

@@ -56,6 +56,8 @@ case "${1:-fullstack}" in
     echo "Running setup (generates keyfile + auth files)..."
     docker compose -f "$COMPOSE_FILE" --profile setup run --rm setup-generator
     docker compose -f "$COMPOSE_FILE" --profile fullstack up -d
+    echo "Restarting mongot to reload regenerated runtime config..."
+    docker compose -f "$COMPOSE_FILE" --profile fullstack restart mongot
     echo ""
     echo -e "${GREEN}MongoDB full stack is starting...${NC}"
     echo "  mongod: port ${MONGODB_PORT:-27017}"
