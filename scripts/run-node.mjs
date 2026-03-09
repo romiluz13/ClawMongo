@@ -108,7 +108,7 @@ const hasDirtySourceTree = (deps) => {
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .filter((line) => {
-      const candidate = line.slice(3).trimStart().replace(/\\/g, "/");
+      const candidate = line.replace(/^[ MADRCU?!]{1,2}\s+/, "").replace(/\\/g, "/");
       if (!candidate.startsWith("src/")) {
         return true;
       }
