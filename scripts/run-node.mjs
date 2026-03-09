@@ -9,6 +9,10 @@ const compiler = "tsdown";
 const compilerArgs = ["exec", compiler, "--no-clean"];
 
 export const runNodeWatchedPaths = ["src", "tsconfig.json", "package.json"];
+const GENERATED_SOURCE_RELATIVE_PATHS = new Set([
+  "canvas-host/a2ui/a2ui.bundle.js",
+  "canvas-host/a2ui/.bundle.hash",
+]);
 
 const statMtime = (filePath, fsImpl = fs) => {
   try {
@@ -22,6 +26,9 @@ const isExcludedSource = (filePath, srcRoot) => {
   const relativePath = path.relative(srcRoot, filePath);
   if (relativePath.startsWith("..")) {
     return false;
+  }
+  if (GENERATED_SOURCE_RELATIVE_PATHS.has(relativePath.replace(/\\/g, "/"))) {
+    return true;
   }
   return (
     relativePath.endsWith(".test.ts") ||
@@ -97,7 +104,18 @@ const hasDirtySourceTree = (deps) => {
   if (output === null) {
     return null;
   }
-  return output.length > 0;
+  const meaningful = output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => {
+      const candidate = line.slice(3).replace(/\\/g, "/");
+      if (!candidate.startsWith("src/")) {
+        return true;
+      }
+      return !GENERATED_SOURCE_RELATIVE_PATHS.has(candidate.slice("src/".length));
+    });
+  return meaningful.length > 0;
 };
 
 const readBuildStamp = (deps) => {
