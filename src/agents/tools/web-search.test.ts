@@ -23,10 +23,16 @@ const {
   resolveKimiBaseUrl,
   extractKimiCitations,
   resolveBraveMode,
+  mapBraveLlmContextResults,
 } = __testing;
 
 const kimiApiKeyEnv = ["KIMI_API", "KEY"].join("_");
 const moonshotApiKeyEnv = ["MOONSHOT_API", "KEY"].join("_");
+const openRouterApiKeyEnv = ["OPENROUTER_API", "KEY"].join("_");
+const perplexityApiKeyEnv = ["PERPLEXITY_API", "KEY"].join("_");
+const openRouterPerplexityApiKey = ["sk", "or", "v1", "test"].join("-");
+const directPerplexityApiKey = ["pplx", "test"].join("-");
+const enterprisePerplexityApiKey = ["enterprise", "perplexity", "test"].join("-");
 
 describe("web_search perplexity compatibility routing", () => {
   it("detects API key prefixes", () => {
@@ -42,27 +48,33 @@ describe("web_search perplexity compatibility routing", () => {
   });
 
   it("resolves OpenRouter env auth and transport", () => {
-    withEnv({ PERPLEXITY_API_KEY: undefined, OPENROUTER_API_KEY: "sk-or-v1-test" }, () => {
-      expect(resolvePerplexityApiKey(undefined)).toEqual({
-        apiKey: "sk-or-v1-test",
-        source: "openrouter_env",
-      });
-      expect(resolvePerplexityTransport(undefined)).toMatchObject({
-        baseUrl: "https://openrouter.ai/api/v1",
-        model: "perplexity/sonar-pro",
-        transport: "chat_completions",
-      });
-    });
+    withEnv(
+      { [perplexityApiKeyEnv]: undefined, [openRouterApiKeyEnv]: openRouterPerplexityApiKey },
+      () => {
+        expect(resolvePerplexityApiKey(undefined)).toEqual({
+          apiKey: openRouterPerplexityApiKey,
+          source: "openrouter_env",
+        });
+        expect(resolvePerplexityTransport(undefined)).toMatchObject({
+          baseUrl: "https://openrouter.ai/api/v1",
+          model: "perplexity/sonar-pro",
+          transport: "chat_completions",
+        });
+      },
+    );
   });
 
   it("uses native Search API for direct Perplexity when no legacy overrides exist", () => {
-    withEnv({ PERPLEXITY_API_KEY: "pplx-test", OPENROUTER_API_KEY: undefined }, () => {
-      expect(resolvePerplexityTransport(undefined)).toMatchObject({
-        baseUrl: "https://api.perplexity.ai",
-        model: "perplexity/sonar-pro",
-        transport: "search_api",
-      });
-    });
+    withEnv(
+      { [perplexityApiKeyEnv]: directPerplexityApiKey, [openRouterApiKeyEnv]: undefined },
+      () => {
+        expect(resolvePerplexityTransport(undefined)).toMatchObject({
+          baseUrl: "https://api.perplexity.ai",
+          model: "perplexity/sonar-pro",
+          transport: "search_api",
+        });
+      },
+    );
   });
 
   it("switches direct Perplexity to chat completions when model override is configured", () => {
@@ -71,7 +83,7 @@ describe("web_search perplexity compatibility routing", () => {
     );
     expect(
       resolvePerplexityTransport({
-        apiKey: "pplx-test",
+        apiKey: directPerplexityApiKey,
         model: "perplexity/sonar-reasoning-pro",
       }),
     ).toMatchObject({
@@ -84,7 +96,7 @@ describe("web_search perplexity compatibility routing", () => {
   it("treats unrecognized configured keys as direct Perplexity by default", () => {
     expect(
       resolvePerplexityTransport({
-        apiKey: "enterprise-perplexity-test",
+        apiKey: enterprisePerplexityApiKey,
       }),
     ).toMatchObject({
       baseUrl: "https://api.perplexity.ai",
@@ -380,5 +392,79 @@ describe("resolveBraveMode", () => {
 
   it("falls back to 'web' for unrecognized mode values", () => {
     expect(resolveBraveMode({ mode: "invalid" })).toBe("web");
+  });
+});
+
+describe("mapBraveLlmContextResults", () => {
+  it("maps plain string snippets correctly", () => {
+    const results = mapBraveLlmContextResults({
+      grounding: {
+        generic: [
+          {
+            url: "https://example.com/page",
+            title: "Example Page",
+            snippets: ["first snippet", "second snippet"],
+          },
+        ],
+      },
+    });
+    expect(results).toEqual([
+      {
+        url: "https://example.com/page",
+        title: "Example Page",
+        snippets: ["first snippet", "second snippet"],
+        siteName: "example.com",
+      },
+    ]);
+  });
+
+  it("filters out non-string and empty snippets", () => {
+    const results = mapBraveLlmContextResults({
+      grounding: {
+        generic: [
+          {
+            url: "https://example.com",
+            title: "Test",
+            snippets: ["valid", "", null, undefined, 42, { text: "object" }] as string[],
+          },
+        ],
+      },
+    });
+    expect(results[0].snippets).toEqual(["valid"]);
+  });
+
+  it("handles missing snippets array", () => {
+    const results = mapBraveLlmContextResults({
+      grounding: {
+        generic: [{ url: "https://example.com", title: "No Snippets" } as never],
+      },
+    });
+    expect(results[0].snippets).toEqual([]);
+  });
+
+  it("handles empty grounding.generic", () => {
+    expect(mapBraveLlmContextResults({ grounding: { generic: [] } })).toEqual([]);
+  });
+
+  it("handles missing grounding.generic", () => {
+    expect(mapBraveLlmContextResults({ grounding: {} } as never)).toEqual([]);
+  });
+
+  it("resolves siteName from URL hostname", () => {
+    const results = mapBraveLlmContextResults({
+      grounding: {
+        generic: [{ url: "https://docs.example.org/path", title: "Docs", snippets: ["text"] }],
+      },
+    });
+    expect(results[0].siteName).toBe("docs.example.org");
+  });
+
+  it("sets siteName to undefined for invalid URLs", () => {
+    const results = mapBraveLlmContextResults({
+      grounding: {
+        generic: [{ url: "not-a-url", title: "Bad URL", snippets: ["text"] }],
+      },
+    });
+    expect(results[0].siteName).toBeUndefined();
   });
 });

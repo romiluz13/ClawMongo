@@ -5,4 +5,8 @@ export type {
   MemorySearchResult,
   MemorySource,
 } from "./types.js";
-export { getMemorySearchManager, type MemorySearchManagerResult } from "./search-manager.js";
+export {
+  closeAllMemorySearchManagers,
+  getMemorySearchManager,
+  type MemorySearchManagerResult,
+} from "./search-manager.js";

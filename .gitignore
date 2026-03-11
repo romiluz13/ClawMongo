@@ -81,27 +81,11 @@ apps/ios/*.mobileprovision
 # Local untracked files
 .local/
 docs/.local/
-docs/outreach/
+tmp/
 IDENTITY.md
 USER.md
 .tgz
 .idea
-
-# Claude Code internals (cc10x memory, plans, etc.)
-.claude/
-
-# Internal planning/research docs (local only, keep OSS repo clean)
-docs/plans/
-docs/research/
-docs/discussion-update-*.md
-docs/upstream-pain-showcase.md
-CLAWMONGO_FRESH_START.md
-
-# Temporary/test files
-temp-*.ts
-temp-*.js
-!src/media/temp-files.ts
-scripts/stress-test-*.ts
 
 # local tooling
 .serena/
@@ -129,8 +113,6 @@ Swabble/build/
 # Generated protocol schema (produced via pnpm protocol:gen)
 dist/protocol.schema.json
 .ant-colony/
-openclaw-source-ref-only/
-docker/mongodb/.runtime/
 
 # Eclipse
 **/.project
@@ -140,3 +122,4 @@ docker/mongodb/.runtime/
 
 # Synthing
 **/.stfolder/
+.dev-state
