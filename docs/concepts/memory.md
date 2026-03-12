@@ -193,4 +193,6 @@ Notes:
 
 - paths can be absolute or workspace-relative
 - directories are scanned recursively for `.md` files
+- when `agents.defaults.memorySearch.multimodal.enabled = true`, supported
+  image/audio files under `extraPaths` are also eligible for indexing
 - symlinks are ignored

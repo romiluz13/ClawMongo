@@ -58,6 +58,18 @@ export async function getMemorySearchManager(params: {
   }
 }
 
+export async function closeAllMemorySearchManagers(): Promise<void> {
+  const managers = Array.from(MONGODB_MANAGER_CACHE.values());
+  MONGODB_MANAGER_CACHE.clear();
+  for (const manager of managers) {
+    try {
+      await manager.close?.();
+    } catch (err) {
+      log.warn(`failed to close mongodb memory manager: ${String(err)}`);
+    }
+  }
+}
+
 function buildMongoDBCacheKey(agentId: string, config: ResolvedMongoDBConfig): string {
   return `${agentId}:${stableSerialize(config)}`;
 }
