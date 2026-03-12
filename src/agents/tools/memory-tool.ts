@@ -329,7 +329,10 @@ export function createKBSearchTool(options: {
           });
         } else {
           const results = await manager.search(query, { maxResults });
-          kbResults = results.filter((r) => r.source === "reference");
+          kbResults = results.filter((r) => {
+            const sourceTag = (r as { source?: string }).source;
+            return sourceTag === "reference" || sourceTag === "kb";
+          });
         }
         return jsonResult({ results: kbResults });
       } catch (err) {

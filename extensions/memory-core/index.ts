@@ -4,7 +4,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/memory-core";
 const memoryCorePlugin = {
   id: "memory-core",
   name: "Memory (Core)",
-  description: "File-backed memory search tools and CLI",
+  description: "Mongo-canonical runtime memory tools and CLI",
   kind: "memory",
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenClawPluginApi) {
@@ -24,6 +24,33 @@ const memoryCorePlugin = {
         return [memorySearchTool, memoryGetTool];
       },
       { names: ["memory_search", "memory_get"] },
+    );
+
+    api.registerTool(
+      (ctx) => {
+        const kbSearchTool = api.runtime.tools.createKBSearchTool({
+          config: ctx.config,
+          agentSessionKey: ctx.sessionKey,
+        });
+        if (!kbSearchTool) {
+          return null;
+        }
+        return kbSearchTool;
+      },
+      { names: ["kb_search"] },
+    );
+
+    api.registerTool(
+      (ctx) => {
+        const memoryWriteTool = api.runtime.tools.createMemoryWriteTool({
+          config: ctx.config,
+        });
+        if (!memoryWriteTool) {
+          return null;
+        }
+        return memoryWriteTool;
+      },
+      { names: ["memory_write"] },
     );
 
     api.registerCli(
