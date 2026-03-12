@@ -205,6 +205,7 @@ describe("delivery-queue", () => {
 
   describe("isPermanentDeliveryError", () => {
     it.each([
+      "Cannot find module '/home/rombot/apps/RomBot-ClawMongo/dist/runtime-whatsapp-outbound.runtime-CqmnF2dY.js' imported from /home/rombot/apps/RomBot-ClawMongo/dist/reply-DF72Frhu.js",
       "No conversation reference found for user:abc",
       "Telegram send failed: chat not found (chat_id=user:123)",
       "user not found",
@@ -435,6 +436,34 @@ describe("delivery-queue", () => {
       const failedDir = path.join(tmpDir, "delivery-queue", "failed");
       expect(fs.existsSync(path.join(failedDir, `${id}.json`))).toBe(true);
       expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("permanent error"));
+    });
+
+    it("moves entries to failed/ when the recorded lastError is already permanent", async () => {
+      const id = await enqueueDelivery(
+        { channel: "whatsapp", to: "+1", payloads: [{ text: "stale" }] },
+        tmpDir,
+      );
+      const filePath = path.join(tmpDir, "delivery-queue", `${id}.json`);
+      const entry = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      entry.retryCount = 3;
+      entry.lastAttemptAt = Date.now();
+      entry.lastError =
+        "Cannot find module '/tmp/app/dist/runtime-whatsapp-outbound.runtime-old.js' imported from /tmp/app/dist/reply-old.js";
+      fs.writeFileSync(filePath, JSON.stringify(entry), "utf-8");
+
+      const deliver = vi.fn();
+      const log = createLog();
+      const { result } = await runRecovery({ deliver, log });
+
+      expect(deliver).not.toHaveBeenCalled();
+      expect(result.failed).toBe(1);
+      const remaining = await loadPendingDeliveries(tmpDir);
+      expect(remaining).toHaveLength(0);
+      const failedDir = path.join(tmpDir, "delivery-queue", "failed");
+      expect(fs.existsSync(path.join(failedDir, `${id}.json`))).toBe(true);
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("has permanent recorded error"),
+      );
     });
 
     it("passes skipQueue: true to prevent re-enqueueing during recovery", async () => {

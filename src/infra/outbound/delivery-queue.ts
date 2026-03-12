@@ -58,6 +58,12 @@ export type RecoverySummary = {
   deferredBackoff: number;
 };
 
+function hasPermanentLastError(entry: QueuedDelivery): boolean {
+  return typeof entry.lastError === "string" && entry.lastError.trim().length > 0
+    ? isPermanentDeliveryError(entry.lastError)
+    : false;
+}
+
 function resolveQueueDir(stateDir?: string): string {
   const base = stateDir ?? resolveStateDir();
   return path.join(base, QUEUE_DIRNAME);
@@ -352,6 +358,18 @@ export async function recoverPendingDeliveries(opts: {
       opts.log.warn(`Recovery time budget exceeded — ${deferred} entries deferred to next restart`);
       break;
     }
+    if (hasPermanentLastError(entry)) {
+      opts.log.warn(
+        `Delivery ${entry.id} has permanent recorded error — moving to failed/: ${entry.lastError}`,
+      );
+      try {
+        await moveToFailed(entry.id, opts.stateDir);
+      } catch (err) {
+        opts.log.error(`Failed to move entry ${entry.id} to failed/: ${String(err)}`);
+      }
+      failed += 1;
+      continue;
+    }
     if (entry.retryCount >= MAX_RETRIES) {
       opts.log.warn(
         `Delivery ${entry.id} exceeded max retries (${entry.retryCount}/${MAX_RETRIES}) — moving to failed/`,
@@ -423,6 +441,7 @@ export async function recoverPendingDeliveries(opts: {
 export { MAX_RETRIES };
 
 const PERMANENT_ERROR_PATTERNS: readonly RegExp[] = [
+  /cannot find module ['"].*\/dist\/.*\.js['"] imported from .*\/dist\//i,
   /no conversation reference found/i,
   /chat not found/i,
   /user not found/i,
