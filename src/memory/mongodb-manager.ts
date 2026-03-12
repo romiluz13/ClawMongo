@@ -967,7 +967,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             }
           : {}),
       })
-      .toSorted({ startLine: 1 })
+      .sort({ startLine: 1 })
       .toArray();
     if (docs.length === 0) {
       return {
