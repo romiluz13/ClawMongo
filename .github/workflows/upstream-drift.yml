@@ -15,4 +15,4 @@ jobs:
           fetch-depth: 0
 
       - name: Check drift vs upstream/main
-        run: bash scripts/sync-upstream.sh --ref origin/main --fail-if-behind --fail-if-outside-allowlist
+        run: bash scripts/sync-upstream.sh --ref origin/main --fail-if-behind --fail-if-outside-allowlist --fail-if-excluded-present

@@ -18,7 +18,6 @@ docs/reference/heart-brain-boundary.md
 docs/tools/index.md
 docs/tools/multi-agent-sandbox-tools.md
 docs/tools/plugin.md
-extensions/memory-lancedb/
 extensions/test-utils/plugin-runtime-mock.ts
 package.json
 packages/clawdbot/
@@ -26,10 +25,11 @@ packages/moltbot/
 pnpm-lock.yaml
 scripts/check-plugin-sdk-exports.mjs
 scripts/release-check.ts
-scripts/sqlite-vec-smoke.mjs
 scripts/sync-upstream.sh
 scripts/upstream-drift-allowlist.txt
 scripts/upstream-drift-baseline.txt
+scripts/upstream-excluded-paths.txt
+scripts/upstream-protected-paths.txt
 scripts/write-plugin-sdk-entry-dts.ts
 skills/clawmongo-heart-brain-audit/
 skills/clawmongo-memory-routing/
@@ -42,7 +42,6 @@ src/docker/
 src/gateway/
 src/infra/openclaw-root.ts
 src/memory/
-src/plugin-sdk/memory-lancedb.ts
 src/plugin-sdk/subpaths.test.ts
 src/plugins/loader.ts
 src/plugins/runtime/

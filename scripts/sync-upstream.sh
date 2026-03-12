@@ -10,9 +10,12 @@ set -euo pipefail
 MERGE=false
 FAIL_IF_BEHIND=false
 FAIL_IF_OUTSIDE_ALLOWLIST=false
+FAIL_IF_EXCLUDED_PRESENT=false
 REF="origin/main"
 ALLOWLIST="scripts/upstream-drift-allowlist.txt"
 BASELINE="scripts/upstream-drift-baseline.txt"
+EXCLUDED_PATHS="scripts/upstream-excluded-paths.txt"
+PROTECTED_PATHS="scripts/upstream-protected-paths.txt"
 
 usage() {
   cat <<'EOF'
@@ -24,10 +27,18 @@ Options:
   --fail-if-behind    Exit non-zero if <ref> is behind upstream/main.
   --fail-if-outside-allowlist
                      Exit non-zero if fork-only drift falls outside the allowlist.
+  --fail-if-excluded-present
+                     Exit non-zero if excluded paths exist in the working tree.
   --allowlist <path> Allowlist of approved drift prefixes/files
                      (default: scripts/upstream-drift-allowlist.txt).
   --baseline <path>  Baseline of pre-existing fork drift to ignore when enforcing
                      the allowlist (default: scripts/upstream-drift-baseline.txt).
+  --excluded-paths <path>
+                     Paths to auto-prune after merges and optionally fail on
+                     when present (default: scripts/upstream-excluded-paths.txt).
+  --protected-paths <path>
+                     Files that should be highlighted when upstream changes them
+                     (default: scripts/upstream-protected-paths.txt).
   --help              Show this help.
 EOF
 }
@@ -44,6 +55,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --fail-if-outside-allowlist)
       FAIL_IF_OUTSIDE_ALLOWLIST=true
+      shift
+      ;;
+    --fail-if-excluded-present)
+      FAIL_IF_EXCLUDED_PRESENT=true
       shift
       ;;
     --ref)
@@ -68,6 +83,22 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       BASELINE="$2"
+      shift 2
+      ;;
+    --excluded-paths)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --excluded-paths"
+        exit 1
+      fi
+      EXCLUDED_PATHS="$2"
+      shift 2
+      ;;
+    --protected-paths)
+      if [[ $# -lt 2 ]]; then
+        echo "Missing value for --protected-paths"
+        exit 1
+      fi
+      PROTECTED_PATHS="$2"
       shift 2
       ;;
     --help)
@@ -113,6 +144,14 @@ HEAD_AHEAD=$(git rev-list --count upstream/main..HEAD)
 
 echo "Compared ref ($REF): ${AHEAD} ahead, ${BEHIND} behind upstream/main"
 echo "Current branch ($HEAD_BRANCH): ${HEAD_AHEAD} ahead, ${HEAD_BEHIND} behind upstream/main"
+
+load_path_list() {
+  local path="$1"
+  if [[ ! -f "$path" ]]; then
+    return 0
+  fi
+  grep -v '^\s*#' "$path" | sed '/^\s*$/d'
+}
 
 check_allowlist() {
   local ref="$1"
@@ -163,24 +202,98 @@ check_allowlist() {
   return 4
 }
 
-if [[ "$BEHIND" -eq 0 ]]; then
-  echo "Compared ref is up to date with upstream."
-else
+print_protected_hotspots() {
+  local ref="$1"
+  local protected_path="$2"
+
   echo ""
-  echo "--- Conflict hotspots (changed in upstream since $REF) ---"
-  HOTSPOTS=(
-    "src/config/types.memory.ts"
-    "src/memory/types.ts"
-    "src/memory/backend-config.ts"
-    "src/memory/search-manager.ts"
-  )
-  for file in "${HOTSPOTS[@]}"; do
-    if git diff "$REF"...upstream/main --name-only | grep -q "$file"; then
+  echo "--- Protected Mongo-first files (changed upstream since $ref) ---"
+
+  if [[ ! -f "$protected_path" ]]; then
+    echo "  (protected paths file missing: $protected_path)"
+    return 0
+  fi
+
+  mapfile -t protected < <(load_path_list "$protected_path")
+  if [[ "${#protected[@]}" -eq 0 ]]; then
+    echo "  (no protected paths configured)"
+    return 0
+  fi
+
+  mapfile -t upstream_changed < <(git diff --name-only "$ref"...upstream/main)
+  for file in "${protected[@]}"; do
+    if printf '%s\n' "${upstream_changed[@]}" | grep -Fxq "$file"; then
       echo "  CHANGED: $file"
     else
       echo "  OK:      $file"
     fi
   done
+}
+
+collect_present_excluded_paths() {
+  local excluded_path="$1"
+
+  if [[ ! -f "$excluded_path" ]]; then
+    return 0
+  fi
+
+  mapfile -t excluded < <(load_path_list "$excluded_path")
+  if [[ "${#excluded[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local tracked=()
+  mapfile -t tracked < <(git ls-files)
+
+  local present=()
+  for entry in "${excluded[@]}"; do
+    if [[ "$entry" == */ ]]; then
+      local matched=false
+      for file in "${tracked[@]}"; do
+        if [[ "$file" == "$entry"* ]]; then
+          matched=true
+          break
+        fi
+      done
+      if [[ "$matched" == true || -e "$entry" ]]; then
+        present+=("$entry")
+      fi
+      continue
+    fi
+
+    if printf '%s\n' "${tracked[@]}" | grep -Fxq "$entry" || [[ -e "$entry" ]]; then
+      present+=("$entry")
+    fi
+  done
+
+  if [[ "${#present[@]}" -gt 0 ]]; then
+    printf '%s\n' "${present[@]}"
+  fi
+}
+
+prune_excluded_paths() {
+  local excluded_path="$1"
+
+  mapfile -t removed < <(collect_present_excluded_paths "$excluded_path")
+  if [[ "${#removed[@]}" -eq 0 ]]; then
+    echo "No excluded paths needed pruning."
+    return 0
+  fi
+
+  for entry in "${removed[@]}"; do
+    git rm -r --ignore-unmatch -- "$entry" >/dev/null 2>&1 || true
+    rm -rf -- "$entry"
+  done
+
+  echo "Pruned excluded paths after merge:"
+  printf '  %s\n' "${removed[@]}"
+}
+
+if [[ "$BEHIND" -eq 0 ]]; then
+  echo "Compared ref is up to date with upstream."
+else
+  echo ""
+  print_protected_hotspots "$REF" "$PROTECTED_PATHS"
 
   echo ""
   echo "Recent upstream diff summary vs $REF:"
@@ -203,16 +316,33 @@ if [[ "$FAIL_IF_OUTSIDE_ALLOWLIST" == "true" ]]; then
   fi
 fi
 
+if [[ "$FAIL_IF_EXCLUDED_PRESENT" == "true" ]]; then
+  echo ""
+  echo "Checking excluded paths..."
+  mapfile -t present_excluded < <(collect_present_excluded_paths "$EXCLUDED_PATHS")
+  if [[ "${#present_excluded[@]}" -gt 0 ]]; then
+    echo "Excluded paths present:"
+    printf '  %s\n' "${present_excluded[@]}"
+    echo ""
+    echo "FAIL: excluded paths from $EXCLUDED_PATHS are present in the tree."
+    exit 4
+  fi
+  echo "Excluded path check passed ($EXCLUDED_PATHS)."
+fi
+
 if [[ "$MERGE" == "true" ]]; then
   echo ""
   echo "Merging upstream/main into current branch ($HEAD_BRANCH)..."
   git merge upstream/main --no-edit
   echo ""
+  prune_excluded_paths "$EXCLUDED_PATHS"
+  echo ""
   echo "Post-merge checklist:"
   echo "  1. pnpm install"
   echo "  2. pnpm check"
   echo "  3. pnpm test -t \"memory|onboarding\""
-  echo "  4. git push"
+  echo "  4. Review protected Mongo-first files if upstream touched them"
+  echo "  5. git push"
 else
   echo ""
   echo "To merge on current branch: bash scripts/sync-upstream.sh --merge"

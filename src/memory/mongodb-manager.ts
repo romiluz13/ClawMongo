@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import chokidar, { type FSWatcher } from "chokidar";
-import { MongoClient, type Db } from "mongodb";
+import { MongoClient, type Db, type Document } from "mongodb";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
@@ -980,7 +980,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
     return {
       text: docs
-        .map((doc) => (typeof doc.text === "string" ? doc.text : ""))
+        .map((doc: Document) => (typeof doc.text === "string" ? doc.text : ""))
         .filter(Boolean)
         .join("\n"),
       path: `conversation:${normalizedPath}`,

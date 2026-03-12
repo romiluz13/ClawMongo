@@ -212,6 +212,7 @@ export async function listLegacyMarkdownMemoryFiles(
   try {
     const dirStat = await fs.lstat(memoryDir);
     if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
+      // Legacy markdown listing intentionally excludes multimodal files.
       await walkDir(memoryDir, result);
     }
   } catch {}
@@ -225,10 +226,10 @@ export async function listLegacyMarkdownMemoryFiles(
           continue;
         }
         if (stat.isDirectory()) {
-          await walkDir(inputPath, result, multimodal);
+          await walkDir(inputPath, result);
           continue;
         }
-        if (stat.isFile() && isAllowedMemoryFilePath(inputPath, multimodal)) {
+        if (stat.isFile() && inputPath.endsWith(".md")) {
           result.push(inputPath);
         }
       } catch {}

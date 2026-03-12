@@ -1,0 +1,13 @@
+# Files and directories that ClawMongo never wants to keep after an upstream sync.
+# Entries are exact file paths or directory paths ending with "/".
+
+extensions/memory-lancedb/
+scripts/sqlite-vec-smoke.mjs
+src/memory/index.test.ts
+src/memory/manager-embedding-ops.ts
+src/memory/manager-sync-ops.ts
+src/memory/manager.ts
+src/memory/manager.watcher-config.test.ts
+src/memory/qmd-manager.ts
+src/memory/qmd-process.ts
+src/plugin-sdk/memory-lancedb.ts

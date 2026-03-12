@@ -1,0 +1,18 @@
+# Mongo-first files that should be reviewed carefully whenever upstream changes them.
+# These are not auto-restored; the sync script highlights them to force explicit review.
+
+package.json
+src/agents/memory-search.ts
+src/agents/tools/memory-tool.ts
+src/commands/configure-memory.ts
+src/commands/doctor-memory-search.ts
+src/config/types.memory.ts
+src/config/validation.ts
+src/config/zod-schema.ts
+src/gateway/server-startup-memory.ts
+src/gateway/tools-invoke-http.ts
+src/memory/backend-config.ts
+src/memory/internal.ts
+src/memory/mongodb-manager.ts
+src/memory/search-manager.ts
+src/wizard/onboarding-memory.ts

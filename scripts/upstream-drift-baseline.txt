@@ -120,3 +120,9 @@ src/wizard/onboarding-memory.ts
 src/wizard/onboarding.test.ts
 src/wizard/onboarding.ts
 test/helpers/memory-tool-manager-mock.ts
+extensions/memory-core/index.test.ts
+extensions/memory-core/index.ts
+scripts/run-node.mjs
+scripts/write-runner-build-stamp.mjs
+src/infra/outbound/delivery-queue.ts
+src/infra/outbound/outbound.test.ts
