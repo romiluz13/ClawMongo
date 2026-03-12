@@ -1,4 +1,5 @@
 .github/workflows/upstream-drift.yml
+.secrets.baseline
 .gitignore
 README-clawmongo-header-v2.png
 README-clawmongo-header.png
@@ -126,3 +127,5 @@ scripts/run-node.mjs
 scripts/write-runner-build-stamp.mjs
 src/infra/outbound/delivery-queue.ts
 src/infra/outbound/outbound.test.ts
+tsconfig.plugin-sdk.dts.json
+vitest.config.ts

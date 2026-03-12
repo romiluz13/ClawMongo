@@ -157,6 +157,7 @@ check_allowlist() {
   local ref="$1"
   local allowlist_path="$2"
   local baseline_path="$3"
+  local excluded_path="$4"
 
   if [[ ! -f "$allowlist_path" ]]; then
     echo "Allowlist file not found: $allowlist_path"
@@ -167,6 +168,10 @@ check_allowlist() {
   local baseline=()
   if [[ -f "$baseline_path" ]]; then
     mapfile -t baseline < <(grep -v '^\s*#' "$baseline_path" | sed '/^\s*$/d')
+  fi
+  local excluded=()
+  if [[ -f "$excluded_path" ]]; then
+    mapfile -t excluded < <(grep -v '^\s*#' "$excluded_path" | sed '/^\s*$/d')
   fi
   mapfile -t ahead_files < <(git diff --name-only upstream/main..."$ref")
 
@@ -182,6 +187,14 @@ check_allowlist() {
     if [[ "$matched" == false ]]; then
       for exact in "${baseline[@]}"; do
         if [[ "$file" == "$exact" ]]; then
+          matched=true
+          break
+        fi
+      done
+    fi
+    if [[ "$matched" == false ]]; then
+      for prefix in "${excluded[@]}"; do
+        if [[ "$file" == "$prefix" || "$file" == "$prefix"* ]]; then
           matched=true
           break
         fi
@@ -309,7 +322,7 @@ fi
 if [[ "$FAIL_IF_OUTSIDE_ALLOWLIST" == "true" ]]; then
   echo ""
   echo "Checking approved drift allowlist..."
-  if ! check_allowlist "$REF" "$ALLOWLIST" "$BASELINE"; then
+  if ! check_allowlist "$REF" "$ALLOWLIST" "$BASELINE" "$EXCLUDED_PATHS"; then
     echo ""
     echo "FAIL: fork drift extends outside $ALLOWLIST (after baseline $BASELINE)"
     exit 3
