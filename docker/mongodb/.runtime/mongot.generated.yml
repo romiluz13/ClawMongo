@@ -1,0 +1,41 @@
+# mongot.conf - MongoDB Community Search configuration for ClawMongo
+# Adapted from github.com/JohnGUnderwood/mdb-community-search
+
+syncSource:
+   replicaSet:
+      hostAndPort: "clawmongo-mongod.clawmongo-net:27017"
+      username: "mongotUser"
+      passwordFile: "/auth/passwordFile"
+      authSource: "admin"
+      tls: false
+
+storage:
+   dataPath: "/data/mongot"
+
+server:
+   grpc:
+      address: "clawmongo-mongot.clawmongo-net:27028"
+
+metrics:
+   enabled: true
+   address: "clawmongo-mongot.clawmongo-net:9946"
+
+healthCheck:
+   address: "clawmongo-mongot.clawmongo-net:8080"
+
+logging:
+   verbosity: INFO
+
+# The setup-generator writes a runtime config to /auth/mongot.generated.yml.
+# When embedding keys are present it appends:
+# embedding:
+#    queryKeyFile: /auth/voyage-api-query-key
+#    indexingKeyFile: /auth/voyage-api-indexing-key
+#    providerEndpoint: https://api.voyageai.com/v1/embeddings
+#    isAutoEmbeddingViewWriter: true
+
+embedding:
+   queryKeyFile: /auth/voyage-api-query-key
+   indexingKeyFile: /auth/voyage-api-indexing-key
+   providerEndpoint: https://api.voyageai.com/v1/embeddings
+   isAutoEmbeddingViewWriter: true
