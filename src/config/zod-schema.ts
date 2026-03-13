@@ -72,28 +72,6 @@ const ClawMongoEmbeddingModeSchema = z
     });
   });
 
-const ClawMongoLegacyBackendSchema = z
-  .string()
-  .optional()
-  .superRefine((value, ctx) => {
-    if (value === undefined || value === "mongodb") {
-      return;
-    }
-    if (value === "builtin" || value === "qmd") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          `Legacy memory backend "${value}" is no longer supported in ClawMongo. ` +
-          "Remove `memory.backend`, configure `memory.mongodb.uri`, and keep all memory flows on MongoDB.",
-      });
-      return;
-    }
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `Unsupported memory backend: ${value}`,
-    });
-  });
-
 const MemoryMongoDBSchema = z
   .object({
     uri: z.string().optional(),
@@ -176,7 +154,7 @@ const MemoryMongoDBSchema = z
 
 const MemorySchema = z
   .object({
-    backend: ClawMongoLegacyBackendSchema,
+    backend: z.literal("mongodb").optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
     runtimeMode: z
       .string()
@@ -198,7 +176,6 @@ const MemorySchema = z
       })
       .strict()
       .optional(),
-    qmd: z.record(z.string(), z.unknown()).optional(),
     mongodb: MemoryMongoDBSchema,
   })
   .strict()

@@ -40,14 +40,10 @@ export async function configureMemorySection(
 ): Promise<OpenClawConfig> {
   const packageName = await resolveOpenClawPackageName();
   const isClawMongo = packageName === "@romiluz/clawmongo";
-  const currentBackend = nextConfig.memory?.backend ?? "mongodb";
 
   note(
     [
       "ClawMongo memory is MongoDB-only.",
-      ...(currentBackend !== "mongodb"
-        ? [`Legacy backend config detected: ${currentBackend}. It will be replaced by MongoDB.`]
-        : []),
       ...(nextConfig.memory?.mongodb?.uri
         ? [`MongoDB URI: ${redactUri(nextConfig.memory.mongodb.uri)}`]
         : []),
@@ -184,7 +180,7 @@ async function configureMongoDBWithUri(
     typeof existingEnableChangeStreams === "boolean"
       ? existingEnableChangeStreams
       : defaultEnableChangeStreams;
-  const { backend: _legacyBackend, qmd: _legacyQmd, ...memoryConfig } = nextConfig.memory ?? {};
+  const { backend: _explicitBackend, ...memoryConfig } = nextConfig.memory ?? {};
 
   let baseResult: OpenClawConfig = {
     ...nextConfig,

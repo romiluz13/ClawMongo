@@ -1669,7 +1669,7 @@ export async function runEmbeddedAttempt(
       contextFiles,
       bootstrapTruncationWarningLines: bootstrapPromptWarning.lines,
       memoryCitationsMode: params.config?.memory?.citations,
-      memoryBackend: params.config?.memory?.backend,
+      memoryBackend: params.config ? (params.config.memory?.backend ?? "mongodb") : undefined,
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",

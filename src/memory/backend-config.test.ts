@@ -13,23 +13,13 @@ describe("resolveMemoryBackendConfig", () => {
     vi.unstubAllEnvs();
   });
 
-  it("rejects builtin backend with a migration error", () => {
+  it("rejects unsupported non-mongodb backends", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: { backend: "builtin" },
+      memory: { backend: "custom" as never },
     } as unknown as OpenClawConfig;
     expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
-      /Legacy memory backend "builtin"/,
-    );
-  });
-
-  it("rejects qmd backend with a migration error", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: { backend: "qmd", qmd: {} },
-    } as unknown as OpenClawConfig;
-    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
-      /Legacy memory backend "qmd"/,
+      /Unsupported memory\.backend "custom"/,
     );
   });
 

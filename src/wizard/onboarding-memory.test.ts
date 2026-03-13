@@ -42,12 +42,12 @@ describe("setupMemoryBackend", () => {
     mockAttemptAutoSetup.mockResolvedValue({ success: false, reason: "Auto-setup unavailable" });
   });
 
-  it("always configures MongoDB and strips legacy backend fields", async () => {
+  it("always configures MongoDB and strips explicit backend fields", async () => {
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const config: OpenClawConfig = {
       gateway: { mode: "local" },
       memory: {
-        backend: "qmd",
+        backend: "mongodb",
         citations: "on",
         mongodb: { enableChangeStreams: false },
       },
@@ -62,15 +62,10 @@ describe("setupMemoryBackend", () => {
     expect(result.gateway?.mode).toBe("local");
     expect(result.memory?.citations).toBe("on");
     expect(result.memory?.backend).toBeUndefined();
-    expect("qmd" in (result.memory ?? {})).toBe(false);
     expect(result.memory?.mongodb?.uri).toBe("mongodb://localhost:27017/openclaw");
     expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
     expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(false);
-    expect(prompter.note).toHaveBeenCalledWith(
-      'Legacy memory backend "qmd" detected. ClawMongo will replace it with MongoDB.',
-      "MongoDB Memory",
-    );
   });
 
   it("pins onboarding to community-mongot with automated embeddings", async () => {

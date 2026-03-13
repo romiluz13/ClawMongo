@@ -1,5 +1,4 @@
 export type MemoryBackend = "mongodb";
-export type LegacyMemoryBackend = "builtin" | "qmd" | MemoryBackend;
 
 export type MemoryMongoDBDeploymentProfile = "community-mongot";
 
@@ -97,11 +96,10 @@ export type MemoryMongoDBConfig = {
   };
 };
 export type MemoryCitationsMode = "auto" | "on" | "off";
-export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
 
 export type MemoryConfig = {
-  /** Legacy key accepted only for migration detection. */
-  backend?: string;
+  /** Optional explicit MongoDB backend marker. */
+  backend?: MemoryBackend;
   citations?: MemoryCitationsMode;
   runtimeMode?: MemoryRuntimeMode;
   sources?: {
@@ -109,7 +107,5 @@ export type MemoryConfig = {
     conversation?: MemorySourceToggleConfig;
     structured?: MemorySourceToggleConfig;
   };
-  /** Legacy key accepted only for migration detection. */
-  qmd?: Record<string, unknown>;
   mongodb?: MemoryMongoDBConfig;
 };

@@ -160,10 +160,10 @@ describe("noteMemorySearchHealth", () => {
     expectOnlyBackendHealthNote();
   });
 
-  it("stops after legacy backend validation fails", async () => {
-    const legacyCfg = { memory: { backend: "qmd" } } as OpenClawConfig;
+  it("stops after MongoDB backend validation fails", async () => {
+    const invalidCfg = {} as OpenClawConfig;
     resolveMemoryBackendConfig.mockImplementation(() => {
-      throw new Error('Legacy memory backend "qmd" is no longer supported');
+      throw new Error("MongoDB URI required");
     });
     resolveMemorySearchConfig.mockReturnValue({
       provider: "auto",
@@ -171,10 +171,10 @@ describe("noteMemorySearchHealth", () => {
       remote: {},
     });
 
-    await noteMemorySearchHealth(legacyCfg, {});
+    await noteMemorySearchHealth(invalidCfg, {});
 
     expect(note).toHaveBeenCalledWith(
-      expect.stringContaining('Legacy memory backend "qmd" is no longer supported in ClawMongo.'),
+      expect.stringContaining("MongoDB memory is active but no URI is set."),
       "Memory (MongoDB)",
     );
   });

@@ -3,17 +3,6 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { createKBSearchTool, createMemoryWriteTool } from "./memory-tool.js";
 
 describe("createKBSearchTool", () => {
-  it("returns tool even when legacy backend config is present", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp" } },
-      memory: { backend: "builtin" as never },
-    } as OpenClawConfig;
-
-    const tool = createKBSearchTool({ config: cfg });
-    expect(tool).not.toBeNull();
-    expect(tool!.name).toBe("kb_search");
-  });
-
   it("returns tool when mongodb backend is active", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
@@ -32,17 +21,6 @@ describe("createKBSearchTool", () => {
 });
 
 describe("createMemoryWriteTool", () => {
-  it("returns tool even when legacy backend config is present", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp" } },
-      memory: { backend: "qmd" as never },
-    } as OpenClawConfig;
-
-    const tool = createMemoryWriteTool({ config: cfg });
-    expect(tool).not.toBeNull();
-    expect(tool!.name).toBe("memory_write");
-  });
-
   it("returns tool when mongodb backend is active", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },

@@ -42,12 +42,6 @@ export async function setupMemoryBackend(
 ): Promise<OpenClawConfig> {
   const packageName = await resolveOpenClawPackageName();
   const isClawMongo = packageName === "@romiluz/clawmongo";
-  if (config.memory?.backend && config.memory.backend !== "mongodb") {
-    await prompter.note(
-      `Legacy memory backend "${config.memory.backend}" detected. ClawMongo will replace it with MongoDB.`,
-      "MongoDB Memory",
-    );
-  }
   return setupMongoDBMemory(config, prompter, isClawMongo);
 }
 
@@ -179,7 +173,7 @@ async function continueMongoDBSetup(
     typeof existingEnableChangeStreams === "boolean"
       ? existingEnableChangeStreams
       : defaultEnableChangeStreams;
-  const { backend: _legacyBackend, qmd: _legacyQmd, ...memoryConfig } = config.memory ?? {};
+  const { backend: _explicitBackend, ...memoryConfig } = config.memory ?? {};
 
   const baseResult: OpenClawConfig = {
     ...config,

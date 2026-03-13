@@ -74,14 +74,14 @@ describe("startGatewayMemoryBackend", () => {
     const cfg = createMongoConfig();
     const log = createLogMock();
     resolveMemoryBackendConfigMock.mockImplementationOnce(() => {
-      throw new Error('Legacy memory backend "qmd" is no longer supported');
+      throw new Error('Unsupported memory.backend "custom"');
     });
     getMemorySearchManagerMock.mockResolvedValue({ manager: { search: vi.fn() } });
 
     await startGatewayMemoryBackend({ cfg, log });
 
     expect(log.warn).toHaveBeenCalledWith(
-      'mongodb memory startup initialization failed for agent "main": Legacy memory backend "qmd" is no longer supported',
+      'mongodb memory startup initialization failed for agent "main": Unsupported memory.backend "custom"',
     );
     expect(log.info).toHaveBeenCalledWith(
       'mongodb memory startup initialization armed for agent "ops"',

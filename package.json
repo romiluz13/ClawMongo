@@ -1,17 +1,17 @@
 {
   "name": "@romiluz/clawmongo",
   "version": "2026.3.11",
-  "description": "Multi-channel AI gateway with extensible messaging integrations",
+  "description": "MongoDB-first multi-channel agent runtime built on OpenClaw",
   "keywords": [],
-  "homepage": "https://github.com/openclaw/openclaw#readme",
+  "homepage": "https://github.com/romiluz13/ClawMongo#readme",
   "bugs": {
-    "url": "https://github.com/openclaw/openclaw/issues"
+    "url": "https://github.com/romiluz13/ClawMongo/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openclaw/openclaw.git"
+    "url": "git+https://github.com/romiluz13/ClawMongo.git"
   },
   "bin": {
     "clawmongo": "openclaw.mjs",

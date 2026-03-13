@@ -130,7 +130,7 @@ export async function resolveCommandsSystemPromptBundle(
     runtimeInfo,
     sandboxInfo,
     memoryCitationsMode: params.cfg?.memory?.citations,
-    memoryBackend: params.cfg?.memory?.backend,
+    memoryBackend: params.cfg ? (params.cfg.memory?.backend ?? "mongodb") : undefined,
   });
 
   return { systemPrompt, tools, skillsPrompt, bootstrapFiles, injectedFiles, sandboxRuntime };

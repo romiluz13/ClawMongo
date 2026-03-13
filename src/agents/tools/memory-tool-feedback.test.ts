@@ -24,17 +24,6 @@ describe("memory tool descriptions with MongoDB backend", () => {
     expect(tool!.description).toContain("Example:");
   });
 
-  it("memory_search description includes usage example even when legacy backend config is present", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp" } },
-      memory: { backend: "builtin" },
-    } as OpenClawConfig;
-
-    const tool = createMemorySearchTool({ config: cfg });
-    expect(tool).not.toBeNull();
-    expect(tool!.description).toContain("Example:");
-  });
-
   it("kb_search description includes usage example", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
@@ -99,12 +88,6 @@ describe("computeFeedbackHint", () => {
   it("returns undefined when 1 result with score >= 0.3", () => {
     const results = [makeResult(0.3)];
     const hint = computeFeedbackHint(results, "mongodb");
-    expect(hint).toBeUndefined();
-  });
-
-  it("returns undefined for an unexpected legacy backend label", () => {
-    const results = [makeResult(0.1)];
-    const hint = computeFeedbackHint(results, "builtin" as never);
     expect(hint).toBeUndefined();
   });
 

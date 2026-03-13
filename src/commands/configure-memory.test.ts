@@ -112,7 +112,7 @@ describe("configureMemorySection", () => {
     );
   });
 
-  it("replaces legacy backend config with MongoDB-only memory settings", async () => {
+  it("normalizes explicit backend config to MongoDB-only memory settings", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
     mockSelect.mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
@@ -121,7 +121,7 @@ describe("configureMemorySection", () => {
     const result = await configureMemorySection(
       {
         memory: {
-          backend: "qmd",
+          backend: "mongodb",
           citations: "on",
           mongodb: { enableChangeStreams: true },
         },
@@ -131,11 +131,6 @@ describe("configureMemorySection", () => {
 
     expect(result.memory?.citations).toBe("on");
     expect(result.memory?.backend).toBeUndefined();
-    expect("qmd" in (result.memory ?? {})).toBe(false);
     expect(result.memory?.mongodb?.uri).toBe("mongodb://localhost:27017/openclaw");
-    expect(mockNote).toHaveBeenCalledWith(
-      expect.stringContaining("Legacy backend config detected: qmd"),
-      "Memory",
-    );
   });
 });

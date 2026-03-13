@@ -95,7 +95,7 @@ export function buildSystemPrompt(params: {
     bootstrapTruncationWarningLines: params.bootstrapTruncationWarningLines,
     ttsHint,
     memoryCitationsMode: params.config?.memory?.citations,
-    memoryBackend: params.config?.memory?.backend,
+    memoryBackend: params.config ? (params.config.memory?.backend ?? "mongodb") : undefined,
   });
 }
 

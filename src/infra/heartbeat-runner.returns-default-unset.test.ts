@@ -1066,7 +1066,7 @@ describe("runHeartbeatOnce", () => {
     if (params.queueCronEvent) {
       enqueueSystemEvent("Cron: QMD maintenance completed", {
         sessionKey,
-        contextKey: "cron:qmd-maintenance",
+        contextKey: "cron:mongo-maintenance",
       });
     }
 

@@ -562,7 +562,7 @@ export async function runOnboardingWizard(
   }
 
   // Customize workspace files for MongoDB backend (non-fatal)
-  if (nextConfig.memory?.backend === "mongodb") {
+  if (nextConfig.memory?.mongodb) {
     try {
       const { customizeWorkspaceForMongoDB } = await import("./onboarding-memory.js");
       await customizeWorkspaceForMongoDB(workspaceDir);

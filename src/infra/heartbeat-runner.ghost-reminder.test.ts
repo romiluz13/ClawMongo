@@ -186,7 +186,7 @@ describe("Ghost reminder bug (issue #13317)", () => {
       enqueue: (sessionKey) => {
         enqueueSystemEvent("Cron: QMD maintenance completed", {
           sessionKey,
-          contextKey: "cron:qmd-maintenance",
+          contextKey: "cron:mongo-maintenance",
         });
       },
     });

@@ -104,8 +104,10 @@ export function resolveMemoryBackendConfig(params: {
   const citations = params.cfg.memory?.citations ?? DEFAULT_CITATIONS;
   const runtimeMode = params.cfg.memory?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
 
-  if (backend === "builtin" || backend === "qmd") {
-    throw new Error(buildLegacyBackendError(backend));
+  if (backend !== "mongodb") {
+    throw new Error(
+      `Unsupported memory.backend "${String(backend)}". ClawMongo supports only the MongoDB memory backend.`,
+    );
   }
   if (runtimeMode !== "mongo_canonical") {
     throw new Error(
@@ -349,12 +351,4 @@ export function resolveMemoryBackendConfig(params: {
   }
 
   throw new Error(`Unsupported memory backend: ${String(backend)}`);
-}
-
-function buildLegacyBackendError(backend: "builtin" | "qmd"): string {
-  return [
-    `Legacy memory backend "${backend}" is no longer supported in ClawMongo.`,
-    "ClawMongo is MongoDB-only.",
-    "Remove `memory.backend`, configure `memory.mongodb.uri`, and keep all memory flows on MongoDB.",
-  ].join(" ");
 }

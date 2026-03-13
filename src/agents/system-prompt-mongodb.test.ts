@@ -30,18 +30,6 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     expect(prompt).toContain("### Memory Routing Guide");
   });
 
-  it("does NOT include decision tree when backend is builtin", () => {
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get"],
-      memoryBackend: "builtin",
-    });
-
-    expect(prompt).not.toContain("### Memory Routing Guide");
-    expect(prompt).not.toContain("When storing information:");
-    expect(prompt).not.toContain("When searching:");
-  });
-
   it("does NOT include decision tree when memoryBackend is undefined", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
@@ -127,18 +115,6 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     // Bridge must appear BEFORE the Silent Replies section
     const silentIndex = prompt.indexOf("## Silent Replies");
     expect(bridgeIndex).toBeLessThan(silentIndex);
-  });
-
-  it("does NOT render bridge section for builtin backend", () => {
-    const prompt = buildAgentSystemPrompt({
-      workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get"],
-      memoryBackend: "builtin",
-      contextFiles: [{ path: "AGENTS.md", content: "Write it down to a file." }],
-    });
-
-    expect(prompt).not.toContain("## MongoDB Memory Integration");
-    expect(prompt).not.toContain("The MongoDB memory backend is active.");
   });
 
   it("does NOT render bridge section when isMinimal=true (subagent mode)", () => {
