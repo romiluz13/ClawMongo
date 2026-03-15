@@ -1111,7 +1111,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             }
           : {}),
       })
-      .toSorted({ startLine: 1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ startLine: 1 })
       .toArray();
     if (docs.length === 0) {
       return {

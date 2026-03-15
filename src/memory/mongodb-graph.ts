@@ -184,7 +184,8 @@ export async function findEntitiesByName(params: {
 
     const docs = await collection
       .find(filter)
-      .toSorted({ updatedAt: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 
@@ -212,7 +213,8 @@ export async function getEntitiesByType(params: {
 
     const docs = await collection
       .find({ agentId, type })
-      .toSorted({ updatedAt: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 

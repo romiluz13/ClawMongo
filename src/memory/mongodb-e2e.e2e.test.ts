@@ -1109,7 +1109,8 @@ describe("E2E v2: event -> chunk projection", () => {
         { $text: { $search: "canonical event storage" } },
         { projection: { path: 1, text: 1, score: { $meta: "textScore" } } },
       )
-      .toSorted({ score: { $meta: "textScore" } })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
 
@@ -1373,7 +1374,8 @@ describe("E2E v2: migration backfill", () => {
 
     // 3. Verify events created with correct body/timestamp
     const eventsCol = eventsCollection(db, TEST_PREFIX);
-    const events = await eventsCol.find({ agentId }).toSorted({ timestamp: 1 }).toArray();
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+    const events = await eventsCol.find({ agentId }).sort({ timestamp: 1 }).toArray();
     expect(events.length).toBe(2);
     expect(events[0].body).toBe("Project notes about ClawMongo v1 architecture");
     expect(events[1].body).toBe("Decision to use MongoDB-only backend");

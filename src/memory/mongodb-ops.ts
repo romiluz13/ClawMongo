@@ -87,7 +87,8 @@ export async function getRecentIngestRuns(params: {
   try {
     const docs = await ingestRunsCollection(db, prefix)
       .find({ agentId })
-      .toSorted({ ts: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ ts: -1 })
       .limit(limit)
       .toArray();
     return docs as unknown as IngestRun[];
@@ -112,7 +113,8 @@ export async function getRecentProjectionRuns(params: {
     }
     const docs = await projectionRunsCollection(db, prefix)
       .find(filter)
-      .toSorted({ ts: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ ts: -1 })
       .limit(limit)
       .toArray();
     return docs as unknown as ProjectionRun[];

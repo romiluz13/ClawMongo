@@ -173,7 +173,8 @@ export async function getEpisodesByTimeRange(params: {
       filter.type = type;
     }
 
-    const docs = await col.find(filter).toSorted({ "timeRange.start": -1 }).limit(100).toArray();
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+    const docs = await col.find(filter).sort({ "timeRange.start": -1 }).limit(100).toArray();
 
     return docs as unknown as Episode[];
   } catch (err) {
@@ -199,7 +200,8 @@ export async function getEpisodesByType(params: {
 
     const docs = await col
       .find({ agentId, type })
-      .toSorted({ updatedAt: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 
@@ -244,7 +246,8 @@ export async function searchEpisodes(params: {
 
     const docs = await col
       .find(filter)
-      .toSorted({ updatedAt: -1 })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 
