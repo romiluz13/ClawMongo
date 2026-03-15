@@ -17,6 +17,12 @@ import {
   relevanceRunsCollection,
   relevanceArtifactsCollection,
   relevanceRegressionsCollection,
+  eventsCollection,
+  entitiesCollection,
+  relationsCollection,
+  episodesCollection,
+  ingestRunsCollection,
+  projectionRunsCollection,
 } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -122,6 +128,43 @@ describe("collection helpers", () => {
     relevanceRegressionsCollection(db, "oc_");
     expect(db.collection).toHaveBeenCalledWith("oc_relevance_regressions");
   });
+
+  // v2 collection accessors (Phase 1)
+  it("eventsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    eventsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_events");
+  });
+
+  it("entitiesCollection returns prefixed collection", () => {
+    const db = mockDb();
+    entitiesCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_entities");
+  });
+
+  it("relationsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    relationsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_relations");
+  });
+
+  it("episodesCollection returns prefixed collection", () => {
+    const db = mockDb();
+    episodesCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_episodes");
+  });
+
+  it("ingestRunsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    ingestRunsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_ingest_runs");
+  });
+
+  it("projectionRunsCollection returns prefixed collection", () => {
+    const db = mockDb();
+    projectionRunsCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_projection_runs");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -163,6 +206,44 @@ describe("schema constants", () => {
     expect(sourceTypeEnum).not.toContain("text");
   });
 
+  it("VALIDATED_COLLECTIONS includes all 6 new v2 collection schemas", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    // All 6 v2 collections should be created with validators
+    for (const name of [
+      "events",
+      "entities",
+      "relations",
+      "episodes",
+      "ingest_runs",
+      "projection_runs",
+    ]) {
+      const call = createCalls.find((c: unknown[]) => c[0] === `test_${name}`);
+      expect(call, `expected test_${name} to be created`).toBeDefined();
+      expect(call![1]?.validator, `expected test_${name} to have a validator`).toBeDefined();
+      expect(call![1]?.validator.$jsonSchema).toBeDefined();
+    }
+  });
+
+  it("events schema has required scope enum field", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const eventsCall = createCalls.find((c: unknown[]) => c[0] === "test_events");
+    expect(eventsCall).toBeDefined();
+    const schema = eventsCall![1]?.validator.$jsonSchema;
+    expect(schema.required).toContain("scope");
+    expect(schema.properties.scope.enum).toEqual([
+      "session",
+      "user",
+      "agent",
+      "workspace",
+      "tenant",
+      "global",
+    ]);
+  });
+
   it("chunks collection has schema validation (F15)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
@@ -181,10 +262,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 10 collections when none exist", async () => {
+  it("creates all 16 collections when none exist", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(10);
+    expect(db.createCollection).toHaveBeenCalledTimes(16);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -223,7 +304,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(8);
+    expect(db.createCollection).toHaveBeenCalledTimes(14);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -261,6 +342,12 @@ describe("ensureCollections", () => {
       "oc_relevance_runs",
       "oc_relevance_artifacts",
       "oc_relevance_regressions",
+      "oc_events",
+      "oc_entities",
+      "oc_relations",
+      "oc_episodes",
+      "oc_ingest_runs",
+      "oc_projection_runs",
     ]);
     await ensureCollections(db, "oc_");
     expect(db.createCollection).not.toHaveBeenCalled();
@@ -301,17 +388,44 @@ describe("ensureStandardIndexes", () => {
       createIndex: ReturnType<typeof vi.fn>;
     };
 
-    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 5 structured + 3 relevance_runs +
-    // 2 relevance_artifacts + 2 relevance_regressions = 26
-    expect(count).toBe(26);
+    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 6 structured (5+1 v2 scope) + 3 relevance_runs +
+    // 2 relevance_artifacts + 2 relevance_regressions + 5 events + 3 entities + 3 relations +
+    // 3 episodes + 1 ingest_runs + 1 projection_runs = 43
+    expect(count).toBe(43);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
     expect(kbChunks.createIndex).toHaveBeenCalledTimes(3);
-    expect(structured.createIndex).toHaveBeenCalledTimes(5);
+    expect(structured.createIndex).toHaveBeenCalledTimes(6);
     expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
     expect(relevanceArtifacts.createIndex).toHaveBeenCalledTimes(2);
     expect(relevanceRegressions.createIndex).toHaveBeenCalledTimes(2);
+
+    // v2 collection indexes
+    const events = db.collection("test_events") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const entities = db.collection("test_entities") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const relations = db.collection("test_relations") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const episodes = db.collection("test_episodes") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const ingestRuns = db.collection("test_ingest_runs") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const projectionRuns = db.collection("test_projection_runs") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(events.createIndex).toHaveBeenCalledTimes(5);
+    expect(entities.createIndex).toHaveBeenCalledTimes(3);
+    expect(relations.createIndex).toHaveBeenCalledTimes(3);
+    expect(episodes.createIndex).toHaveBeenCalledTimes(3);
+    expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1);
+    expect(projectionRuns.createIndex).toHaveBeenCalledTimes(1);
   });
 
   it("creates a defensive $text index on text field", async () => {
@@ -447,10 +561,11 @@ describe("ensureStandardIndexes", () => {
     expect(cache.dropIndex).toHaveBeenCalledWith("idx_cache_ttl");
   });
 
-  it("index count includes relevance telemetry indexes", async () => {
+  it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    expect(count).toBe(26);
+    // 26 (v1) + 5 events + 3 entities + 3 relations + 3 episodes + 1 ingest_runs + 1 projection_runs + 1 structured scope = 43
+    expect(count).toBe(43);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {

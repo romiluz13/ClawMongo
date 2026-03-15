@@ -4,12 +4,18 @@ import { MongoClient, type Db, type Document } from "mongodb";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+// v2 module imports
+import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
+import { searchEpisodes } from "./mongodb-episodes.js";
+import { writeEvent, projectChunksFromEvents, getEventsByTimeRange } from "./mongodb-events.js";
+import { findEntitiesByName, expandGraph } from "./mongodb-graph.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
+import { recordIngestRun, getProjectionLag } from "./mongodb-ops.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -19,6 +25,11 @@ import {
   type RelevanceSampleState,
   type RelevanceSourceScope,
 } from "./mongodb-relevance.js";
+import {
+  planRetrieval,
+  type RetrievalPath,
+  type RetrievalPlan,
+} from "./mongodb-retrieval-planner.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
   kbCollection,
@@ -28,6 +39,10 @@ import {
   ensureSchemaValidation,
   ensureSearchIndexes,
   ensureStandardIndexes,
+  eventsCollection,
+  entitiesCollection,
+  relationsCollection,
+  episodesCollection,
   filesCollection,
   kbChunksCollection,
   metaCollection,
@@ -47,8 +62,20 @@ import type {
   MemoryProviderStatus,
   MemorySearchManager,
   MemorySearchResult,
+  MemorySource,
   MemorySyncProgressUpdate,
 } from "./types.js";
+
+// v2 validation constants
+const VALID_SCOPES: ReadonlySet<string> = new Set<MemoryScope>([
+  "session",
+  "user",
+  "agent",
+  "workspace",
+  "tenant",
+  "global",
+]);
+const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant", "system", "tool"]);
 
 const log = createSubsystemLogger("memory:mongodb");
 const CHANGE_STREAM_RESUME_TOKEN_META_KEY = "change_stream_resume_token";
@@ -77,6 +104,81 @@ export function deduplicateSearchResults(results: MemorySearchResult[]): MemoryS
   }
 
   return Array.from(seen.values());
+}
+
+// ---------------------------------------------------------------------------
+// Source policy helpers — exported for testing and reuse
+// ---------------------------------------------------------------------------
+
+type SourceConfig = {
+  reference: { enabled: boolean };
+  conversation: { enabled: boolean };
+  structured: { enabled: boolean };
+};
+
+/**
+ * Determine which search sources are active based on source policy config.
+ * Reference (KB) search additionally requires KB to be enabled.
+ */
+export function getActiveSources(
+  sources: SourceConfig | undefined,
+  kbEnabled: boolean,
+): { conversation: boolean; reference: boolean; structured: boolean } {
+  if (!sources) {
+    // Default: all sources enabled when no source config is present (backward compat)
+    return { conversation: true, reference: kbEnabled, structured: true };
+  }
+  return {
+    conversation: sources.conversation.enabled,
+    reference: sources.reference.enabled && kbEnabled,
+    structured: sources.structured.enabled,
+  };
+}
+
+/**
+ * Return the list of active source names for status reporting.
+ * Only sources that are actually enabled are included.
+ */
+export function getActiveSourcesForStatus(
+  sources: SourceConfig | undefined,
+  kbEnabled: boolean,
+): MemorySource[] {
+  const active = getActiveSources(sources, kbEnabled);
+  const names: MemorySource[] = [];
+  if (active.conversation) {
+    names.push("conversation");
+  }
+  if (active.reference) {
+    names.push("reference");
+  }
+  if (active.structured) {
+    names.push("structured");
+  }
+  return names;
+}
+
+type ActiveSources = { conversation: boolean; reference: boolean; structured: boolean };
+
+/**
+ * Resolve which sources to query in relevanceExplain based on the requested
+ * sourceScope AND the active source policy. Disabled sources always return
+ * false even when explicitly requested via sourceScope.
+ */
+export function resolveExplainSources(
+  sourceScope: RelevanceSourceScope,
+  activeSources: ActiveSources,
+): ActiveSources {
+  switch (sourceScope) {
+    case "memory":
+      return { conversation: activeSources.conversation, reference: false, structured: false };
+    case "kb":
+      return { conversation: false, reference: activeSources.reference, structured: false };
+    case "structured":
+      return { conversation: false, reference: false, structured: activeSources.structured };
+    case "all":
+    default:
+      return { ...activeSources };
+  }
 }
 
 /** Type guard: checks if a MemorySearchManager supports structured memory writes (MongoDB backend). */
@@ -335,57 +437,72 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     // Query embeddings are generated by MongoDB from raw text in automated mode.
     const queryVector: number[] | null = null;
 
+    // Source policy enforcement: only search sources that are enabled in config.
+    const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
+
     // Search all sources in parallel with Promise.all for performance.
     // Legacy search does NOT have .catch() — it's the primary search,
     // so total failure propagates. KB and structured keep their .catch(() => []).
+    const emptyResults: MemorySearchResult[] = [];
     const [conversationResults, kbResults, structuredResults] = await Promise.all([
-      // Conversation chunks — no .catch() (primary search)
-      mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
-        maxResults,
-        minScore,
-        numCandidates: mongoCfg.numCandidates,
-        sessionKey: opts?.sessionKey,
-        fusionMethod: mongoCfg.fusionMethod,
-        capabilities: this.capabilities,
-        vectorIndexName: `${this.prefix}chunks_vector`,
-        textIndexName: `${this.prefix}chunks_text`,
-        vectorWeight: 0.7,
-        textWeight: 0.3,
-        embeddingMode: mongoCfg.embeddingMode,
-        explain: explainOpts,
-        onTrace: (event) => {
-          traceEvents.push(event);
-        },
-      }),
-      // KB chunks — .catch(() => []) per existing pattern
-      searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
-        maxResults: Math.max(3, Math.floor(maxResults / 3)),
-        minScore,
-        numCandidates: mongoCfg.numCandidates,
-        vectorIndexName: `${this.prefix}kb_chunks_vector`,
-        textIndexName: `${this.prefix}kb_chunks_text`,
-        capabilities: this.capabilities,
-        embeddingMode: mongoCfg.embeddingMode,
-        kbDocs: kbCollection(this.db, this.prefix),
-        explain: explainOpts,
-      }).catch((err) => {
-        log.warn(`KB search failed: ${String(err)}`);
-        return [] as MemorySearchResult[];
-      }),
-      // Structured memory — .catch(() => []) per existing pattern
-      searchStructuredMemory(structuredMemCollection(this.db, this.prefix), cleaned, queryVector, {
-        maxResults: Math.max(3, Math.floor(maxResults / 3)),
-        minScore,
-        filter: { agentId: this.agentId },
-        numCandidates: mongoCfg.numCandidates,
-        capabilities: this.capabilities,
-        vectorIndexName: `${this.prefix}structured_mem_vector`,
-        embeddingMode: mongoCfg.embeddingMode,
-        explain: explainOpts,
-      }).catch((err) => {
-        log.warn(`structured memory search failed: ${String(err)}`);
-        return [] as MemorySearchResult[];
-      }),
+      // Conversation chunks — skip if conversation source is disabled
+      !activeSources.conversation
+        ? emptyResults
+        : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
+            maxResults,
+            minScore,
+            numCandidates: mongoCfg.numCandidates,
+            sessionKey: opts?.sessionKey,
+            fusionMethod: mongoCfg.fusionMethod,
+            capabilities: this.capabilities,
+            vectorIndexName: `${this.prefix}chunks_vector`,
+            textIndexName: `${this.prefix}chunks_text`,
+            vectorWeight: 0.7,
+            textWeight: 0.3,
+            embeddingMode: mongoCfg.embeddingMode,
+            explain: explainOpts,
+            onTrace: (event) => {
+              traceEvents.push(event);
+            },
+          }),
+      // KB chunks — skip if reference source is disabled
+      !activeSources.reference
+        ? emptyResults
+        : searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
+            maxResults: Math.max(3, Math.floor(maxResults / 3)),
+            minScore,
+            numCandidates: mongoCfg.numCandidates,
+            vectorIndexName: `${this.prefix}kb_chunks_vector`,
+            textIndexName: `${this.prefix}kb_chunks_text`,
+            capabilities: this.capabilities,
+            embeddingMode: mongoCfg.embeddingMode,
+            kbDocs: kbCollection(this.db, this.prefix),
+            explain: explainOpts,
+          }).catch((err) => {
+            log.warn(`KB search failed: ${String(err)}`);
+            return [] as MemorySearchResult[];
+          }),
+      // Structured memory — skip if structured source is disabled
+      !activeSources.structured
+        ? emptyResults
+        : searchStructuredMemory(
+            structuredMemCollection(this.db, this.prefix),
+            cleaned,
+            queryVector,
+            {
+              maxResults: Math.max(3, Math.floor(maxResults / 3)),
+              minScore,
+              filter: { agentId: this.agentId },
+              numCandidates: mongoCfg.numCandidates,
+              capabilities: this.capabilities,
+              vectorIndexName: `${this.prefix}structured_mem_vector`,
+              embeddingMode: mongoCfg.embeddingMode,
+              explain: explainOpts,
+            },
+          ).catch((err) => {
+            log.warn(`structured memory search failed: ${String(err)}`);
+            return [] as MemorySearchResult[];
+          }),
     ]);
 
     // F23 FIX: Normalize scores to [0,1] before cross-source merge.
@@ -507,94 +624,121 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       },
     };
 
+    // Source policy enforcement: disabled sources return empty results even when
+    // explicitly requested via sourceScope (matches search() behavior).
+    const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
+    const explainSources = resolveExplainSources(sourceScope, activeSources);
+    const emptyResults: MemorySearchResult[] = [];
+
     let mergedResults: MemorySearchResult[] = [];
     if (sourceScope === "memory") {
-      mergedResults = await mongoSearch(
-        chunksCollection(this.db, this.prefix),
-        query,
-        queryVector,
-        {
-          maxResults,
-          minScore,
-          numCandidates: mongoCfg.numCandidates,
-          sessionKey: params.sessionKey,
-          fusionMethod: mongoCfg.fusionMethod,
-          capabilities: this.capabilities,
-          vectorIndexName: `${this.prefix}chunks_vector`,
-          textIndexName: `${this.prefix}chunks_text`,
-          vectorWeight: 0.7,
-          textWeight: 0.3,
-          embeddingMode: mongoCfg.embeddingMode,
-          explain: explainOpts,
-          onTrace: (event) => traces.push(event),
-        },
-      );
+      mergedResults = !explainSources.conversation
+        ? emptyResults
+        : await mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+            maxResults,
+            minScore,
+            numCandidates: mongoCfg.numCandidates,
+            sessionKey: params.sessionKey,
+            fusionMethod: mongoCfg.fusionMethod,
+            capabilities: this.capabilities,
+            vectorIndexName: `${this.prefix}chunks_vector`,
+            textIndexName: `${this.prefix}chunks_text`,
+            vectorWeight: 0.7,
+            textWeight: 0.3,
+            embeddingMode: mongoCfg.embeddingMode,
+            explain: explainOpts,
+            onTrace: (event) => traces.push(event),
+          });
     } else if (sourceScope === "kb") {
-      mergedResults = await searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
-        maxResults,
-        minScore,
-        numCandidates: mongoCfg.numCandidates,
-        vectorIndexName: `${this.prefix}kb_chunks_vector`,
-        textIndexName: `${this.prefix}kb_chunks_text`,
-        capabilities: this.capabilities,
-        embeddingMode: mongoCfg.embeddingMode,
-        kbDocs: kbCollection(this.db, this.prefix),
-        explain: explainOpts,
-      });
+      mergedResults = !explainSources.reference
+        ? emptyResults
+        : await searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
+            maxResults,
+            minScore,
+            numCandidates: mongoCfg.numCandidates,
+            vectorIndexName: `${this.prefix}kb_chunks_vector`,
+            textIndexName: `${this.prefix}kb_chunks_text`,
+            capabilities: this.capabilities,
+            embeddingMode: mongoCfg.embeddingMode,
+            kbDocs: kbCollection(this.db, this.prefix),
+            explain: explainOpts,
+          });
     } else if (sourceScope === "structured") {
-      mergedResults = await searchStructuredMemory(
-        structuredMemCollection(this.db, this.prefix),
-        query,
-        queryVector,
-        {
-          maxResults,
-          minScore,
-          filter: { agentId: this.agentId },
-          numCandidates: mongoCfg.numCandidates,
-          capabilities: this.capabilities,
-          vectorIndexName: `${this.prefix}structured_mem_vector`,
-          embeddingMode: mongoCfg.embeddingMode,
-          explain: explainOpts,
-        },
-      );
+      mergedResults = !explainSources.structured
+        ? emptyResults
+        : await searchStructuredMemory(
+            structuredMemCollection(this.db, this.prefix),
+            query,
+            queryVector,
+            {
+              maxResults,
+              minScore,
+              filter: { agentId: this.agentId },
+              numCandidates: mongoCfg.numCandidates,
+              capabilities: this.capabilities,
+              vectorIndexName: `${this.prefix}structured_mem_vector`,
+              embeddingMode: mongoCfg.embeddingMode,
+              explain: explainOpts,
+            },
+          );
     } else {
       const [conversationResults, kbResults, structuredResults] = await Promise.all([
-        mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
-          maxResults,
-          minScore,
-          numCandidates: mongoCfg.numCandidates,
-          sessionKey: params.sessionKey,
-          fusionMethod: mongoCfg.fusionMethod,
-          capabilities: this.capabilities,
-          vectorIndexName: `${this.prefix}chunks_vector`,
-          textIndexName: `${this.prefix}chunks_text`,
-          vectorWeight: 0.7,
-          textWeight: 0.3,
-          embeddingMode: mongoCfg.embeddingMode,
-          explain: explainOpts,
-          onTrace: (event) => traces.push(event),
-        }),
-        searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
-          maxResults: Math.max(3, Math.floor(maxResults / 3)),
-          minScore,
-          numCandidates: mongoCfg.numCandidates,
-          vectorIndexName: `${this.prefix}kb_chunks_vector`,
-          textIndexName: `${this.prefix}kb_chunks_text`,
-          capabilities: this.capabilities,
-          embeddingMode: mongoCfg.embeddingMode,
-          kbDocs: kbCollection(this.db, this.prefix),
-          explain: explainOpts,
-        }).catch(() => [] as MemorySearchResult[]),
-        searchStructuredMemory(structuredMemCollection(this.db, this.prefix), query, queryVector, {
-          maxResults: Math.max(3, Math.floor(maxResults / 3)),
-          minScore,
-          filter: { agentId: this.agentId },
-          numCandidates: mongoCfg.numCandidates,
-          capabilities: this.capabilities,
-          vectorIndexName: `${this.prefix}structured_mem_vector`,
-          embeddingMode: mongoCfg.embeddingMode,
-          explain: explainOpts,
-        }).catch(() => [] as MemorySearchResult[]),
+        // Conversation chunks — skip if conversation source is disabled
+        !explainSources.conversation
+          ? emptyResults
+          : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+              maxResults,
+              minScore,
+              numCandidates: mongoCfg.numCandidates,
+              sessionKey: params.sessionKey,
+              fusionMethod: mongoCfg.fusionMethod,
+              capabilities: this.capabilities,
+              vectorIndexName: `${this.prefix}chunks_vector`,
+              textIndexName: `${this.prefix}chunks_text`,
+              vectorWeight: 0.7,
+              textWeight: 0.3,
+              embeddingMode: mongoCfg.embeddingMode,
+              explain: explainOpts,
+              onTrace: (event) => traces.push(event),
+            }),
+        // KB chunks — skip if reference source is disabled
+        !explainSources.reference
+          ? emptyResults
+          : searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
+              maxResults: Math.max(3, Math.floor(maxResults / 3)),
+              minScore,
+              numCandidates: mongoCfg.numCandidates,
+              vectorIndexName: `${this.prefix}kb_chunks_vector`,
+              textIndexName: `${this.prefix}kb_chunks_text`,
+              capabilities: this.capabilities,
+              embeddingMode: mongoCfg.embeddingMode,
+              kbDocs: kbCollection(this.db, this.prefix),
+              explain: explainOpts,
+            }).catch((err) => {
+              log.warn(`relevanceExplain KB search failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            }),
+        // Structured memory — skip if structured source is disabled
+        !explainSources.structured
+          ? emptyResults
+          : searchStructuredMemory(
+              structuredMemCollection(this.db, this.prefix),
+              query,
+              queryVector,
+              {
+                maxResults: Math.max(3, Math.floor(maxResults / 3)),
+                minScore,
+                filter: { agentId: this.agentId },
+                numCandidates: mongoCfg.numCandidates,
+                capabilities: this.capabilities,
+                vectorIndexName: `${this.prefix}structured_mem_vector`,
+                embeddingMode: mongoCfg.embeddingMode,
+                explain: explainOpts,
+              },
+            ).catch((err) => {
+              log.warn(`relevanceExplain structured memory search failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            }),
       ]);
       const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
       const normalizedLegacy = normalizeSearchResults(conversationResults, legacyMethod);
@@ -893,7 +1037,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       chunks: this.chunkCount,
       dirty: this.dirty,
       workspaceDir: this.workspaceDir,
-      sources: ["conversation", "reference", "structured"],
+      sources: getActiveSourcesForStatus(mongoCfg.sources, mongoCfg.kb.enabled),
       custom: {
         deploymentProfile: mongoCfg.deploymentProfile,
         embeddingMode: mongoCfg.embeddingMode,
@@ -967,7 +1111,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             }
           : {}),
       })
-      .sort({ startLine: 1 })
+      .toSorted({ startLine: 1 })
       .toArray();
     if (docs.length === 0) {
       return {
@@ -1318,5 +1462,330 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       const msg = err instanceof Error ? err.message : String(err);
       log.warn(`error closing MongoDB connection: ${msg}`);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8: v2 standalone functions — write, search, status
+// ---------------------------------------------------------------------------
+
+/**
+ * Write an event and project it to chunks. Records an ingest run on success or failure.
+ * Standalone function following the v2 module pattern (db, prefix, ...).
+ */
+export async function writeEventAndProject(
+  db: Db,
+  prefix: string,
+  event: {
+    agentId: string;
+    role: string;
+    body: string;
+    scope: string;
+    sessionId?: string;
+    path?: string;
+    hash?: string;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<{ eventId: string; chunksCreated: number }> {
+  const startMs = Date.now();
+  try {
+    // Validate scope and role before passing to writeEvent
+    if (!VALID_SCOPES.has(event.scope)) {
+      throw new Error(`Invalid scope: ${event.scope}`);
+    }
+    if (!VALID_ROLES.has(event.role)) {
+      throw new Error(`Invalid role: ${event.role}`);
+    }
+    const written = await writeEvent({
+      db,
+      prefix,
+      event: {
+        agentId: event.agentId,
+        role: event.role as "user" | "assistant" | "system" | "tool",
+        body: event.body,
+        scope: event.scope as MemoryScope,
+        sessionId: event.sessionId,
+        channel: undefined,
+        metadata: event.metadata,
+      },
+    });
+
+    const projected = await projectChunksFromEvents({
+      db,
+      prefix,
+      agentId: event.agentId,
+    });
+
+    const durationMs = Date.now() - startMs;
+    await recordIngestRun({
+      db,
+      prefix,
+      run: {
+        agentId: event.agentId,
+        source: "event-write",
+        status: "ok",
+        itemsProcessed: 1,
+        itemsFailed: 0,
+        durationMs,
+      },
+    });
+
+    return { eventId: written.eventId, chunksCreated: projected.chunksCreated };
+  } catch (err) {
+    const durationMs = Date.now() - startMs;
+    await recordIngestRun({
+      db,
+      prefix,
+      run: {
+        agentId: event.agentId,
+        source: "event-write",
+        status: "failed",
+        itemsProcessed: 0,
+        itemsFailed: 1,
+        durationMs,
+      },
+    }).catch((recErr) => {
+      log.warn("recordIngestRun failed during error recovery", { error: recErr });
+    });
+    log.error("writeEventAndProject failed", { error: err });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v2 search types
+// ---------------------------------------------------------------------------
+
+export type V2SearchMetadata = {
+  plan: RetrievalPlan;
+  pathsExecuted: RetrievalPath[];
+  resultsByPath: Record<string, number>;
+};
+
+/**
+ * Execute a v2 retrieval plan: call planRetrieval, execute top 3 paths, deduplicate results.
+ * Each path has its own try/catch so one failure doesn't kill the whole search.
+ */
+export async function searchV2(
+  db: Db,
+  prefix: string,
+  query: string,
+  agentId: string,
+  context: {
+    availablePaths: Set<RetrievalPath>;
+    knownEntityNames?: string[];
+    hasEpisodes?: boolean;
+    hasGraphData?: boolean;
+    maxResults?: number;
+  },
+): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
+  try {
+    const plan = planRetrieval(query, {
+      availablePaths: context.availablePaths,
+      knownEntityNames: context.knownEntityNames,
+      hasEpisodes: context.hasEpisodes,
+      hasGraphData: context.hasGraphData,
+    });
+
+    const results: MemorySearchResult[] = [];
+    const pathsExecuted: RetrievalPath[] = [];
+    const resultsByPath: Record<string, number> = {};
+    const maxResults = context.maxResults ?? 20;
+
+    // Execute top 3 paths from plan (avoid executing all 6)
+    const pathsToExecute = plan.paths.slice(0, 3);
+
+    for (const path of pathsToExecute) {
+      try {
+        let pathResults: MemorySearchResult[] = [];
+
+        switch (path) {
+          case "structured":
+            log.debug("searchV2: structured path delegated to caller");
+            break;
+          case "raw-window": {
+            const now = new Date();
+            const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            const events = await getEventsByTimeRange({
+              db,
+              prefix,
+              agentId,
+              start: dayAgo,
+              end: now,
+            });
+            pathResults = events.map((e, i) => ({
+              path: `event:${e.eventId}`,
+              filePath: `event:${e.eventId}`,
+              startLine: 0,
+              endLine: 0,
+              snippet: e.body,
+              score: 1 - i * 0.01,
+              source: "conversation" as MemorySource,
+            }));
+            break;
+          }
+          case "graph": {
+            if (context.knownEntityNames?.length) {
+              const entities = await findEntitiesByName({
+                db,
+                prefix,
+                query: context.knownEntityNames[0],
+                agentId,
+              });
+              if (entities.length > 0) {
+                const graph = await expandGraph({
+                  db,
+                  prefix,
+                  entityId: entities[0].entityId,
+                  agentId,
+                });
+                if (graph) {
+                  pathResults = graph.connections.map((c, i) => ({
+                    path: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
+                    filePath: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
+                    startLine: 0,
+                    endLine: 0,
+                    snippet: `${c.relation.type}: ${c.entity.name}`,
+                    score: 0.8 - i * 0.01,
+                    source: "conversation" as MemorySource,
+                  }));
+                }
+              }
+            }
+            break;
+          }
+          case "episodic": {
+            const episodes = await searchEpisodes({
+              db,
+              prefix,
+              query,
+              agentId,
+            });
+            pathResults = episodes.map((ep, i) => ({
+              path: `episode:${ep.episodeId}`,
+              filePath: `episode:${ep.episodeId}`,
+              startLine: 0,
+              endLine: 0,
+              snippet: `${ep.title}: ${ep.summary}`,
+              score: 0.85 - i * 0.01,
+              source: "conversation" as MemorySource,
+            }));
+            break;
+          }
+          case "hybrid":
+            log.debug("searchV2: hybrid path delegated to existing search infrastructure");
+            break;
+          case "kb":
+            log.debug("searchV2: kb path delegated to existing search infrastructure");
+            break;
+        }
+
+        if (pathResults.length > 0) {
+          pathsExecuted.push(path);
+          resultsByPath[path] = pathResults.length;
+          results.push(...pathResults);
+        }
+      } catch (pathErr) {
+        log.error(`searchV2 path ${path} failed`, { error: pathErr });
+        // Continue with other paths
+      }
+    }
+
+    // Deduplicate and limit
+    const deduped = deduplicateSearchResults(results).slice(0, maxResults);
+
+    return {
+      results: deduped,
+      metadata: { plan, pathsExecuted, resultsByPath },
+    };
+  } catch (err) {
+    log.error("searchV2 failed", { query, error: err });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// v2 status types
+// ---------------------------------------------------------------------------
+
+export type V2Status = {
+  runtimeMode: "mongo_v2";
+  events: { count: number; latestTimestamp?: Date };
+  entities: { count: number };
+  relations: { count: number };
+  episodes: { count: number; latestTimestamp?: Date };
+  projectionLag: Record<string, number | null>;
+  retrievalPaths: string[];
+};
+
+/**
+ * Gather v2 health metrics: collection counts, projection lag, available retrieval paths.
+ */
+export async function getV2Status(db: Db, prefix: string, agentId: string): Promise<V2Status> {
+  try {
+    const settled = await Promise.allSettled([
+      eventsCollection(db, prefix).countDocuments({ agentId }),
+      entitiesCollection(db, prefix).countDocuments({ agentId }),
+      relationsCollection(db, prefix).countDocuments({ agentId }),
+      episodesCollection(db, prefix).countDocuments({ agentId }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "chunks" }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "entities" }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "relations" }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "episodes" }),
+      eventsCollection(db, prefix).findOne(
+        { agentId },
+        { sort: { timestamp: -1 }, projection: { timestamp: 1 } },
+      ),
+      episodesCollection(db, prefix).findOne(
+        { agentId },
+        { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } },
+      ),
+    ]);
+
+    // Extract fulfilled values, default to safe fallbacks on rejection
+    const val = <T>(r: PromiseSettledResult<T>, fallback: T): T =>
+      r.status === "fulfilled" ? r.value : fallback;
+
+    const eventCount = val(settled[0], 0);
+    const entityCount = val(settled[1], 0);
+    const relationCount = val(settled[2], 0);
+    const episodeCount = val(settled[3], 0);
+    const chunksLag = val(settled[4], null);
+    const entitiesLag = val(settled[5], null);
+    const relationsLag = val(settled[6], null);
+    const episodesLag = val(settled[7], null);
+    const latestEvent = val(settled[8], null) as { timestamp?: Date } | null;
+    const latestEpisode = val(settled[9], null) as { updatedAt?: Date } | null;
+
+    // Log any individual failures for diagnostics
+    for (const r of settled) {
+      if (r.status === "rejected") {
+        log.error("getV2Status partial failure", { error: r.reason });
+      }
+    }
+
+    return {
+      runtimeMode: "mongo_v2",
+      events: {
+        count: eventCount,
+        latestTimestamp: latestEvent?.timestamp,
+      },
+      entities: { count: entityCount },
+      relations: { count: relationCount },
+      episodes: {
+        count: episodeCount,
+        latestTimestamp: latestEpisode?.updatedAt,
+      },
+      projectionLag: {
+        chunks: chunksLag,
+        entities: entitiesLag,
+        relations: relationsLag,
+        episodes: episodesLag,
+      },
+      retrievalPaths: ["structured", "raw-window", "graph", "hybrid", "kb", "episodic"],
+    };
+  } catch (err) {
+    log.error("getV2Status failed", { error: err });
+    throw err;
   }
 }

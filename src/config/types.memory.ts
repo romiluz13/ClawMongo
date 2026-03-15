@@ -5,7 +5,9 @@ export type MemoryMongoDBDeploymentProfile = "community-mongot";
 export type MemoryMongoDBEmbeddingMode = "automated";
 
 export type MemoryMongoDBFusionMethod = "scoreFusion" | "rankFusion" | "js-merge";
-export type MemoryRuntimeMode = "mongo_canonical";
+export type MemoryRuntimeMode = "mongo_canonical" | "mongo_v2";
+
+export type MemoryScope = "session" | "user" | "agent" | "workspace" | "tenant" | "global";
 export type MemorySourceToggleConfig = {
   enabled?: boolean;
 };
@@ -59,6 +61,20 @@ export type MemoryMongoDBConfig = {
     maxDocumentSize?: number;
     /** Hours between automatic re-import of autoImportPaths. Default: 24. Set 0 to disable. */
     autoRefreshHours?: number;
+  };
+  /** Episode materialization config (v2 only) */
+  episodes?: {
+    /** Enable episode materialization. Default: true when v2 */
+    enabled?: boolean;
+    /** Minimum events to trigger episode. Default: 10 */
+    minEventsForEpisode?: number;
+  };
+  /** Graph projection config (v2 only) */
+  graph?: {
+    /** Enable graph projection. Default: true when v2 */
+    enabled?: boolean;
+    /** Max depth for $graphLookup. Default: 2 */
+    maxGraphDepth?: number;
   };
   /** Explain-driven relevance settings */
   relevance?: {

@@ -1,5 +1,5 @@
 import type { Db, Collection, Document } from "mongodb";
-import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
+import type { MemoryMongoDBEmbeddingMode, MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
@@ -38,6 +38,7 @@ export type StructuredMemoryEntry = {
   sessionId?: string;
   agentId: string;
   tags?: string[];
+  scope?: MemoryScope;
 };
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,7 @@ export async function writeStructuredMemory(params: {
     key: entry.key,
     value: entry.value,
     agentId: entry.agentId,
+    scope: entry.scope ?? "agent",
     embeddingStatus,
     updatedAt: now,
   };
@@ -125,7 +127,7 @@ export async function searchStructuredMemory(
   opts: {
     maxResults: number;
     minScore?: number;
-    filter?: { type?: string; tags?: string[]; agentId?: string };
+    filter?: { type?: string; tags?: string[]; agentId?: string; scope?: MemoryScope };
     capabilities: DetectedCapabilities;
     vectorIndexName: string;
     embeddingMode: MemoryMongoDBEmbeddingMode;
@@ -156,6 +158,9 @@ export async function searchStructuredMemory(
       }
       if (opts.filter?.agentId) {
         filter.agentId = opts.filter.agentId;
+      }
+      if (opts.filter?.scope) {
+        filter.scope = opts.filter.scope;
       }
 
       const vsStage = buildVectorSearchStage({
@@ -226,6 +231,9 @@ export async function searchStructuredMemory(
     }
     if (opts.filter?.agentId) {
       matchFilter.agentId = opts.filter.agentId;
+    }
+    if (opts.filter?.scope) {
+      matchFilter.scope = opts.filter.scope;
     }
 
     const docs = await collection

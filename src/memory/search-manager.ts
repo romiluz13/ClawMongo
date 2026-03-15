@@ -70,7 +70,10 @@ export async function closeAllMemorySearchManagers(): Promise<void> {
   }
 }
 
-function buildMongoDBCacheKey(agentId: string, config: ResolvedMongoDBConfig): string {
+// IMPORTANT: stableSerialize includes sources config in the cache key.
+// Changing source policy (reference/conversation/structured enabled/disabled)
+// at runtime will produce a different cache key, ensuring no stale managers.
+export function buildMongoDBCacheKey(agentId: string, config: ResolvedMongoDBConfig): string {
   return `${agentId}:${stableSerialize(config)}`;
 }
 

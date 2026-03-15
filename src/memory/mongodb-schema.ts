@@ -73,6 +73,32 @@ export function relevanceRegressionsCollection(db: Db, prefix: string): Collecti
   return col(db, prefix, "relevance_regressions");
 }
 
+// v2 collection accessors
+
+export function eventsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "events");
+}
+
+export function entitiesCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "entities");
+}
+
+export function relationsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "relations");
+}
+
+export function episodesCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "episodes");
+}
+
+export function ingestRunsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "ingest_runs");
+}
+
+export function projectionRunsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "projection_runs");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -141,6 +167,10 @@ const STRUCTURED_MEM_SCHEMA: Document = {
       confidence: { bsonType: "double", minimum: 0, maximum: 1 },
       tags: { bsonType: "array", items: { bsonType: "string" } },
       agentId: { bsonType: "string" },
+      scope: {
+        enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+        description: "Memory scope (v2)",
+      },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
     },
@@ -226,6 +256,156 @@ const RELEVANCE_REGRESSIONS_SCHEMA: Document = {
   },
 };
 
+// v2 schema constants
+
+const SCOPE_ENUM = ["session", "user", "agent", "workspace", "tenant", "global"];
+
+const EVENTS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["eventId", "agentId", "role", "body", "scope", "timestamp"],
+    properties: {
+      eventId: { bsonType: "string", description: "Unique event identifier" },
+      agentId: { bsonType: "string", description: "Agent that generated this event" },
+      role: { enum: ["user", "assistant", "system", "tool"], description: "Message role" },
+      body: { bsonType: "string", description: "Event body text" },
+      scope: { enum: SCOPE_ENUM, description: "Memory scope" },
+      timestamp: { bsonType: "date", description: "Event timestamp" },
+      sessionId: { bsonType: "string" },
+      channel: { bsonType: "string" },
+      metadata: { bsonType: "object" },
+      projectedAt: { bsonType: "date", description: "When this event was projected to chunks" },
+    },
+  },
+};
+
+const ENTITIES_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["entityId", "name", "type", "agentId", "scope", "updatedAt"],
+    properties: {
+      entityId: { bsonType: "string", description: "Unique entity identifier" },
+      name: { bsonType: "string", description: "Entity name" },
+      type: { bsonType: "string", description: "Entity type (person, project, concept, etc.)" },
+      agentId: { bsonType: "string" },
+      scope: { enum: SCOPE_ENUM },
+      updatedAt: { bsonType: "date" },
+      aliases: {
+        bsonType: "array",
+        items: { bsonType: "string" },
+        description: "Alternative names",
+      },
+      attributes: { bsonType: "object", description: "Arbitrary key-value attributes" },
+      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+    },
+  },
+};
+
+const RELATIONS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["fromEntityId", "toEntityId", "type", "agentId", "scope", "updatedAt"],
+    properties: {
+      fromEntityId: { bsonType: "string" },
+      toEntityId: { bsonType: "string" },
+      type: { bsonType: "string", description: "Relation type (works_on, knows, etc.)" },
+      agentId: { bsonType: "string" },
+      scope: { enum: SCOPE_ENUM },
+      updatedAt: { bsonType: "date" },
+      weight: { bsonType: "double", minimum: 0, maximum: 1 },
+      metadata: { bsonType: "object" },
+      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+    },
+  },
+};
+
+const EPISODES_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "episodeId",
+      "type",
+      "title",
+      "summary",
+      "agentId",
+      "scope",
+      "timeRange",
+      "sourceEventCount",
+      "updatedAt",
+    ],
+    properties: {
+      episodeId: { bsonType: "string", description: "Unique episode identifier" },
+      type: { enum: ["daily", "thread", "topic"], description: "Episode type" },
+      title: { bsonType: "string" },
+      summary: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      scope: { enum: SCOPE_ENUM },
+      timeRange: {
+        bsonType: "object",
+        required: ["start", "end"],
+        properties: {
+          start: { bsonType: "date" },
+          end: { bsonType: "date" },
+        },
+      },
+      sourceEventCount: { bsonType: "number" },
+      updatedAt: { bsonType: "date" },
+      eventIds: { bsonType: "array", items: { bsonType: "string" } },
+      tags: { bsonType: "array", items: { bsonType: "string" } },
+    },
+  },
+};
+
+const INGEST_RUNS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "runId",
+      "agentId",
+      "source",
+      "status",
+      "itemsProcessed",
+      "itemsFailed",
+      "durationMs",
+      "ts",
+    ],
+    properties: {
+      runId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      source: { bsonType: "string", description: "Ingest source identifier" },
+      status: { enum: ["ok", "partial", "failed"] },
+      itemsProcessed: { bsonType: "number" },
+      itemsFailed: { bsonType: "number" },
+      durationMs: { bsonType: "number" },
+      ts: { bsonType: "date" },
+    },
+  },
+};
+
+const PROJECTION_RUNS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "runId",
+      "agentId",
+      "projectionType",
+      "status",
+      "itemsProjected",
+      "durationMs",
+      "ts",
+    ],
+    properties: {
+      runId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      projectionType: { enum: ["chunk", "graph", "episode"] },
+      status: { enum: ["ok", "partial", "failed"] },
+      itemsProjected: { bsonType: "number" },
+      durationMs: { bsonType: "number" },
+      ts: { bsonType: "date" },
+    },
+  },
+};
+
 const VALIDATED_COLLECTIONS: Record<string, Document> = {
   chunks: CHUNKS_SCHEMA,
   knowledge_base: KB_SCHEMA,
@@ -234,6 +414,12 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   relevance_runs: RELEVANCE_RUNS_SCHEMA,
   relevance_artifacts: RELEVANCE_ARTIFACTS_SCHEMA,
   relevance_regressions: RELEVANCE_REGRESSIONS_SCHEMA,
+  events: EVENTS_SCHEMA,
+  entities: ENTITIES_SCHEMA,
+  relations: RELATIONS_SCHEMA,
+  episodes: EPISODES_SCHEMA,
+  ingest_runs: INGEST_RUNS_SCHEMA,
+  projection_runs: PROJECTION_RUNS_SCHEMA,
 };
 
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
@@ -254,6 +440,12 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "relevance_runs",
     "relevance_artifacts",
     "relevance_regressions",
+    "events",
+    "entities",
+    "relations",
+    "episodes",
+    "ingest_runs",
+    "projection_runs",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -511,6 +703,77 @@ export async function ensureStandardIndexes(
   await relevanceRegressions.createIndex(
     { datasetVersion: 1, metricName: 1, ts: -1 },
     { name: "idx_relreg_dataset_metric_ts" },
+  );
+  applied++;
+
+  // v2 collection indexes
+
+  // Events indexes
+  const events = eventsCollection(db, prefix);
+  await events.createIndex({ agentId: 1, timestamp: -1 }, { name: "idx_events_agent_ts" });
+  applied++;
+  await events.createIndex({ eventId: 1 }, { name: "uq_events_eventid", unique: true });
+  applied++;
+  await events.createIndex({ scope: 1, timestamp: -1 }, { name: "idx_events_scope_ts" });
+  applied++;
+  await events.createIndex(
+    { sessionId: 1, timestamp: -1 },
+    { name: "idx_events_session_ts", sparse: true },
+  );
+  applied++;
+  await events.createIndex({ projectedAt: 1 }, { name: "idx_events_projected", sparse: true });
+  applied++;
+
+  // Entities indexes
+  const entities = entitiesCollection(db, prefix);
+  await entities.createIndex({ entityId: 1 }, { name: "uq_entities_entityid", unique: true });
+  applied++;
+  await entities.createIndex(
+    { agentId: 1, type: 1, name: 1 },
+    { name: "idx_entities_agent_type_name" },
+  );
+  applied++;
+  await entities.createIndex({ name: "text", aliases: "text" }, { name: "idx_entities_text" });
+  applied++;
+
+  // Relations indexes
+  const relations = relationsCollection(db, prefix);
+  await relations.createIndex({ fromEntityId: 1, type: 1 }, { name: "idx_relations_from_type" });
+  applied++;
+  await relations.createIndex({ toEntityId: 1 }, { name: "idx_relations_to" });
+  applied++;
+  await relations.createIndex({ agentId: 1, scope: 1 }, { name: "idx_relations_agent_scope" });
+  applied++;
+
+  // Episodes indexes
+  const episodes = episodesCollection(db, prefix);
+  await episodes.createIndex({ episodeId: 1 }, { name: "uq_episodes_episodeid", unique: true });
+  applied++;
+  await episodes.createIndex(
+    { agentId: 1, type: 1, "timeRange.start": -1 },
+    { name: "idx_episodes_agent_type_start" },
+  );
+  applied++;
+  await episodes.createIndex({ summary: "text", title: "text" }, { name: "idx_episodes_text" });
+  applied++;
+
+  // Ingest runs indexes
+  const ingestRuns = ingestRunsCollection(db, prefix);
+  await ingestRuns.createIndex({ agentId: 1, ts: -1 }, { name: "idx_ingestruns_agent_ts" });
+  applied++;
+
+  // Projection runs indexes
+  const projRuns = projectionRunsCollection(db, prefix);
+  await projRuns.createIndex(
+    { agentId: 1, projectionType: 1, ts: -1 },
+    { name: "idx_projruns_agent_type_ts" },
+  );
+  applied++;
+
+  // v2-ready structured memory scope index
+  await structured.createIndex(
+    { agentId: 1, scope: 1, type: 1, key: 1 },
+    { name: "uq_structured_agent_scope_type_key", unique: true, sparse: true },
   );
   applied++;
 

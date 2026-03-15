@@ -10,6 +10,7 @@
  * degraded behavior when Search is unavailable on the test server.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,16 +18,27 @@ import { MongoClient, type Db } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getMemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
+import { materializeEpisode, searchEpisodes } from "./mongodb-episodes.js";
+import { writeEvent, projectChunksFromEvents } from "./mongodb-events.js";
+import { upsertEntity, upsertRelation, expandGraph } from "./mongodb-graph.js";
+import { backfillEventsFromChunks } from "./mongodb-migration.js";
+import { planRetrieval, type RetrievalPath } from "./mongodb-retrieval-planner.js";
 import {
   chunksCollection,
   filesCollection,
   embeddingCacheCollection,
   metaCollection,
+  eventsCollection,
+  entitiesCollection,
+  relationsCollection,
+  episodesCollection,
+  structuredMemCollection,
   ensureCollections,
   ensureStandardIndexes,
   ensureSearchIndexes,
   detectCapabilities,
 } from "./mongodb-schema.js";
+import { writeStructuredMemory } from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
 
 // ---------------------------------------------------------------------------
@@ -47,8 +59,14 @@ const EXPECTED_COLLECTION_SUFFIXES = [
   "relevance_runs",
   "relevance_artifacts",
   "relevance_regressions",
+  "events",
+  "entities",
+  "relations",
+  "episodes",
+  "ingest_runs",
+  "projection_runs",
 ] as const;
-const EXPECTED_STANDARD_INDEX_COUNT = 26;
+const EXPECTED_STANDARD_INDEX_COUNT = 43;
 
 let client: MongoClient;
 let db: Db;
@@ -1039,5 +1057,375 @@ describe("E2E: Change Streams", () => {
     await col.deleteOne({
       _id: "cs-test:1:5" as unknown as import("mongodb").InferIdType<import("mongodb").Document>,
     });
+  });
+});
+
+// ===========================================================================
+// v2: Event -> Chunk Projection
+// ===========================================================================
+
+describe("E2E v2: event -> chunk projection", () => {
+  const agentId = `e2e-evt-${randomUUID()}`;
+
+  beforeAll(async () => {
+    await eventsCollection(db, TEST_PREFIX).deleteMany({});
+    await chunksCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  it("writes event, projects chunk, retrieves via search", async () => {
+    // 1. Write event with body text
+    const { eventId } = await writeEvent({
+      db,
+      prefix: TEST_PREFIX,
+      event: {
+        agentId,
+        role: "user",
+        body: "ClawMongo uses MongoDB for canonical event storage and chunk projection",
+        scope: "agent",
+      },
+    });
+    expect(eventId).toBeDefined();
+
+    // 2. Project chunks from events
+    const projection = await projectChunksFromEvents({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+    });
+    expect(projection.eventsProcessed).toBe(1);
+    expect(projection.chunksCreated).toBe(1);
+
+    // 3. Verify chunk exists with source "conversation"
+    const chunk = await chunksCollection(db, TEST_PREFIX).findOne({
+      path: `events/${eventId}`,
+    });
+    expect(chunk).not.toBeNull();
+    expect(chunk!.source).toBe("conversation");
+    expect(chunk!.text).toContain("ClawMongo");
+
+    // 4. Verify $text search finds the chunk
+    const textResults = await chunksCollection(db, TEST_PREFIX)
+      .find(
+        { $text: { $search: "canonical event storage" } },
+        { projection: { path: 1, text: 1, score: { $meta: "textScore" } } },
+      )
+      .toSorted({ score: { $meta: "textScore" } })
+      .limit(5)
+      .toArray();
+
+    expect(textResults.length).toBeGreaterThan(0);
+    expect(textResults[0].path).toBe(`events/${eventId}`);
+  });
+});
+
+// ===========================================================================
+// v2: Structured Memory with Scope
+// ===========================================================================
+
+describe("E2E v2: structured memory with scope", () => {
+  const agentId = `e2e-struct-${randomUUID()}`;
+
+  beforeAll(async () => {
+    await structuredMemCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  it("writes structured entries with different scopes", async () => {
+    // 1. Write entry with scope "user"
+    await writeStructuredMemory({
+      db,
+      prefix: TEST_PREFIX,
+      entry: {
+        type: "preference",
+        key: "theme",
+        value: "dark mode preferred",
+        agentId,
+        scope: "user",
+      },
+      embeddingMode: "automated",
+    });
+
+    // 2. Write entry with scope "session"
+    await writeStructuredMemory({
+      db,
+      prefix: TEST_PREFIX,
+      entry: {
+        type: "preference",
+        key: "language",
+        value: "TypeScript is the default",
+        agentId,
+        scope: "session",
+      },
+      embeddingMode: "automated",
+    });
+
+    // 3. Query with scope "user" -> only user-scoped result
+    const col = structuredMemCollection(db, TEST_PREFIX);
+    const userScoped = await col.find({ agentId, scope: "user" }).toArray();
+    expect(userScoped.length).toBe(1);
+    expect(userScoped[0].key).toBe("theme");
+
+    // 4. Query without scope filter -> both results
+    const allScoped = await col.find({ agentId }).toArray();
+    expect(allScoped.length).toBe(2);
+  });
+});
+
+// ===========================================================================
+// v2: Graph Expansion
+// ===========================================================================
+
+describe("E2E v2: graph expansion", () => {
+  const agentId = `e2e-graph-${randomUUID()}`;
+  const romEntityId = randomUUID();
+  const projectEntityId = randomUUID();
+
+  beforeAll(async () => {
+    await entitiesCollection(db, TEST_PREFIX).deleteMany({});
+    await relationsCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  it("creates entities and relations, expands graph via $graphLookup", async () => {
+    // 1. upsertEntity("Rom", person)
+    const romResult = await upsertEntity({
+      db,
+      prefix: TEST_PREFIX,
+      entity: {
+        entityId: romEntityId,
+        name: "Rom",
+        type: "person",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+      },
+    });
+    expect(romResult.upserted).toBe(true);
+
+    // 2. upsertEntity("ClawMongo", project)
+    const projectResult = await upsertEntity({
+      db,
+      prefix: TEST_PREFIX,
+      entity: {
+        entityId: projectEntityId,
+        name: "ClawMongo",
+        type: "project",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+      },
+    });
+    expect(projectResult.upserted).toBe(true);
+
+    // 3. upsertRelation(Rom -> works_on -> ClawMongo)
+    const relResult = await upsertRelation({
+      db,
+      prefix: TEST_PREFIX,
+      relation: {
+        fromEntityId: romEntityId,
+        toEntityId: projectEntityId,
+        type: "works_on",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+      },
+    });
+    expect(relResult.upserted).toBe(true);
+
+    // 4. expandGraph from Rom entityId -> finds ClawMongo
+    const expansion = await expandGraph({
+      db,
+      prefix: TEST_PREFIX,
+      entityId: romEntityId,
+      agentId,
+      maxDepth: 2,
+    });
+
+    expect(expansion).not.toBeNull();
+    expect(expansion!.rootEntity.name).toBe("Rom");
+    expect(expansion!.connections.length).toBe(1);
+    expect(expansion!.connections[0].entity.name).toBe("ClawMongo");
+    expect(expansion!.connections[0].relation.type).toBe("works_on");
+    expect(expansion!.connections[0].depth).toBe(0);
+  });
+});
+
+// ===========================================================================
+// v2: Episode Materialization
+// ===========================================================================
+
+describe("E2E v2: episode materialization", () => {
+  const agentId = `e2e-episode-${randomUUID()}`;
+  const dayStart = new Date("2026-03-15T00:00:00Z");
+  const dayEnd = new Date("2026-03-15T23:59:59Z");
+
+  beforeAll(async () => {
+    await eventsCollection(db, TEST_PREFIX).deleteMany({});
+    await episodesCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  it("writes events, materializes episode, searches episode", async () => {
+    // 1. Write 5 events over a day
+    for (let i = 0; i < 5; i++) {
+      await writeEvent({
+        db,
+        prefix: TEST_PREFIX,
+        event: {
+          agentId,
+          role: i % 2 === 0 ? "user" : "assistant",
+          body: `Message number ${i + 1} about ClawMongo memory architecture`,
+          scope: "agent",
+          timestamp: new Date(`2026-03-15T${String(8 + i).padStart(2, "0")}:00:00Z`),
+        },
+      });
+    }
+
+    // Verify events were written
+    const eventCount = await eventsCollection(db, TEST_PREFIX).countDocuments({ agentId });
+    expect(eventCount).toBe(5);
+
+    // 2. Materialize episode with mock summarizer
+    const episode = await materializeEpisode({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+      type: "daily",
+      timeRange: { start: dayStart, end: dayEnd },
+      summarizer: async (events) => ({
+        title: "Daily ClawMongo Discussion",
+        summary: `Discussion about ClawMongo memory architecture with ${events.length} messages`,
+        tags: ["clawmongo", "memory"],
+      }),
+    });
+
+    // 3. Verify episode created with correct sourceEventCount
+    expect(episode).not.toBeNull();
+    expect(episode!.sourceEventCount).toBe(5);
+    expect(episode!.title).toBe("Daily ClawMongo Discussion");
+    expect(episode!.type).toBe("daily");
+    expect(episode!.tags).toEqual(["clawmongo", "memory"]);
+
+    // 4. searchEpisodes finds the episode
+    const searchResults = await searchEpisodes({
+      db,
+      prefix: TEST_PREFIX,
+      query: "ClawMongo",
+      agentId,
+    });
+
+    expect(searchResults.length).toBe(1);
+    expect(searchResults[0].title).toBe("Daily ClawMongo Discussion");
+  });
+});
+
+// ===========================================================================
+// v2: Migration Backfill
+// ===========================================================================
+
+describe("E2E v2: migration backfill", () => {
+  const agentId = `e2e-migrate-${randomUUID()}`;
+
+  beforeAll(async () => {
+    await eventsCollection(db, TEST_PREFIX).deleteMany({});
+    await chunksCollection(db, TEST_PREFIX).deleteMany({});
+  });
+
+  it("backfills events from existing v1 chunks", async () => {
+    // 1. Insert chunks directly (simulating v1 state) with source "memory"
+    const chunksCol = chunksCollection(db, TEST_PREFIX);
+    await chunksCol.insertMany([
+      {
+        _id: "memory/notes.md:1:5" as unknown as import("mongodb").InferIdType<
+          import("mongodb").Document
+        >,
+        path: "memory/notes.md",
+        text: "Project notes about ClawMongo v1 architecture",
+        hash: "abc123hash",
+        source: "memory",
+        startLine: 1,
+        endLine: 5,
+        model: "none",
+        updatedAt: new Date("2026-03-14T10:00:00Z"),
+      },
+      {
+        _id: "memory/decisions.md:1:3" as unknown as import("mongodb").InferIdType<
+          import("mongodb").Document
+        >,
+        path: "memory/decisions.md",
+        text: "Decision to use MongoDB-only backend",
+        hash: "def456hash",
+        source: "memory",
+        startLine: 1,
+        endLine: 3,
+        model: "none",
+        updatedAt: new Date("2026-03-14T11:00:00Z"),
+      },
+    ]);
+
+    // 2. Run backfillEventsFromChunks
+    const result = await backfillEventsFromChunks({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+    });
+
+    expect(result.chunksProcessed).toBe(2);
+    expect(result.eventsCreated).toBe(2);
+    expect(result.skipped).toBe(0);
+
+    // 3. Verify events created with correct body/timestamp
+    const eventsCol = eventsCollection(db, TEST_PREFIX);
+    const events = await eventsCol.find({ agentId }).toSorted({ timestamp: 1 }).toArray();
+    expect(events.length).toBe(2);
+    expect(events[0].body).toBe("Project notes about ClawMongo v1 architecture");
+    expect(events[1].body).toBe("Decision to use MongoDB-only backend");
+
+    // 4. Run backfill again -> verify idempotent (no duplicates)
+    const result2 = await backfillEventsFromChunks({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+    });
+
+    expect(result2.chunksProcessed).toBe(2);
+    expect(result2.eventsCreated).toBe(0); // idempotent: no new events
+    expect(result2.skipped).toBe(0);
+
+    // Verify still only 2 events
+    const eventCount = await eventsCol.countDocuments({ agentId });
+    expect(eventCount).toBe(2);
+  });
+});
+
+// ===========================================================================
+// v2: Retrieval Planner
+// ===========================================================================
+
+describe("E2E v2: retrieval planner", () => {
+  it("plans retrieval paths based on query and config", () => {
+    const allPaths: Set<RetrievalPath> = new Set([
+      "structured",
+      "raw-window",
+      "graph",
+      "hybrid",
+      "kb",
+      "episodic",
+    ]);
+
+    // 1. Query mentioning entities + keywords
+    const plan = planRetrieval("what does Rom work on today in the docs", {
+      availablePaths: allPaths,
+      knownEntityNames: ["Rom"],
+      hasGraphData: true,
+      hasEpisodes: true,
+    });
+
+    // 2. Verify paths include expected retrieval types
+    // "Rom" triggers graph, "today" triggers raw-window, "docs" triggers kb
+    expect(plan.paths).toContain("graph");
+    expect(plan.paths).toContain("raw-window");
+    expect(plan.paths).toContain("kb");
+
+    // 3. Verify confidence is high (multiple strong signals)
+    expect(plan.confidence).toBe("high");
+    expect(plan.reasoning.length).toBeGreaterThan(0);
   });
 });

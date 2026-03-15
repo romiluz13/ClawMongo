@@ -146,6 +146,51 @@ describe("writeStructuredMemory", () => {
     expect(updateCall[1].$set.embedding).toBeUndefined();
   });
 
+  it("writes explicit scope to structured memory entry", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(structuredMemCollection).mockReturnValue(col);
+
+    const entry: StructuredMemoryEntry = {
+      type: "decision",
+      key: "scope-test",
+      value: "Testing scope field",
+      agentId: "main",
+      scope: "workspace",
+    };
+
+    await writeStructuredMemory({
+      db: mockDb(),
+      prefix: "test_",
+      entry,
+      embeddingMode: "automated",
+    });
+
+    const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[1].$set.scope).toBe("workspace");
+  });
+
+  it("defaults scope to agent when not specified", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(structuredMemCollection).mockReturnValue(col);
+
+    const entry: StructuredMemoryEntry = {
+      type: "fact",
+      key: "default-scope",
+      value: "No scope specified",
+      agentId: "main",
+    };
+
+    await writeStructuredMemory({
+      db: mockDb(),
+      prefix: "test_",
+      entry,
+      embeddingMode: "automated",
+    });
+
+    const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[1].$set.scope).toBe("agent");
+  });
+
   it("does not include embedding vectors in ClawMongo write path", async () => {
     const col = createMockStructuredCol();
     vi.mocked(structuredMemCollection).mockReturnValue(col);
@@ -281,6 +326,27 @@ describe("searchStructuredMemory", () => {
     // Verify filter was passed to vector search stage
     const aggregateCalls = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls;
     expect(aggregateCalls.length).toBeGreaterThan(0);
+  });
+
+  it("filters by scope when provided", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate).mockReturnValueOnce({
+      toArray: vi.fn(async () => [
+        { type: "decision", key: "arch", value: "Microservices", score: 0.9 },
+      ]),
+    } as unknown as ReturnType<Collection["aggregate"]>);
+
+    await searchStructuredMemory(col, "architecture", [0.1, 0.2], {
+      maxResults: 5,
+      filter: { scope: "workspace" },
+      capabilities: baseCapabilities,
+      vectorIndexName: "test_structured_mem_vector",
+      embeddingMode: "automated",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const vectorFilter = pipeline[0].$vectorSearch.filter;
+    expect(vectorFilter.scope).toBe("workspace");
   });
 
   it("filters by agentId when provided", async () => {

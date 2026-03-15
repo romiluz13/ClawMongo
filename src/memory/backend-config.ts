@@ -4,6 +4,7 @@ import type {
   MemoryMongoDBDeploymentProfile,
   MemoryMongoDBEmbeddingMode,
   MemoryMongoDBFusionMethod,
+  MemoryRuntimeMode,
 } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
@@ -70,7 +71,9 @@ export type ResolvedMongoDBConfig = {
       datasetPath: string;
     };
   };
-  runtimeMode: "mongo_canonical";
+  runtimeMode: MemoryRuntimeMode;
+  episodes: { enabled: boolean; minEventsForEpisode: number };
+  graph: { enabled: boolean; maxGraphDepth: number };
   sources: {
     reference: { enabled: boolean };
     conversation: { enabled: boolean };
@@ -109,9 +112,9 @@ export function resolveMemoryBackendConfig(params: {
       `Unsupported memory.backend "${String(backend)}". ClawMongo supports only the MongoDB memory backend.`,
     );
   }
-  if (runtimeMode !== "mongo_canonical") {
+  if (runtimeMode !== "mongo_canonical" && runtimeMode !== "mongo_v2") {
     throw new Error(
-      `Unsupported memory.runtimeMode "${String(runtimeMode)}". ClawMongo supports only "mongo_canonical".`,
+      `Unsupported memory.runtimeMode "${String(runtimeMode)}". ClawMongo supports "mongo_canonical" or "mongo_v2".`,
     );
   }
 
@@ -313,7 +316,31 @@ export function resolveMemoryBackendConfig(params: {
                 : resolveUserPath(DEFAULT_RELEVANCE_DATASET),
           },
         },
-        runtimeMode: DEFAULT_RUNTIME_MODE,
+        runtimeMode,
+        episodes: {
+          enabled:
+            mongoCfg?.episodes?.enabled !== undefined
+              ? mongoCfg.episodes.enabled
+              : runtimeMode === "mongo_v2",
+          minEventsForEpisode:
+            typeof mongoCfg?.episodes?.minEventsForEpisode === "number" &&
+            Number.isFinite(mongoCfg.episodes.minEventsForEpisode) &&
+            mongoCfg.episodes.minEventsForEpisode > 0
+              ? Math.floor(mongoCfg.episodes.minEventsForEpisode)
+              : 10,
+        },
+        graph: {
+          enabled:
+            mongoCfg?.graph?.enabled !== undefined
+              ? mongoCfg.graph.enabled
+              : runtimeMode === "mongo_v2",
+          maxGraphDepth:
+            typeof mongoCfg?.graph?.maxGraphDepth === "number" &&
+            Number.isFinite(mongoCfg.graph.maxGraphDepth) &&
+            mongoCfg.graph.maxGraphDepth > 0
+              ? Math.floor(mongoCfg.graph.maxGraphDepth)
+              : 2,
+        },
         sources: {
           reference: {
             enabled: params.cfg.memory?.sources?.reference?.enabled !== false,
