@@ -98,7 +98,7 @@ async function writeMemoryFiles(
 // ---------------------------------------------------------------------------
 
 describe("syncToMongoDB", () => {
-  it("ignores legacy markdown runtime memory files on disk", async () => {
+  it("syncs markdown memory files from disk", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nHello world content here for chunking",
       "notes.md": "# Notes\n\nSome notes here for indexing",
@@ -111,11 +111,10 @@ describe("syncToMongoDB", () => {
       embeddingMode: "automated",
     });
 
-    expect(result.filesProcessed).toBe(0);
-    expect(result.chunksUpserted).toBe(0);
-    expect(result.sessionFilesProcessed).toBe(0);
-    expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
-    expect(mockFiles.updateOne).not.toHaveBeenCalled();
+    expect(result.filesProcessed).toBe(2);
+    expect(result.chunksUpserted).toBeGreaterThanOrEqual(2);
+    expect(mockChunks.bulkWrite).toHaveBeenCalled();
+    expect(mockFiles.updateOne).toHaveBeenCalled();
   });
 
   it("returns zero when no memory files exist", async () => {
@@ -131,12 +130,12 @@ describe("syncToMongoDB", () => {
     expect(result.staleDeleted).toBe(0);
   });
 
-  it("does not treat stored legacy markdown file metadata as active runtime memory", async () => {
+  it("re-indexes markdown files when stored hash differs", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nHello world",
     });
 
-    const storedFiles = new Map([["memory/test.md", { hash: "legacy-hash", mtime: 0, size: 0 }]]);
+    const storedFiles = new Map([["memory/test.md", { hash: "stale-hash", mtime: 0, size: 0 }]]);
     mockFiles = createMockFilesCol(storedFiles);
     vi.mocked(filesCollection).mockReturnValue(mockFiles);
     mockChunks = createMockChunksCol();
@@ -149,24 +148,23 @@ describe("syncToMongoDB", () => {
       embeddingMode: "automated",
     });
 
-    expect(result.filesProcessed).toBe(0);
-    expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
-    expect(mockFiles.deleteMany).toHaveBeenCalledWith({
-      _id: { $in: ["memory/test.md"] },
-    });
+    expect(result.filesProcessed).toBe(1);
+    expect(mockChunks.bulkWrite).toHaveBeenCalled();
   });
 
-  it("does not revive legacy markdown indexing even when force=true", async () => {
+  it("force re-indexes all markdown files even with matching hash", async () => {
     await writeMemoryFiles(tmpDir, {
       "test.md": "# Test\n\nContent",
     });
 
-    // Pretend file is already stored
+    // Pretend file is already stored with matching hash
     const storedFiles = new Map([
       ["memory/test.md", { hash: "matches_everything", mtime: 0, size: 0 }],
     ]);
     mockFiles = createMockFilesCol(storedFiles);
     vi.mocked(filesCollection).mockReturnValue(mockFiles);
+    mockChunks = createMockChunksCol();
+    vi.mocked(chunksCollection).mockReturnValue(mockChunks);
 
     const result = await syncToMongoDB({
       db: {} as Db,
@@ -176,9 +174,9 @@ describe("syncToMongoDB", () => {
       force: true,
     });
 
-    expect(result.filesProcessed).toBe(0);
-    expect(result.chunksUpserted).toBe(0);
-    expect(mockChunks.bulkWrite).not.toHaveBeenCalled();
+    expect(result.filesProcessed).toBe(1);
+    expect(result.chunksUpserted).toBeGreaterThanOrEqual(1);
+    expect(mockChunks.bulkWrite).toHaveBeenCalled();
   });
 
   it("does not include embedding field in automated mode for conversation sync", async () => {
@@ -289,7 +287,7 @@ describe("syncToMongoDB", () => {
     expect(last.completed).toBe(last.total);
   });
 
-  it("deletes stale legacy markdown chunks for removed files", async () => {
+  it("deletes stale chunks for removed files but keeps active ones", async () => {
     await writeMemoryFiles(tmpDir, {
       "keep.md": "# Keep\n\nKeep this file",
     });
@@ -308,8 +306,9 @@ describe("syncToMongoDB", () => {
       embeddingMode: "automated",
     });
 
+    // Only memory/deleted.md should be stale — memory/keep.md is still on disk
     expect(mockChunks.deleteMany).toHaveBeenCalledWith({
-      path: { $in: ["memory/keep.md", "memory/deleted.md"] },
+      path: { $in: ["memory/deleted.md"] },
     });
     expect(result.staleDeleted).toBe(3);
   });

@@ -1,8 +1,15 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { chunkMarkdown, type MemoryChunk } from "./internal.js";
+import {
+  buildFileEntry,
+  chunkMarkdown,
+  listMemoryFiles,
+  type MemoryChunk,
+  type MemoryFileEntry,
+} from "./internal.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { chunksCollection, filesCollection } from "./mongodb-schema.js";
 import {
@@ -34,6 +41,29 @@ async function getStoredFiles(
     });
   }
   return map;
+}
+
+async function upsertFileMetadata(
+  files: Collection,
+  entry: MemoryFileEntry,
+  source: InternalMemoryStoredSource,
+  session?: ClientSession,
+): Promise<void> {
+  const update = {
+    $set: {
+      source,
+      hash: entry.hash,
+      mtime: entry.mtimeMs,
+      size: entry.size,
+      updatedAt: new Date(),
+    },
+  };
+  const filter = { _id: entry.path } as Record<string, unknown>;
+  if (session) {
+    await files.updateOne(filter, update, { upsert: true, session });
+  } else {
+    await files.updateOne(filter, update, { upsert: true });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +171,83 @@ function isTransactionNotSupported(err: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Atomic file sync
+// ---------------------------------------------------------------------------
+
+async function syncFileAtomically(params: {
+  client: MongoClient | undefined;
+  useTransactions: boolean;
+  chunksCol: Collection;
+  filesCol: Collection;
+  file: MemoryFileEntry;
+  source: InternalMemoryStoredSource;
+  chunks: MemoryChunk[];
+  model: string;
+  embeddings: number[][] | null;
+  embeddingStatus: EmbeddingStatus;
+}): Promise<{ upserted: number; disableTransactions: boolean }> {
+  const { client, chunksCol, filesCol, file, source, chunks, model, embeddings, embeddingStatus } =
+    params;
+
+  if (!client || !params.useTransactions) {
+    await deleteChunksForPath(chunksCol, file.path);
+    const upserted = await upsertChunks(
+      chunksCol,
+      file.path,
+      source,
+      chunks,
+      model,
+      embeddings,
+      embeddingStatus,
+    );
+    await upsertFileMetadata(filesCol, file, source);
+    return { upserted, disableTransactions: false };
+  }
+
+  const session = client.startSession();
+  try {
+    let upserted = 0;
+    await session.withTransaction(
+      async () => {
+        await deleteChunksForPath(chunksCol, file.path, session);
+        upserted = await upsertChunks(
+          chunksCol,
+          file.path,
+          source,
+          chunks,
+          model,
+          embeddings,
+          embeddingStatus,
+          session,
+        );
+        await upsertFileMetadata(filesCol, file, source, session);
+      },
+      { writeConcern: { w: "majority" } },
+    );
+    return { upserted, disableTransactions: false };
+  } catch (err) {
+    if (isTransactionNotSupported(err)) {
+      log.info("transactions not supported (standalone), falling back for file sync");
+      await deleteChunksForPath(chunksCol, file.path);
+      const upserted = await upsertChunks(
+        chunksCol,
+        file.path,
+        source,
+        chunks,
+        model,
+        embeddings,
+        embeddingStatus,
+      );
+      await upsertFileMetadata(filesCol, file, source);
+      return { upserted, disableTransactions: true };
+    }
+    throw err;
+  } finally {
+    await session.endSession();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main sync function
 // ---------------------------------------------------------------------------
 
@@ -180,15 +287,85 @@ export async function syncToMongoDB(params: {
   // 2. Get stored file metadata from MongoDB
   const storedFiles = await getStoredFiles(filesCol);
 
-  const validPaths = new Set<string>();
-  let filesProcessed = 0;
-  let totalChunksUpserted = 0;
+  // =========================================================================
+  // Phase A: Memory files (source="memory")
+  // =========================================================================
+
+  // 1. List memory files on disk (returns absolute paths)
+  const diskPaths = await listMemoryFiles(params.workspaceDir, params.extraPaths);
   log.info(
-    `sync: markdown runtime memory is deprecated; indexing Mongo-native runtime sources only (reason=${params.reason ?? "manual"})`,
+    `sync: found ${diskPaths.length} memory files on disk (reason=${params.reason ?? "manual"})`,
   );
 
+  // Build file entries with hash, mtime, size
+  const diskFiles: MemoryFileEntry[] = [];
+  for (const absPath of diskPaths) {
+    try {
+      const entry = await buildFileEntry(absPath, params.workspaceDir);
+      if (entry) {
+        diskFiles.push(entry);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`sync: failed to read ${absPath}: ${msg}`);
+    }
+  }
+
+  // Determine which files need re-indexing
+  const filesToProcess: MemoryFileEntry[] = [];
+  const validPaths = new Set<string>();
+
+  for (const file of diskFiles) {
+    validPaths.add(file.path);
+    const stored = storedFiles.get(file.path);
+    if (params.force || !stored || stored.hash !== file.hash) {
+      filesToProcess.push(file);
+    }
+  }
+
+  log.info(`sync: ${filesToProcess.length}/${diskPaths.length} memory files need re-indexing`);
+  progress?.({ completed: 0, total: filesToProcess.length, label: "Syncing memory files" });
+
+  // Process each changed memory file
+  let filesProcessed = 0;
+  let totalChunksUpserted = 0;
+
+  for (const file of filesToProcess) {
+    try {
+      const content = await fs.readFile(file.absPath, "utf-8");
+      const chunks = chunkMarkdown(content, chunking);
+
+      // Text-only write path — embeddings are generated by MongoDB automatically
+      const embeddingStatus: EmbeddingStatus = "pending";
+      const embeddings: number[][] | null = null;
+
+      const { upserted, disableTransactions } = await syncFileAtomically({
+        client: params.client,
+        useTransactions,
+        chunksCol,
+        filesCol,
+        file,
+        source: "memory",
+        chunks,
+        model,
+        embeddings,
+        embeddingStatus,
+      });
+      totalChunksUpserted += upserted;
+      if (disableTransactions) {
+        useTransactions = false;
+      }
+
+      filesProcessed++;
+      progress?.({ completed: filesProcessed, total: filesToProcess.length, label: file.path });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`sync: failed to process ${file.path}: ${msg}`);
+    }
+  }
+
   // =========================================================================
-  // Phase A: Session transcript files (runtime conversation history)
+  // Phase B: Session transcript files (runtime conversation history)
   // =========================================================================
 
   let sessionFilesProcessed = 0;
@@ -224,7 +401,7 @@ export async function syncToMongoDB(params: {
   }
 
   // =========================================================================
-  // Phase B: Stale cleanup (covers legacy markdown paths and active conversation paths)
+  // Phase C: Stale cleanup (covers markdown paths and active conversation paths)
   // =========================================================================
 
   // Compute stale paths OUTSIDE any transaction (avoid read pressure inside txn)
@@ -276,7 +453,7 @@ export async function syncToMongoDB(params: {
   }
 
   log.info(
-    `sync complete: reference-imported=0 conversation=${sessionFilesProcessed} chunks=${totalChunksUpserted + sessionChunksUpserted} stale=${staleDeleted}`,
+    `sync complete: memory=${filesProcessed} conversation=${sessionFilesProcessed} chunks=${totalChunksUpserted + sessionChunksUpserted} stale=${staleDeleted}`,
   );
 
   return {

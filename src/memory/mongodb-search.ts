@@ -62,7 +62,7 @@ function mapLegacySourceToRuntime(source: unknown): MemorySearchResult["source"]
   if (source === "structured") {
     return "structured";
   }
-  if (source === "kb") {
+  if (source === "kb" || source === "memory") {
     return "reference";
   }
   return "conversation";

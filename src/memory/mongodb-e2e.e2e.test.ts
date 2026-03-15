@@ -574,7 +574,7 @@ describe("E2E: mongoSearch dispatcher fallback", () => {
     expect(results[0].path).toContain("mongodb-guide.md");
     expect(results[0].score).toBeGreaterThan(0);
     expect(results[0].snippet.length).toBeGreaterThan(0);
-    expect(results[0].source).toBe("memory");
+    expect(results[0].source).toBe("reference");
   });
 
   it("returns empty for queries with no matches", async () => {
