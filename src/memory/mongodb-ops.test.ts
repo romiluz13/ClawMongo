@@ -166,7 +166,7 @@ describe("mongodb-ops", () => {
       // Verify sort by ts descending
       expect(findResult.sort).toHaveBeenCalledWith({ ts: -1 });
       // Verify limit
-      expect(findResult.toSorted().limit).toHaveBeenCalledWith(10);
+      expect(vi.mocked(findResult.sort).mock.results[0].value.limit).toHaveBeenCalledWith(10);
     });
   });
 
