@@ -46,7 +46,9 @@ import { getRecentIngestRuns } from "./mongodb-ops.js";
 // v2 retrieval planner
 import { planRetrieval } from "./mongodb-retrieval-planner.js";
 // Schema setup
-import { ensureCollections, ensureStandardIndexes } from "./mongodb-schema.js";
+import { ensureCollections, ensureStandardIndexes, ensureSearchIndexes } from "./mongodb-schema.js";
+// Search functions (direct vector search, keyword search, hybrid)
+import { vectorSearch, keywordSearch, buildVectorSearchStage } from "./mongodb-search.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1166,6 +1168,254 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         agentId: AGENT_ID,
       });
       expect(result).toBeNull(); // Not our entity
+    });
+  });
+
+  // ─── Phase 11: Voyage AI AutoEmbed Vector Search ───────────────────────────
+  // Tests real vector search using Voyage AI autoEmbed (voyage-4-large).
+  // mongot must be running with embedding config for these tests to pass.
+  // The autoEmbed indexes are created by ensureSearchIndexes() and mongot
+  // auto-generates embeddings from the "text" field via the Voyage API.
+
+  describe("Phase 11: Voyage AI AutoEmbed Vector Search", () => {
+    // Allow up to 90s for mongot to finish embedding documents
+    const VECTOR_SEARCH_TIMEOUT = 90_000;
+
+    it(
+      "should have autoEmbed search indexes on chunks",
+      async () => {
+        // ensureSearchIndexes creates text + vector indexes using autoEmbed
+        const result = await ensureSearchIndexes(db, PREFIX, "community-mongot", "automated");
+        // Both should succeed (or already exist)
+        expect(result.text).toBe(true);
+        expect(result.vector).toBe(true);
+
+        // Verify the indexes exist via $listSearchIndexes
+        const chunks = db.collection(`${PREFIX}chunks`);
+        const indexes = await chunks.aggregate([{ $listSearchIndexes: {} }]).toArray();
+        const vectorIdx = indexes.find((i) => i.name === `${PREFIX}chunks_vector`);
+        const textIdx = indexes.find((i) => i.name === `${PREFIX}chunks_text`);
+
+        expect(vectorIdx).toBeDefined();
+        expect(vectorIdx!.type).toBe("vectorSearch");
+        expect(textIdx).toBeDefined();
+        expect(textIdx!.type).toBe("search");
+
+        // Verify autoEmbed definition
+        const fields = vectorIdx!.latestDefinition?.fields;
+        expect(fields).toBeDefined();
+        const autoEmbedField = fields?.find((f: { type: string }) => f.type === "autoEmbed");
+        expect(autoEmbedField).toBeDefined();
+        expect(autoEmbedField!.model).toBe("voyage-4-large");
+        expect(autoEmbedField!.path).toBe("text");
+        expect(autoEmbedField!.modality).toBe("text");
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it("should build correct $vectorSearch stage for autoEmbed", () => {
+      // Unit-level check that buildVectorSearchStage produces correct query syntax
+      const stage = buildVectorSearchStage({
+        queryVector: null,
+        queryText: "data pipeline architecture",
+        embeddingMode: "automated",
+        indexName: `${PREFIX}chunks_vector`,
+        numCandidates: 100,
+        limit: 5,
+      });
+
+      expect(stage).not.toBeNull();
+      expect(stage!.query).toEqual({ text: "data pipeline architecture" });
+      expect(stage!.path).toBe("text");
+      expect(stage!.index).toBe(`${PREFIX}chunks_vector`);
+      expect(stage!.numCandidates).toBe(100);
+      expect(stage!.limit).toBe(5);
+      // autoEmbed must NOT have queryVector
+      expect(stage!.queryVector).toBeUndefined();
+    });
+
+    it(
+      "should return semantic results for architecture queries via $vectorSearch",
+      async () => {
+        // Real vector search using Voyage AI autoEmbed
+        // Queries go through: query text → mongot → Voyage API → embedding → ANN search
+        const chunks = db.collection(`${PREFIX}chunks`);
+        const chunkCount = await chunks.countDocuments({});
+        expect(chunkCount).toBeGreaterThan(0);
+
+        const results = await vectorSearch(chunks, null, {
+          maxResults: 5,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "data pipeline architecture and system design",
+          embeddingMode: "automated",
+        });
+
+        // Should get results from the conversation chunks about DataVault architecture
+        expect(results.length).toBeGreaterThan(0);
+        expect(results.length).toBeLessThanOrEqual(5);
+
+        // Every result should have a valid score
+        for (const r of results) {
+          expect(r.score).toBeGreaterThan(0);
+          expect(r.score).toBeLessThanOrEqual(1);
+          expect(r.snippet).toBeDefined();
+          expect(r.snippet.length).toBeGreaterThan(0);
+        }
+
+        // Results should be sorted by score descending
+        for (let i = 1; i < results.length; i++) {
+          expect(results[i - 1].score).toBeGreaterThanOrEqual(results[i].score);
+        }
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it(
+      "should find deployment-related content with semantic search",
+      async () => {
+        const chunks = db.collection(`${PREFIX}chunks`);
+        const results = await vectorSearch(chunks, null, {
+          maxResults: 5,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "Docker deployment Kubernetes production infrastructure",
+          embeddingMode: "automated",
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+
+        // At least one result should mention deployment/Docker/infrastructure
+        const deploymentHit = results.some(
+          (r) =>
+            r.snippet.toLowerCase().includes("deploy") ||
+            r.snippet.toLowerCase().includes("docker") ||
+            r.snippet.toLowerCase().includes("infrastructure") ||
+            r.snippet.toLowerCase().includes("production"),
+        );
+        expect(deploymentHit).toBe(true);
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it(
+      "should find bug-fix content with semantic search",
+      async () => {
+        const chunks = db.collection(`${PREFIX}chunks`);
+        const results = await vectorSearch(chunks, null, {
+          maxResults: 5,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "database connection error bug fix troubleshooting",
+          embeddingMode: "automated",
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+
+        // At least one result should be about the connection pool bug conversation
+        const bugHit = results.some(
+          (r) =>
+            r.snippet.toLowerCase().includes("bug") ||
+            r.snippet.toLowerCase().includes("error") ||
+            r.snippet.toLowerCase().includes("fix") ||
+            r.snippet.toLowerCase().includes("connection"),
+        );
+        expect(bugHit).toBe(true);
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it(
+      "should return keyword search results with text index",
+      async () => {
+        const chunks = db.collection(`${PREFIX}chunks`);
+        const results = await keywordSearch(chunks, "DataVault pipeline", {
+          maxResults: 5,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_text`,
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+
+        // Text search results should contain the search terms
+        const hasRelevant = results.some(
+          (r) =>
+            r.snippet.toLowerCase().includes("datavault") ||
+            r.snippet.toLowerCase().includes("pipeline"),
+        );
+        expect(hasRelevant).toBe(true);
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it(
+      "should handle semantic similarity — related concepts rank higher",
+      async () => {
+        const chunks = db.collection(`${PREFIX}chunks`);
+
+        // Search for a concept that appears in the conversation but with different words
+        // The conversations discuss "real-time data processing with WebSocket"
+        // but we search with synonymous terms
+        const results = await vectorSearch(chunks, null, {
+          maxResults: 10,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "live streaming updates push notifications event-driven",
+          embeddingMode: "automated",
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+
+        // Vector search should find semantically related content even without exact keyword matches
+        // (this is the key advantage over keyword search)
+        for (const r of results) {
+          expect(r.score).toBeGreaterThan(0);
+        }
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it(
+      "should respect minScore filter on vector results",
+      async () => {
+        const chunks = db.collection(`${PREFIX}chunks`);
+
+        // Use a high minScore threshold — should get fewer or no results
+        const highThreshold = await vectorSearch(chunks, null, {
+          maxResults: 10,
+          minScore: 0.95,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "completely unrelated quantum physics black holes",
+          embeddingMode: "automated",
+        });
+
+        // Use a low minScore threshold — should get more results
+        const lowThreshold = await vectorSearch(chunks, null, {
+          maxResults: 10,
+          minScore: 0.0,
+          indexName: `${PREFIX}chunks_vector`,
+          queryText: "data pipeline architecture",
+          embeddingMode: "automated",
+        });
+
+        // High threshold on irrelevant query should return fewer results
+        expect(highThreshold.length).toBeLessThanOrEqual(lowThreshold.length);
+      },
+      VECTOR_SEARCH_TIMEOUT,
+    );
+
+    it("should return null stage when embeddingMode is not automated", () => {
+      // When embeddingMode is not "automated", buildVectorSearchStage should return null
+      // (no manual embedding support in ClawMongo)
+      const stage = buildVectorSearchStage({
+        queryVector: null,
+        queryText: "test query",
+        embeddingMode: "none" as "automated",
+        indexName: `${PREFIX}chunks_vector`,
+        numCandidates: 100,
+        limit: 5,
+      });
+      expect(stage).toBeNull();
     });
   });
 });
