@@ -120,6 +120,12 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$MERGE" == "true" ]] && [[ -n "$(git status --short)" ]]; then
+  echo "Refusing to merge upstream/main onto a dirty working tree."
+  echo "Commit or stash your changes first, then rerun with --merge."
+  exit 1
+fi
+
 # Ensure upstream remote exists
 if ! git remote get-url upstream >/dev/null 2>&1; then
   echo "Adding upstream remote..."
@@ -354,9 +360,12 @@ if [[ "$MERGE" == "true" ]]; then
   echo "  1. pnpm install"
   echo "  2. pnpm check"
   echo "  3. pnpm test -t \"memory|onboarding\""
-  echo "  4. Review protected Mongo-first files if upstream touched them"
-  echo "  5. git push"
+  echo "  4. pnpm vitest run src/memory/mongodb-e2e.e2e.test.ts src/memory/real-e2e-v2.e2e.test.ts src/memory/runtime-write.e2e.test.ts --reporter=verbose"
+  echo "  5. Review protected Mongo-first files if upstream touched them"
+  echo "  6. git push"
 else
+  echo ""
+  echo "Structured report: pnpm upstream:report"
   echo ""
   echo "To merge on current branch: bash scripts/sync-upstream.sh --merge"
 fi

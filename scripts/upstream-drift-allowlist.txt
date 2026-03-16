@@ -15,9 +15,11 @@ docs/concepts/system-prompt.md
 docs/gateway/configuration-reference.md
 docs/gateway/sandbox-vs-tool-policy-vs-elevated.md
 docs/reference/heart-brain-boundary.md
+docs/reference/upstream-sync.md
 docs/tools/index.md
 docs/tools/multi-agent-sandbox-tools.md
 docs/tools/plugin.md
+docs/plans/2026-03-17-upstream-sync-wave1.md
 extensions/test-utils/plugin-runtime-mock.ts
 package.json
 packages/clawdbot/
@@ -26,6 +28,7 @@ pnpm-lock.yaml
 scripts/check-plugin-sdk-exports.mjs
 scripts/release-check.ts
 scripts/sync-upstream.sh
+scripts/upstream-sync-report.ts
 scripts/upstream-drift-allowlist.txt
 scripts/upstream-drift-baseline.txt
 scripts/upstream-excluded-paths.txt

@@ -238,6 +238,13 @@ Preview divergence + conflict hotspots:
 bash scripts/sync-upstream.sh --ref origin/main
 ```
 
+Generate a structured sync brief before every merge wave:
+
+```bash
+pnpm upstream:report
+pnpm upstream:report -- --base v2026.3.11 --target v2026.3.12
+```
+
 Merge upstream into your current branch when you intentionally run a sync wave:
 
 ```bash
@@ -245,6 +252,7 @@ bash scripts/sync-upstream.sh --merge
 ```
 
 A scheduled GitHub Action (`Upstream Drift`) also runs daily and fails if `origin/main` is behind upstream.
+Detailed workflow: [docs/reference/upstream-sync.md](docs/reference/upstream-sync.md)
 
 ## From source (development)
 
