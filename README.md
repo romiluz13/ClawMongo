@@ -33,11 +33,13 @@ New install? Start here: [Getting started](https://docs.openclaw.ai/start/gettin
 ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB-native system:
 
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
-- **MongoDB-native automatic embeddings**: with `memory.mongodb.embeddingMode = "automated"`, MongoDB handles index-time and query-time text embedding so ClawMongo does not need a separate embedding service in the app.
-- **Unified runtime memory**: MongoDB is the canonical runtime backend for conversation history, reference knowledge, and structured memory.
-- **Hybrid retrieval with graceful degradation**: ClawMongo uses Search + Vector Search + fusion where available, and falls back to lexical retrieval instead of collapsing the memory path.
+- **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot auto-generates embeddings at index time and query time via Voyage AI. No separate embedding service, no manual vector management.
+- **Canonical events architecture (v2)**: events are the primary write target. Chunks, entities, relations, and episodes are all derived projections from the event stream.
+- **Knowledge graph with `$graphLookup`**: entities and relations form a traversable graph. Bi-directional expansion, entity extraction from conversations, and graph-aware retrieval paths.
+- **Episode materialization**: raw event sequences are consolidated into searchable episodes (daily, topic, decision, weekly types) with summarization.
+- **Hybrid retrieval with intelligent planning**: a retrieval planner scores 6 paths (hybrid, raw-window, graph, episodic, structured, kb) and a heuristic reranker applies source diversity and episode boost before final results.
 - **Real agent memory tools**: `memory_search`, `memory_get`, `kb_search`, and `memory_write` give the agent a clean recall/read/write model instead of ad-hoc file-only memory.
-- **Operational guarantees**: change streams, schema validation, transactions where available, retention controls, sync probes, and memory status are first-class.
+- **Operational guarantees**: schema validation, transactions where available, retention controls, sync probes, and memory status are first-class.
 
 ClawMongo intentionally uses the MongoDB features that materially improve agent memory without turning setup into a science project.
 
@@ -85,6 +87,83 @@ Inbound event
   -> fused ranking or lexical fallback
   -> response
 ```
+
+### Memory v2 Architecture
+
+ClawMongo v2 uses a canonical-truth-first architecture where **events are the single source of truth**. Everything else is derived.
+
+```text
+Inbound message / tool output
+  -> writeEventAndProject()
+       |
+       ├─ events collection          (canonical, append-only)
+       ├─ chunks collection          (projected from events, searchable)
+       ├─ ingest_runs collection     (operational audit trail)
+       |
+       └─ extractAndUpsertEntities() (fire-and-forget)
+            ├─ entities collection    (@mentions, #tags, URLs, paths, quoted names)
+            └─ relations collection   (links between entities, weighted, typed)
+```
+
+**16 collections total** (v1: 11, v2 adds: events, entities, relations, episodes, ingest_runs, projection_runs), backed by 44 standard indexes and 6 search indexes (3 text + 3 vector with autoEmbed).
+
+#### Vector Search (Voyage AI autoEmbed)
+
+ClawMongo uses MongoDB Community Search (`mongot`) with Voyage AI automatic embeddings:
+
+- **Index-time**: mongot reads the `text` field and calls the Voyage AI API to generate embeddings automatically
+- **Query-time**: `$vectorSearch` with `query: { text: "search query" }` — mongot embeds the query text and runs ANN search
+- **Model**: `voyage-4-large` (1024 dimensions) across chunks, kb_chunks, and structured_mem collections
+- **No application-side embedding code** — the entire embedding pipeline is handled by mongot + Voyage AI
+
+```json5
+// Vector search index definition (autoEmbed)
+{
+  type: "vectorSearch",
+  fields: [
+    { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
+    { type: "filter", path: "source" },
+    { type: "filter", path: "path" },
+  ],
+}
+```
+
+#### Knowledge Graph
+
+Entities are extracted from conversation events using rule-based regex patterns (5 types: @mentions, #tags, URLs, file paths, "Quoted Names"). Relations link entities with typed edges (`works_on`, `uses`, `mentions`, etc.) and carry weight + confidence scores.
+
+Graph traversal uses MongoDB's native `$graphLookup` with optional bi-directional expansion via `$facet`:
+
+```text
+expandGraph(entityId, { bidirectional: true, maxDepth: 2 })
+  -> $facet:
+       outbound: $graphLookup(fromEntityId -> toEntityId)
+       inbound:  $graphLookup(toEntityId -> fromEntityId)
+  -> merge + deduplicate connections
+```
+
+#### Episodes and Consolidation
+
+Events are consolidated into episodes through materialization (daily summaries, topic clusters, decision records). The consolidation lifecycle tracks which events have been processed:
+
+- `getUnconsolidatedEvents()` returns events not yet rolled up
+- `markEventsConsolidated()` stamps `consolidatedAt` + `consolidatedIntoEpisodeId`
+- `checkAutoEpisodeTriggers()` fires on session gaps (>30 min), event count thresholds (>50), or explicit triggers, with rate limiting
+
+#### Retrieval Planner and Reranking
+
+The retrieval planner (`planRetrieval`) scores 6 retrieval paths based on query analysis:
+
+| Path         | When it scores high                    |
+| ------------ | -------------------------------------- |
+| `hybrid`     | General knowledge queries              |
+| `raw-window` | Recent context ("what did I just say") |
+| `graph`      | Entity names detected in query         |
+| `episodic`   | Time-range or summary queries          |
+| `structured` | Fact/preference lookups                |
+| `kb`         | Reference material queries             |
+
+After retrieval, `rerankResults` applies source diversity penalty (avoids all results from one source) and episode boost (episodic results get a score bump), then deduplicates and slices.
 
 ## Sponsors
 
@@ -218,6 +297,16 @@ Run `clawmongo doctor` to surface risky/misconfigured DM policies.
 
 ## Everything we built so far
 
+### Memory v2 (MongoDB-native)
+
+- **Canonical events**: append-only event stream as the single source of truth. Chunks are derived projections from events via `writeEventAndProject()`.
+- **Voyage AI autoEmbed**: `voyage-4-large` automatic embeddings via `mongot` on chunks, kb_chunks, and structured_mem. `$vectorSearch` with `query: { text: "..." }` — zero application-side embedding code.
+- **Knowledge graph**: rule-based entity extraction (5 types: @mentions, #tags, URLs, file paths, "Quoted Names"), typed weighted relations, bi-directional `$graphLookup` expansion via `$facet`.
+- **Episode materialization**: consolidation of event sequences into searchable episodes (daily, topic, decision, weekly). Auto-triggers on session gaps, event count thresholds, or explicit requests with rate limiting.
+- **Retrieval planner**: pure-function scoring of 6 retrieval paths (hybrid, raw-window, graph, episodic, structured, kb) based on query analysis.
+- **Heuristic reranking**: source diversity penalty + episode boost applied between dedup and final slice in `searchV2`.
+- **16 collections**, 44 standard indexes, 6 search indexes (3 text + 3 vector autoEmbed). 54 E2E tests against live MongoDB + mongot + Voyage AI.
+
 ### Core platform
 
 - [Gateway WS control plane](https://docs.openclaw.ai/gateway) with sessions, presence, config, cron, webhooks, [Control UI](https://docs.openclaw.ai/web), and [Canvas host](https://docs.openclaw.ai/platforms/mac/canvas#canvas-a2ui).
@@ -281,6 +370,7 @@ WhatsApp / Telegram / Slack / Discord / Google Chat / Signal / iMessage / BlueBu
 
 ## Key subsystems
 
+- **Memory v2 (MongoDB-native)** — canonical events, knowledge graph (`$graphLookup`), episode materialization, rule-based entity extraction, Voyage AI autoEmbed vector search (`voyage-4-large`), retrieval planner with 6 paths, heuristic reranking. 16 collections, 44 indexes, 6 search indexes.
 - **[Gateway WebSocket network](https://docs.openclaw.ai/concepts/architecture)** — single WS control plane for clients, tools, and events (plus ops: [Gateway runbook](https://docs.openclaw.ai/gateway)).
 - **[Tailscale exposure](https://docs.openclaw.ai/gateway/tailscale)** — Serve/Funnel for the Gateway dashboard + WS (remote access: [Remote](https://docs.openclaw.ai/gateway/remote)).
 - **[Browser control](https://docs.openclaw.ai/tools/browser)** — openclaw‑managed Chrome/Chromium with CDP control.
