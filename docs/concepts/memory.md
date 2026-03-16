@@ -29,8 +29,13 @@ The standard workspace files keep their upstream roles:
   - Human-authored long-term notes.
   - Injected according to the normal OpenClaw bootstrap rules.
 - `memory/YYYY-MM-DD.md`
-  - Human-authored daily notes.
-  - Not auto-injected; read on demand.
+  - Daily log (append-only).
+  - Read today + yesterday at session start.
+- `MEMORY.md` (optional)
+  - Curated long-term memory.
+  - If both `MEMORY.md` and `memory.md` exist at the workspace root, OpenClaw only loads `MEMORY.md`.
+  - Lowercase `memory.md` is only used as a fallback when `MEMORY.md` is absent.
+  - **Only load in the main, private session** (never in group contexts).
 
 See [Agent workspace](/concepts/agent-workspace) for the full workspace map.
 For the ownership contract between workspace files and MongoDB, see
@@ -90,7 +95,7 @@ Use `community-mongot` with automatic embeddings:
 {
   memory: {
     mongodb: {
-      uri: "mongodb://localhost:27017/openclaw?replicaSet=rs0",
+      uri: "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true",
       deploymentProfile: "community-mongot",
       embeddingMode: "automated",
     },
@@ -101,7 +106,7 @@ Use `community-mongot` with automatic embeddings:
 Or via environment:
 
 ```bash
-export OPENCLAW_MONGODB_URI="mongodb://localhost:27017/openclaw?replicaSet=rs0"
+export OPENCLAW_MONGODB_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true"
 ```
 
 ClawMongo supports one official deployment profile:
@@ -119,13 +124,6 @@ using the API keys you configure during `mongot` initialization. ClawMongo
 does not require application-side embedding code — `mongot` handles embedding
 at index time and query time — but you do need Voyage AI API keys configured
 in your `mongot` deployment.
-
-## Community-first caveat
-
-MongoDB's own docs describe Community Search, Vector Search, and automatic
-embeddings as preview features and require both `mongod` and `mongot` for the
-self-managed Search path. ClawMongo supports this exact stack, but the launch
-story should remain preview-aware and precise.
 
 ## Search behavior
 
