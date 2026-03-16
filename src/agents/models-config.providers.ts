@@ -1,9 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
 import { coerceSecretRef, resolveSecretInputRef } from "../config/types.secrets.js";
-import {
-  DEFAULT_COPILOT_API_BASE_URL,
-  resolveCopilotApiToken,
-} from "../providers/github-copilot-token.js";
 import { isRecord } from "../utils.js";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
 import { ensureAuthProfileStore, listProfilesForProvider } from "./auth-profiles.js";
@@ -32,8 +28,6 @@ import {
   buildModelStudioProvider,
   buildMoonshotProvider,
   buildNvidiaProvider,
-  buildOpenAICodexProvider,
-  buildOpenrouterProvider,
   buildQianfanProvider,
   buildQwenPortalProvider,
   buildSyntheticProvider,
@@ -60,6 +54,7 @@ import {
   groupPluginDiscoveryProvidersByOrder,
   normalizePluginDiscoveryResult,
   resolvePluginDiscoveryProviders,
+  runProviderCatalog,
 } from "../plugins/provider-discovery.js";
 import {
   MINIMAX_OAUTH_MARKER,
@@ -81,12 +76,80 @@ type SecretDefaults = {
   exec?: string;
 };
 
+const MOONSHOT_NATIVE_BASE_URLS = new Set([
+  "https://api.moonshot.ai/v1",
+  "https://api.moonshot.cn/v1",
+]);
+const MODELSTUDIO_NATIVE_BASE_URLS = new Set([
+  "https://coding-intl.dashscope.aliyuncs.com/v1",
+  "https://coding.dashscope.aliyuncs.com/v1",
+]);
+
 const ENV_VAR_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 
 function normalizeApiKeyConfig(value: string): string {
   const trimmed = value.trim();
   const match = /^\$\{([A-Z0-9_]+)\}$/.exec(trimmed);
   return match?.[1] ?? trimmed;
+}
+
+function normalizeProviderBaseUrl(baseUrl: string | undefined): string {
+  const trimmed = baseUrl?.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    const url = new URL(trimmed);
+    url.hash = "";
+    url.search = "";
+    return url.toString().replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return trimmed.replace(/\/+$/, "").toLowerCase();
+  }
+}
+
+function withStreamingUsageCompat(provider: ProviderConfig): ProviderConfig {
+  if (!Array.isArray(provider.models) || provider.models.length === 0) {
+    return provider;
+  }
+
+  let changed = false;
+  const models = provider.models.map((model) => {
+    if (model.compat?.supportsUsageInStreaming !== undefined) {
+      return model;
+    }
+    changed = true;
+    return {
+      ...model,
+      compat: {
+        ...model.compat,
+        supportsUsageInStreaming: true,
+      },
+    };
+  });
+
+  return changed ? { ...provider, models } : provider;
+}
+
+export function applyNativeStreamingUsageCompat(
+  providers: Record<string, ProviderConfig>,
+): Record<string, ProviderConfig> {
+  let changed = false;
+  const nextProviders: Record<string, ProviderConfig> = {};
+
+  for (const [providerKey, provider] of Object.entries(providers)) {
+    const normalizedBaseUrl = normalizeProviderBaseUrl(provider.baseUrl);
+    const isNativeMoonshot =
+      providerKey === "moonshot" && MOONSHOT_NATIVE_BASE_URLS.has(normalizedBaseUrl);
+    const isNativeModelStudio =
+      providerKey === "modelstudio" && MODELSTUDIO_NATIVE_BASE_URLS.has(normalizedBaseUrl);
+    const nextProvider =
+      isNativeMoonshot || isNativeModelStudio ? withStreamingUsageCompat(provider) : provider;
+    nextProviders[providerKey] = nextProvider;
+    changed ||= nextProvider !== provider;
+  }
+
+  return changed ? nextProviders : providers;
 }
 
 function resolveEnvApiKeyVarName(
@@ -684,8 +747,16 @@ const SIMPLE_IMPLICIT_PROVIDER_LOADERS: ImplicitProviderLoader[] = [
     apiKey,
   })),
   withApiKey("qianfan", async ({ apiKey }) => ({ ...buildQianfanProvider(), apiKey })),
-  withApiKey("modelstudio", async ({ apiKey }) => ({ ...buildModelStudioProvider(), apiKey })),
-  withApiKey("openrouter", async ({ apiKey }) => ({ ...buildOpenrouterProvider(), apiKey })),
+  withApiKey("modelstudio", async ({ apiKey, explicitProvider }) => {
+    const explicitBaseUrl = explicitProvider?.baseUrl;
+    return {
+      ...buildModelStudioProvider(),
+      ...(typeof explicitBaseUrl === "string" && explicitBaseUrl.trim()
+        ? { baseUrl: explicitBaseUrl.trim() }
+        : {}),
+      apiKey,
+    };
+  }),
   withApiKey("nvidia", async ({ apiKey }) => ({ ...buildNvidiaProvider(), apiKey })),
   withApiKey("kilocode", async ({ apiKey }) => ({
     ...(await buildKilocodeProviderWithDiscovery()),
@@ -711,7 +782,6 @@ const PROFILE_IMPLICIT_PROVIDER_LOADERS: ImplicitProviderLoader[] = [
     ...buildQwenPortalProvider(),
     apiKey: QWEN_OAUTH_MARKER,
   })),
-  withProfilePresence("openai-codex", async () => buildOpenAICodexProvider()),
 ];
 
 const PAIRED_IMPLICIT_PROVIDER_LOADERS: ImplicitProviderLoader[] = [
@@ -791,7 +861,8 @@ async function resolvePluginImplicitProviders(
   const byOrder = groupPluginDiscoveryProvidersByOrder(providers);
   const discovered: Record<string, ProviderConfig> = {};
   for (const provider of byOrder[order]) {
-    const result = await provider.discovery?.run({
+    const result = await runProviderCatalog({
+      provider,
       config: ctx.config ?? {},
       agentDir: ctx.agentDir,
       workspaceDir: ctx.workspaceDir,
@@ -856,16 +927,6 @@ export async function resolveImplicitProviders(
   mergeImplicitProviderSet(providers, await resolveCloudflareAiGatewayImplicitProvider(context));
   mergeImplicitProviderSet(providers, await resolvePluginImplicitProviders(context, "late"));
 
-  if (!providers["github-copilot"]) {
-    const implicitCopilot = await resolveImplicitCopilotProvider({
-      agentDir: params.agentDir,
-      env,
-    });
-    if (implicitCopilot) {
-      providers["github-copilot"] = implicitCopilot;
-    }
-  }
-
   const implicitBedrock = await resolveImplicitBedrockProvider({
     agentDir: params.agentDir,
     config: params.config,
@@ -886,64 +947,6 @@ export async function resolveImplicitProviders(
   }
 
   return providers;
-}
-
-export async function resolveImplicitCopilotProvider(params: {
-  agentDir: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<ProviderConfig | null> {
-  const env = params.env ?? process.env;
-  const authStore = ensureAuthProfileStore(params.agentDir, {
-    allowKeychainPrompt: false,
-  });
-  const hasProfile = listProfilesForProvider(authStore, "github-copilot").length > 0;
-  const envToken = env.COPILOT_GITHUB_TOKEN ?? env.GH_TOKEN ?? env.GITHUB_TOKEN;
-  const githubToken = (envToken ?? "").trim();
-
-  if (!hasProfile && !githubToken) {
-    return null;
-  }
-
-  let selectedGithubToken = githubToken;
-  if (!selectedGithubToken && hasProfile) {
-    // Use the first available profile as a default for discovery (it will be
-    // re-resolved per-run by the embedded runner).
-    const profileId = listProfilesForProvider(authStore, "github-copilot")[0];
-    const profile = profileId ? authStore.profiles[profileId] : undefined;
-    if (profile && profile.type === "token") {
-      selectedGithubToken = profile.token?.trim() ?? "";
-      if (!selectedGithubToken) {
-        const tokenRef = coerceSecretRef(profile.tokenRef);
-        if (tokenRef?.source === "env" && tokenRef.id.trim()) {
-          selectedGithubToken = (env[tokenRef.id] ?? process.env[tokenRef.id] ?? "").trim();
-        }
-      }
-    }
-  }
-
-  let baseUrl = DEFAULT_COPILOT_API_BASE_URL;
-  if (selectedGithubToken) {
-    try {
-      const token = await resolveCopilotApiToken({
-        githubToken: selectedGithubToken,
-        env,
-      });
-      baseUrl = token.baseUrl;
-    } catch {
-      baseUrl = DEFAULT_COPILOT_API_BASE_URL;
-    }
-  }
-
-  // We deliberately do not write pi-coding-agent auth.json here.
-  // OpenClaw keeps auth in auth-profiles and resolves runtime availability from that store.
-
-  // We intentionally do NOT define custom models for Copilot in models.json.
-  // pi-coding-agent treats providers with models as replacements requiring apiKey.
-  // We only override baseUrl; the model list comes from pi-ai built-ins.
-  return {
-    baseUrl,
-    models: [],
-  } satisfies ProviderConfig;
 }
 
 export async function resolveImplicitBedrockProvider(params: {

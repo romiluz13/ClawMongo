@@ -268,7 +268,7 @@ pnpm build
 
 pnpm clawmongo onboard --install-daemon
 
-# Dev loop (auto-reload on TS changes)
+# Dev loop (auto-reload on source/config changes)
 pnpm gateway:watch
 ```
 
