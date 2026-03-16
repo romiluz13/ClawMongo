@@ -114,9 +114,11 @@ ClawMongo supports one official deployment profile:
 
 ClawMongo defaults to `embeddingMode: "automated"`.
 
-That means MongoDB generates embeddings inside the supported Community +
-`mongot` stack. ClawMongo does not require an external embedding provider for
-its official path.
+In this mode, `mongot` delegates embedding generation to the Voyage AI API
+using the API keys you configure during `mongot` initialization. ClawMongo
+does not require application-side embedding code — `mongot` handles embedding
+at index time and query time — but you do need Voyage AI API keys configured
+in your `mongot` deployment.
 
 ## Community-first caveat
 

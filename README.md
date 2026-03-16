@@ -34,7 +34,7 @@ ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB
 
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
 - **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot delegates to the Voyage AI API for embedding generation at index time and query time. No application-side embedding code or manual vector management.
-- **Canonical events architecture (v2)**: events are the primary write target. Chunks, entities, relations, and episodes are all derived projections from the event stream.
+- **Canonical events architecture (v2)**: events serve as the canonical data model. Chunks, entities, relations, and episodes are all derived projections. The current sync pipeline still writes chunks directly; event-first ingestion is available via `writeEventAndProject()` and will become the default runtime write path in a future release.
 - **Knowledge graph with `$graphLookup`**: entities and relations form a traversable graph. Bi-directional expansion, entity extraction from conversations, and graph-aware retrieval paths.
 - **Episode materialization**: raw event sequences are consolidated into searchable episodes (daily, topic, decision, weekly types) with summarization.
 - **Hybrid retrieval with intelligent planning**: a retrieval planner scores 6 paths (hybrid, raw-window, graph, episodic, structured, kb) and a heuristic reranker applies source diversity and episode boost before final results.
