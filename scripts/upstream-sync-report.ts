@@ -37,6 +37,8 @@ function parseArgs(argv: string[]): Options {
     const next = argv[index + 1];
 
     switch (arg) {
+      case "--":
+        continue;
       case "--base":
         if (!next) {
           throw new Error("Missing value for --base");

@@ -38,6 +38,45 @@ function resolveMemoryToolContext(options: { config?: OpenClawConfig; agentSessi
   return { cfg, agentId };
 }
 
+async function getMemoryManagerContext(params: { cfg: OpenClawConfig; agentId: string }): Promise<
+  | {
+      manager: NonNullable<Awaited<ReturnType<typeof getMemorySearchManager>>["manager"]>;
+    }
+  | {
+      error: string | undefined;
+    }
+> {
+  const { manager, error } = await getMemorySearchManager({
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+  return manager ? { manager } : { error };
+}
+
+function createMemoryTool(params: {
+  options: {
+    config?: OpenClawConfig;
+    agentSessionKey?: string;
+  };
+  label: string;
+  name: string;
+  description: string;
+  parameters: typeof MemorySearchSchema | typeof MemoryGetSchema;
+  execute: (ctx: { cfg: OpenClawConfig; agentId: string }) => AnyAgentTool["execute"];
+}): AnyAgentTool | null {
+  const ctx = resolveMemoryToolContext(params.options);
+  if (!ctx) {
+    return null;
+  }
+  return {
+    label: params.label,
+    name: params.name,
+    description: params.description,
+    parameters: params.parameters,
+    execute: params.execute(ctx),
+  };
+}
+
 function resolveMongoMemoryToolContext(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
@@ -59,97 +98,94 @@ export function createMemorySearchTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
 }): AnyAgentTool | null {
-  const ctx = resolveMemoryToolContext(options);
-  if (!ctx) {
-    return null;
-  }
-  const { cfg, agentId } = ctx;
-  return {
+  return createMemoryTool({
+    options,
     label: "Memory Search",
     name: "memory_search",
     description:
       'Mandatory recall step: semantically search MongoDB-backed runtime knowledge across conversation history, reference knowledge, and structured memory. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
     parameters: MemorySearchSchema,
-    execute: async (_toolCallId, params) => {
-      const query = readStringParam(params, "query", { required: true });
-      const maxResults = readNumberParam(params, "maxResults");
-      const minScore = readNumberParam(params, "minScore");
-      const { manager, error } = await getMemorySearchManager({
-        cfg,
-        agentId,
-      });
-      if (!manager) {
-        return jsonResult(buildMemorySearchUnavailableResult(error));
-      }
-      try {
-        const citationsMode = resolveMemoryCitationsMode(cfg);
-        const includeCitations = shouldIncludeCitations({
-          mode: citationsMode,
-          sessionKey: options.agentSessionKey,
-        });
-        const rawResults = await manager.search(query, {
-          maxResults,
-          minScore,
-          sessionKey: options.agentSessionKey,
-        });
-        const status = manager.status();
-        const decorated = decorateCitations(rawResults, includeCitations);
-        const results = decorated;
-        const feedbackHint = computeFeedbackHint(rawResults, status.backend);
-        return jsonResult({
-          results,
-          provider: status.provider,
-          model: status.model,
-          citations: citationsMode,
-          ...(feedbackHint ? { feedbackHint } : {}),
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult(buildMemorySearchUnavailableResult(message));
-      }
-    },
-  };
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const query = readStringParam(params, "query", { required: true });
+        const maxResults = readNumberParam(params, "maxResults");
+        const minScore = readNumberParam(params, "minScore");
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult(buildMemorySearchUnavailableResult(memory.error));
+        }
+        try {
+          const citationsMode = resolveMemoryCitationsMode(cfg);
+          const includeCitations = shouldIncludeCitations({
+            mode: citationsMode,
+            sessionKey: options.agentSessionKey,
+          });
+          const rawResults = await memory.manager.search(query, {
+            maxResults,
+            minScore,
+            sessionKey: options.agentSessionKey,
+          });
+          const status = memory.manager.status();
+          const decorated = decorateCitations(rawResults, includeCitations);
+          let results = decorated;
+          if (status.backend === "qmd") {
+            const resolved = resolveMemoryBackendConfig({ cfg, agentId });
+            results = clampResultsByInjectedChars(decorated, resolved.qmd?.limits.maxInjectedChars);
+          }
+          const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
+          const feedbackHint = computeFeedbackHint(rawResults, status.backend);
+          return jsonResult({
+            results,
+            provider: status.provider,
+            model: status.model,
+            fallback: status.fallback,
+            citations: citationsMode,
+            mode: searchMode,
+            ...(feedbackHint ? { feedbackHint } : {}),
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult(buildMemorySearchUnavailableResult(message));
+        }
+      },
+  });
 }
 
 export function createMemoryGetTool(options: {
   config?: OpenClawConfig;
   agentSessionKey?: string;
 }): AnyAgentTool | null {
-  const ctx = resolveMemoryToolContext(options);
-  if (!ctx) {
-    return null;
-  }
-  const { cfg, agentId } = ctx;
-  return {
+  return createMemoryTool({
+    options,
     label: "Memory Get",
     name: "memory_get",
     description:
       "Read an exact Mongo-backed memory object by locator. Supports conversation chunks, reference documents, and structured memory records. Use after memory_search or kb_search to pull the exact item you need.",
     parameters: MemoryGetSchema,
-    execute: async (_toolCallId, params) => {
-      const relPath = readStringParam(params, "path", { required: true });
-      const from = readNumberParam(params, "from", { integer: true });
-      const lines = readNumberParam(params, "lines", { integer: true });
-      const { manager, error } = await getMemorySearchManager({
-        cfg,
-        agentId,
-      });
-      if (!manager) {
-        return jsonResult(buildMemoryReadUnavailableResult(relPath, error));
-      }
-      try {
-        const result = await manager.readFile({
-          relPath,
-          from: from ?? undefined,
-          lines: lines ?? undefined,
-        });
-        return jsonResult(result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return jsonResult(buildMemoryReadUnavailableResult(relPath, message));
-      }
-    },
-  };
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const relPath = readStringParam(params, "path", { required: true });
+        const from = readNumberParam(params, "from", { integer: true });
+        const lines = readNumberParam(params, "lines", { integer: true });
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult(buildMemoryReadUnavailableResult(relPath, memory.error));
+        }
+        try {
+          const result = await memory.manager.readFile({
+            relPath,
+            from: from ?? undefined,
+            lines: lines ?? undefined,
+          });
+          return jsonResult(result);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult(buildMemoryReadUnavailableResult(relPath, message));
+        }
+      },
+  });
 }
 
 function resolveMemoryCitationsMode(cfg: OpenClawConfig): MemoryCitationsMode {
@@ -177,6 +213,32 @@ function formatCitation(entry: MemorySearchResult): string {
       ? `#L${entry.startLine}`
       : `#L${entry.startLine}-L${entry.endLine}`;
   return `${entry.path}${lineRange}`;
+}
+
+function clampResultsByInjectedChars(
+  results: MemorySearchResult[],
+  budget?: number,
+): MemorySearchResult[] {
+  if (!budget || budget <= 0) {
+    return results;
+  }
+  let remaining = budget;
+  const clamped: MemorySearchResult[] = [];
+  for (const entry of results) {
+    if (remaining <= 0) {
+      break;
+    }
+    const snippet = entry.snippet ?? "";
+    if (snippet.length <= remaining) {
+      clamped.push(entry);
+      remaining -= snippet.length;
+    } else {
+      const trimmed = snippet.slice(0, Math.max(0, remaining));
+      clamped.push({ ...entry, snippet: trimmed });
+      break;
+    }
+  }
+  return clamped;
 }
 
 function buildMemorySearchUnavailableResult(error: string | undefined) {

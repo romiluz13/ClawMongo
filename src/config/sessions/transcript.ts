@@ -138,6 +138,7 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   sessionKey: string;
   text?: string;
   mediaUrls?: string[];
+  idempotencyKey?: string;
   /** Optional override for store path (mostly for tests). */
   storePath?: string;
 }): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
@@ -182,6 +183,13 @@ export async function appendAssistantMessageToSessionTranscript(params: {
 
   await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
 
+  if (
+    params.idempotencyKey &&
+    (await transcriptHasIdempotencyKey(sessionFile, params.idempotencyKey))
+  ) {
+    return { ok: true, sessionFile };
+  }
+
   const sessionManager = guardSessionManager(SessionManager.open(sessionFile), {
     cfg: params.cfg,
     agentId: params.agentId,
@@ -210,7 +218,34 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     },
     stopReason: "stop",
     timestamp: Date.now(),
+    ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
   });
   await sessionManager.flushPendingPersistedWrites?.();
+  emitSessionTranscriptUpdate(sessionFile);
   return { ok: true, sessionFile };
+}
+
+async function transcriptHasIdempotencyKey(
+  transcriptPath: string,
+  idempotencyKey: string,
+): Promise<boolean> {
+  try {
+    const raw = await fs.promises.readFile(transcriptPath, "utf-8");
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(line) as { message?: { idempotencyKey?: unknown } };
+        if (parsed.message?.idempotencyKey === idempotencyKey) {
+          return true;
+        }
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
