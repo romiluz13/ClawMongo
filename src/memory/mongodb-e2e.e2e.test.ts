@@ -2,8 +2,8 @@
  * MongoDB E2E tests — requires a running MongoDB 8.2+ instance.
  *
  * Run manually:
- *   docker run -d --name clawmongo-test -p 27117:27017 mongo:8.2
- *   MONGODB_TEST_URI=mongodb://localhost:27117 npx vitest run src/memory/mongodb-e2e.e2e.test.ts
+ *   MONGODB_TEST_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
+ *     pnpm vitest run --config vitest.e2e.config.ts src/memory/mongodb-e2e.e2e.test.ts --reporter=verbose
  *
  * These tests exercise the real MongoDB driver and server operations.
  * They are useful both for the supported community-mongot path and for
@@ -45,7 +45,9 @@ import { syncToMongoDB } from "./mongodb-sync.js";
 // Environment
 // ---------------------------------------------------------------------------
 
-const TEST_URI = process.env.MONGODB_TEST_URI ?? "mongodb://localhost:27117";
+const TEST_URI =
+  process.env.MONGODB_TEST_URI ||
+  "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const TEST_DB = "clawmongo_e2e_test";
 const TEST_PREFIX = "e2e_";
 const EXPECTED_COLLECTION_SUFFIXES = [

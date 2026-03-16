@@ -5,7 +5,7 @@
  * with realistic multi-turn AI agent simulation data.
  *
  * Run: MONGODB_TEST_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
- *      pnpm vitest run src/memory/real-e2e-v2.e2e.test.ts --reporter=verbose
+ *      pnpm vitest run --config vitest.e2e.config.ts src/memory/real-e2e-v2.e2e.test.ts --reporter=verbose
  */
 
 import { randomUUID } from "node:crypto";

@@ -360,7 +360,7 @@ if [[ "$MERGE" == "true" ]]; then
   echo "  1. pnpm install"
   echo "  2. pnpm check"
   echo "  3. pnpm test -t \"memory|onboarding\""
-  echo "  4. pnpm vitest run src/memory/mongodb-e2e.e2e.test.ts src/memory/real-e2e-v2.e2e.test.ts src/memory/runtime-write.e2e.test.ts --reporter=verbose"
+  echo "  4. pnpm vitest run --config vitest.e2e.config.ts src/memory/mongodb-e2e.e2e.test.ts src/memory/real-e2e-v2.e2e.test.ts src/memory/runtime-write.e2e.test.ts --reporter=verbose"
   echo "  5. Review protected Mongo-first files if upstream touched them"
   echo "  6. git push"
 else

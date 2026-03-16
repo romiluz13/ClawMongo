@@ -95,7 +95,7 @@ Every sync wave must pass:
 - the live MongoDB memory suites:
 
 ```bash
-pnpm vitest run src/memory/mongodb-e2e.e2e.test.ts src/memory/real-e2e-v2.e2e.test.ts src/memory/runtime-write.e2e.test.ts --reporter=verbose
+pnpm vitest run --config vitest.e2e.config.ts src/memory/mongodb-e2e.e2e.test.ts src/memory/real-e2e-v2.e2e.test.ts src/memory/runtime-write.e2e.test.ts --reporter=verbose
 ```
 
 The acceptance bar is:
