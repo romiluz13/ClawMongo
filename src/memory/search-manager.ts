@@ -1,3 +1,4 @@
+import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMongoDBConfig } from "./backend-config.js";
@@ -37,11 +38,15 @@ export async function getMemorySearchManager(params: {
   }
 
   try {
+    // Resolve the per-agent session memory policy (merges defaults + per-agent overrides
+    // + MongoDB auto-default) so the manager consumes the fully resolved value.
+    const resolvedSearch = resolveMemorySearchConfig(params.cfg, params.agentId);
     const { MongoDBMemoryManager } = await import("./mongodb-manager.js");
     const manager = await MongoDBMemoryManager.create({
       cfg: params.cfg,
       agentId: params.agentId,
       resolved,
+      sessionMemoryEnabled: resolvedSearch?.experimental?.sessionMemory,
     });
     if (!manager) {
       const error = "mongodb memory manager initialization returned null";

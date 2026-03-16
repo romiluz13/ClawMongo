@@ -330,6 +330,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     cfg: OpenClawConfig;
     agentId: string;
     resolved: ResolvedMemoryBackendConfig;
+    /** Resolved per-agent sessionMemory flag from resolveMemorySearchConfig().
+     *  When provided, the manager uses this instead of reading the raw defaults-level config. */
+    sessionMemoryEnabled?: boolean;
   }): Promise<MongoDBMemoryManager | null> {
     const mongoCfg = params.resolved.mongodb;
     if (!mongoCfg) {
@@ -337,8 +340,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
+    // Prefer the caller-provided resolved value (which merges defaults + per-agent overrides
+    // + MongoDB auto-default). Fall back to raw defaults-level flag for backward compat.
     const sessionMemoryEnabled =
-      params.cfg.agents?.defaults?.memorySearch?.experimental?.sessionMemory ?? false;
+      params.sessionMemoryEnabled ??
+      params.cfg.agents?.defaults?.memorySearch?.experimental?.sessionMemory ??
+      false;
 
     // Connect to MongoDB with a timeout to avoid hanging
     const safeUri = redactMongoURI(mongoCfg.uri);
