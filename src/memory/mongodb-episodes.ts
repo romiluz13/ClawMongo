@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { getEventsByTimeRange } from "./mongodb-events.js";
+import {
+  getEventsByTimeRange,
+  getUnconsolidatedEvents,
+  markEventsConsolidated,
+} from "./mongodb-events.js";
 import { episodesCollection } from "./mongodb-schema.js";
 
 const log = createSubsystemLogger("memory:mongodb:episodes");
@@ -254,6 +258,141 @@ export async function searchEpisodes(params: {
     return docs as unknown as Episode[];
   } catch (err) {
     log.error(`searchEpisodes failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auto episode trigger result type
+// ---------------------------------------------------------------------------
+
+export type AutoEpisodeTriggerResult = {
+  triggered: boolean;
+  reason?: "session_gap" | "event_count" | "explicit" | "rate_limited" | "insufficient_events";
+  episode?: Episode;
+};
+
+// ---------------------------------------------------------------------------
+// Check if auto episode materialization should trigger
+// ---------------------------------------------------------------------------
+
+/**
+ * Check if auto episode materialization should trigger.
+ * Three triggers:
+ * (a) Session gap: >sessionGapMinutes between consecutive events
+ * (b) Event count: >maxEventsWithoutEpisode unconsolidated events
+ * (c) Explicit: force=true (user-triggered)
+ *
+ * MUST be async (not blocking write path) -- the summarizer is an LLM call.
+ * Rate limited: max 1 episode per rateLimitMinutes per agent.
+ */
+export async function checkAutoEpisodeTriggers(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  summarizer: EpisodeSummarizer;
+  scope?: MemoryScope;
+  sessionGapMinutes?: number;
+  maxEventsWithoutEpisode?: number;
+  rateLimitMinutes?: number;
+  force?: boolean;
+}): Promise<AutoEpisodeTriggerResult> {
+  const {
+    db,
+    prefix,
+    agentId,
+    summarizer,
+    scope,
+    sessionGapMinutes = 30,
+    maxEventsWithoutEpisode = 50,
+    rateLimitMinutes = 60,
+    force = false,
+  } = params;
+
+  try {
+    // 1. Get unconsolidated events
+    const events = await getUnconsolidatedEvents({ db, prefix, agentId, scope, limit: 500 });
+
+    // Need at least 2 events for any episode
+    if (events.length < 2) {
+      return { triggered: false, reason: "insufficient_events" };
+    }
+
+    // 2. Rate limit check (unless forced)
+    if (!force) {
+      const now = new Date();
+      const rateLimitWindow = new Date(now.getTime() - rateLimitMinutes * 60 * 1000);
+      const recentEpisodes = await getEpisodesByTimeRange({
+        db,
+        prefix,
+        agentId,
+        start: rateLimitWindow,
+        end: now,
+      });
+      if (recentEpisodes.length > 0) {
+        return { triggered: false, reason: "rate_limited" };
+      }
+    }
+
+    // 3. Determine trigger reason
+    let triggerReason: "session_gap" | "event_count" | "explicit" | undefined;
+
+    if (force) {
+      triggerReason = "explicit";
+    } else {
+      // Check session gap
+      const gapMs = sessionGapMinutes * 60 * 1000;
+      for (let i = 1; i < events.length; i++) {
+        const gap = events[i].timestamp.getTime() - events[i - 1].timestamp.getTime();
+        if (gap > gapMs) {
+          triggerReason = "session_gap";
+          break;
+        }
+      }
+
+      // Check event count
+      if (!triggerReason && events.length > maxEventsWithoutEpisode) {
+        triggerReason = "event_count";
+      }
+    }
+
+    if (!triggerReason) {
+      return { triggered: false };
+    }
+
+    // 4. Determine time range from unconsolidated events
+    const timeRange = {
+      start: events[0].timestamp,
+      end: events[events.length - 1].timestamp,
+    };
+
+    // 5. Materialize episode
+    const episode = await materializeEpisode({
+      db,
+      prefix,
+      agentId,
+      type: "thread", // auto-triggered episodes are "thread" type
+      timeRange,
+      scope,
+      summarizer,
+    });
+
+    if (!episode) {
+      return { triggered: false, reason: "insufficient_events" };
+    }
+
+    // 6. Mark events as consolidated
+    const eventIds = events.map((e) => e.eventId);
+    await markEventsConsolidated({ db, prefix, eventIds, episodeId: episode.episodeId });
+
+    log.info(
+      `auto episode triggered: reason=${triggerReason} episode=${episode.episodeId} events=${eventIds.length} agent=${agentId}`,
+    );
+    return { triggered: true, reason: triggerReason, episode };
+  } catch (err) {
+    log.error(
+      `checkAutoEpisodeTriggers failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     throw err;
   }
 }

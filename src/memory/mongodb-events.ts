@@ -21,6 +21,8 @@ export type CanonicalEvent = {
   scope: MemoryScope;
   timestamp: Date;
   projectedAt?: Date;
+  consolidatedAt?: Date;
+  consolidatedIntoEpisodeId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -141,6 +143,63 @@ export async function markEventsProjected(params: {
     { $set: { projectedAt: new Date() } },
   );
   return result.modifiedCount;
+}
+
+// ---------------------------------------------------------------------------
+// Consolidation
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark events as consolidated into an episode.
+ * Sets consolidatedAt timestamp and consolidatedIntoEpisodeId.
+ * Returns the count of modified events.
+ */
+export async function markEventsConsolidated(params: {
+  db: Db;
+  prefix: string;
+  eventIds: string[];
+  episodeId: string;
+}): Promise<number> {
+  const { db, prefix, eventIds, episodeId } = params;
+  if (eventIds.length === 0) {
+    return 0;
+  }
+  const collection = eventsCollection(db, prefix);
+  const result = await collection.updateMany(
+    { eventId: { $in: eventIds } },
+    { $set: { consolidatedAt: new Date(), consolidatedIntoEpisodeId: episodeId } },
+  );
+  log.info(`marked ${result.modifiedCount} events consolidated into episode=${episodeId}`);
+  return result.modifiedCount;
+}
+
+/**
+ * Get events that have NOT been consolidated into any episode.
+ * Uses the sparse index on consolidatedAt for efficient queries.
+ */
+export async function getUnconsolidatedEvents(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  scope?: MemoryScope;
+  limit?: number;
+}): Promise<CanonicalEvent[]> {
+  const { db, prefix, agentId, scope, limit } = params;
+  const collection = eventsCollection(db, prefix);
+  const filter: Document = {
+    agentId,
+    consolidatedAt: { $exists: false },
+  };
+  if (scope) {
+    filter.scope = scope;
+  }
+
+  return (await collection
+    .find(filter)
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+    .sort({ timestamp: 1 })
+    .limit(limit ?? 500)
+    .toArray()) as unknown as CanonicalEvent[];
 }
 
 /**

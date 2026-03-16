@@ -107,6 +107,73 @@ export function deduplicateSearchResults(results: MemorySearchResult[]): MemoryS
 }
 
 // ---------------------------------------------------------------------------
+// Heuristic reranker
+// ---------------------------------------------------------------------------
+
+/**
+ * Configurable weights for the heuristic reranker.
+ */
+export type RerankWeights = {
+  /** Penalty per excess result from same source (default 0.15) */
+  diversityWeight?: number;
+  /** Bonus for episode results (default 0.12) */
+  episodeBoost?: number;
+};
+
+/**
+ * Heuristic reranker for v2 search results.
+ * - Source diversity penalty: no more than 2 results from the same source at the top
+ * - Episode priority boost: episode results get a score boost
+ *
+ * Does not mutate the original array.
+ * Recency boost deferred (needs timestamp in MemorySearchResult interface).
+ */
+export function rerankResults(
+  results: MemorySearchResult[],
+  _query: string,
+  weights?: RerankWeights,
+): MemorySearchResult[] {
+  if (results.length === 0) {
+    return [];
+  }
+
+  const diversityWeight = weights?.diversityWeight ?? 0.15;
+  const episodeBoost = weights?.episodeBoost ?? 0.12;
+
+  // Score each result (copy, don't mutate)
+  const scored = results.map((r) => ({
+    result: r,
+    adjustedScore: r.score,
+  }));
+
+  // 1. Episode priority boost
+  for (const entry of scored) {
+    if (entry.result.path.startsWith("episode:")) {
+      entry.adjustedScore += episodeBoost;
+    }
+  }
+
+  // 2. Sort by adjusted score descending
+  scored.sort((a, b) => b.adjustedScore - a.adjustedScore);
+
+  // 3. Source diversity penalty: penalize 3rd+ result from same source
+  const sourceCounts = new Map<string, number>();
+  for (const entry of scored) {
+    const source = entry.result.source;
+    const count = (sourceCounts.get(source) ?? 0) + 1;
+    sourceCounts.set(source, count);
+    if (count > 2) {
+      entry.adjustedScore -= diversityWeight * (count - 2);
+    }
+  }
+
+  // 4. Re-sort after diversity penalty
+  scored.sort((a, b) => b.adjustedScore - a.adjustedScore);
+
+  return scored.map((s) => s.result);
+}
+
+// ---------------------------------------------------------------------------
 // Source policy helpers — exported for testing and reuse
 // ---------------------------------------------------------------------------
 
@@ -1692,11 +1759,13 @@ export async function searchV2(
       }
     }
 
-    // Deduplicate and limit
-    const deduped = deduplicateSearchResults(results).slice(0, maxResults);
+    // Deduplicate, rerank, and limit
+    const deduped = deduplicateSearchResults(results);
+    const reranked = rerankResults(deduped, query);
+    const finalResults = reranked.slice(0, maxResults);
 
     return {
-      results: deduped,
+      results: finalResults,
       metadata: { plan, pathsExecuted, resultsByPath },
     };
   } catch (err) {

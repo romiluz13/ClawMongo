@@ -8,6 +8,7 @@ import {
   writeEventAndProject,
   searchV2,
   getV2Status,
+  rerankResults,
 } from "./mongodb-manager.js";
 import type { MemorySearchResult } from "./types.js";
 
@@ -609,5 +610,74 @@ describe("getV2Status", () => {
     expect(status.episodes.count).toBe(0);
     expect(status.projectionLag.entities).toBeNull();
     expect(status.projectionLag.episodes).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: rerankResults
+// ---------------------------------------------------------------------------
+
+describe("rerankResults", () => {
+  const makeResult = (
+    path: string,
+    snippet: string,
+    score: number,
+    source: MemorySearchResult["source"],
+  ): MemorySearchResult => ({
+    path,
+    filePath: path,
+    startLine: 0,
+    endLine: 0,
+    snippet,
+    score,
+    source,
+  });
+
+  it("returns empty array for empty input", () => {
+    const result = rerankResults([], "query");
+    expect(result).toHaveLength(0);
+  });
+
+  it("applies source diversity penalty (no >2 from same source at top)", () => {
+    const results = [
+      makeResult("event:1", "text1", 0.95, "conversation"),
+      makeResult("event:2", "text2", 0.9, "conversation"),
+      makeResult("event:3", "text3", 0.85, "conversation"),
+      makeResult("struct:1", "text4", 0.8, "structured"),
+    ];
+    const reranked = rerankResults(results, "query");
+    // The 3rd conversation result should be penalized below structured
+    const top3Sources = reranked.slice(0, 3).map((r) => r.source);
+    expect(top3Sources).toContain("structured");
+  });
+
+  it("boosts episode results", () => {
+    const results = [
+      makeResult("event:1", "text1", 0.9, "conversation"),
+      makeResult("episode:ep1", "Episode: summary", 0.8, "conversation"),
+    ];
+    const reranked = rerankResults(results, "query");
+    // Episode should be boosted above the event (0.80 + 0.12 = 0.92 > 0.90)
+    expect(reranked[0].path).toBe("episode:ep1");
+  });
+
+  it("respects custom weights", () => {
+    const results = [
+      makeResult("event:1", "text1", 0.9, "conversation"),
+      makeResult("episode:ep1", "text2", 0.8, "conversation"),
+    ];
+    // With zero episode boost, original order preserved
+    const reranked = rerankResults(results, "query", { episodeBoost: 0 });
+    expect(reranked[0].path).toBe("event:1");
+  });
+
+  it("does not mutate original array", () => {
+    const results = [
+      makeResult("event:1", "text1", 0.9, "conversation"),
+      makeResult("event:2", "text2", 0.85, "conversation"),
+    ];
+    const originalOrder = results.map((r) => r.path);
+    rerankResults(results, "query");
+    expect(results.map((r) => r.path)).toEqual(originalOrder);
   });
 });

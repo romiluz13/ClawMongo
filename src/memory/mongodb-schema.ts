@@ -275,6 +275,14 @@ const EVENTS_SCHEMA: Document = {
       channel: { bsonType: "string" },
       metadata: { bsonType: "object" },
       projectedAt: { bsonType: "date", description: "When this event was projected to chunks" },
+      consolidatedAt: {
+        bsonType: "date",
+        description: "When this event was consolidated into an episode",
+      },
+      consolidatedIntoEpisodeId: {
+        bsonType: "string",
+        description: "Episode ID this event was consolidated into",
+      },
     },
   },
 };
@@ -335,7 +343,10 @@ const EPISODES_SCHEMA: Document = {
     ],
     properties: {
       episodeId: { bsonType: "string", description: "Unique episode identifier" },
-      type: { enum: ["daily", "thread", "topic"], description: "Episode type" },
+      type: {
+        enum: ["daily", "weekly", "thread", "topic", "decision"],
+        description: "Episode type",
+      },
       title: { bsonType: "string" },
       summary: { bsonType: "string" },
       agentId: { bsonType: "string" },
@@ -722,6 +733,11 @@ export async function ensureStandardIndexes(
   );
   applied++;
   await events.createIndex({ projectedAt: 1 }, { name: "idx_events_projected", sparse: true });
+  applied++;
+  await events.createIndex(
+    { consolidatedAt: 1 },
+    { name: "idx_events_consolidated", sparse: true },
+  );
   applied++;
 
   // Entities indexes

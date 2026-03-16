@@ -389,9 +389,9 @@ describe("ensureStandardIndexes", () => {
     };
 
     // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 6 structured (5+1 v2 scope) + 3 relevance_runs +
-    // 2 relevance_artifacts + 2 relevance_regressions + 5 events + 3 entities + 3 relations +
-    // 3 episodes + 1 ingest_runs + 1 projection_runs = 43
-    expect(count).toBe(43);
+    // 2 relevance_artifacts + 2 relevance_regressions + 6 events (5+1 consolidated) + 3 entities + 3 relations +
+    // 3 episodes + 1 ingest_runs + 1 projection_runs = 44
+    expect(count).toBe(44);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
@@ -420,7 +420,7 @@ describe("ensureStandardIndexes", () => {
     const projectionRuns = db.collection("test_projection_runs") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
-    expect(events.createIndex).toHaveBeenCalledTimes(5);
+    expect(events.createIndex).toHaveBeenCalledTimes(6);
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
     expect(relations.createIndex).toHaveBeenCalledTimes(3);
     expect(episodes.createIndex).toHaveBeenCalledTimes(3);
@@ -564,8 +564,8 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 26 (v1) + 5 events + 3 entities + 3 relations + 3 episodes + 1 ingest_runs + 1 projection_runs + 1 structured scope = 43
-    expect(count).toBe(43);
+    // 26 (v1) + 6 events (5+1 consolidated) + 3 entities + 3 relations + 3 episodes + 1 ingest_runs + 1 projection_runs + 1 structured scope = 44
+    expect(count).toBe(44);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -799,6 +799,25 @@ describe("checkKBOrphans", () => {
     const result = await checkKBOrphans(kbChunksCol, kbCol);
     expect(result.orphanedChunkCount).toBe(0);
     expect(result.orphanedDocIds).toEqual([]);
+  });
+});
+
+describe("EPISODES_SCHEMA enum completeness", () => {
+  it("EPISODES_SCHEMA enum includes all 5 EpisodeType values", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const episodesCall = createCalls.find((c: unknown[]) => c[0] === "test_episodes");
+    expect(episodesCall).toBeDefined();
+    const schema = episodesCall![1]?.validator.$jsonSchema;
+    const typeEnum = schema.properties.type.enum;
+    // EpisodeType = "daily" | "weekly" | "thread" | "topic" | "decision"
+    expect(typeEnum).toContain("daily");
+    expect(typeEnum).toContain("weekly");
+    expect(typeEnum).toContain("thread");
+    expect(typeEnum).toContain("topic");
+    expect(typeEnum).toContain("decision");
+    expect(typeEnum).toHaveLength(5);
   });
 });
 

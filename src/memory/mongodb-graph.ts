@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -240,8 +241,10 @@ export async function expandGraph(params: {
   entityId: string;
   agentId: string;
   maxDepth?: number;
+  bidirectional?: boolean;
+  maxConnections?: number;
 }): Promise<GraphExpansionResult | null> {
-  const { db, prefix, entityId, agentId, maxDepth } = params;
+  const { db, prefix, entityId, agentId, maxDepth, bidirectional, maxConnections } = params;
   try {
     const entCol = entitiesCollection(db, prefix);
     const relCol = relationsCollection(db, prefix);
@@ -255,47 +258,94 @@ export async function expandGraph(params: {
       return null;
     }
 
-    // 2. Run $graphLookup on relations collection starting from relations
-    //    that originate from the root entity, then follow edges recursively.
-    //    $graphLookup does recursive self-joins on the relations collection:
-    //    - Start with relations where fromEntityId matches root entityId
-    //    - Follow toEntityId -> fromEntityId edges for subsequent hops
-    const relPipeline: Document[] = [
-      { $match: { fromEntityId: entityId, agentId } },
-      {
-        $graphLookup: {
-          from: `${prefix}relations`,
-          startWith: "$toEntityId",
-          connectFromField: "toEntityId",
-          connectToField: "fromEntityId",
-          as: "transitiveRelations",
-          maxDepth: Math.max(0, (maxDepth ?? 2) - 1),
-          depthField: "depth",
-          restrictSearchWithMatch: { agentId },
-        },
-      },
-    ];
-
-    const relResults = await relCol.aggregate(relPipeline).toArray();
+    const graphLookupDepth = Math.max(0, (maxDepth ?? 2) - 1);
 
     // 3. Collect all unique relations with their depths
     // Direct relations are depth 0, transitive relations come from $graphLookup
     const relationsByKey = new Map<string, { relation: Document; depth: number }>();
 
-    for (const directRel of relResults) {
-      const key = `${directRel.fromEntityId}:${directRel.toEntityId}:${directRel.type}`;
-      if (!relationsByKey.has(key)) {
-        relationsByKey.set(key, { relation: directRel, depth: 0 });
-      }
-      // Process transitive relations from $graphLookup
-      const transitive = (directRel.transitiveRelations ?? []) as Document[];
-      for (const transRel of transitive) {
-        const tKey = `${transRel.fromEntityId}:${transRel.toEntityId}:${transRel.type}`;
-        const depth = ((transRel.depth as number) ?? 0) + 1;
-        if (!relationsByKey.has(tKey)) {
-          relationsByKey.set(tKey, { relation: transRel, depth });
+    function collectRelations(rels: Document[]): void {
+      for (const directRel of rels) {
+        const key = `${directRel.fromEntityId}:${directRel.toEntityId}:${directRel.type}`;
+        if (!relationsByKey.has(key)) {
+          relationsByKey.set(key, { relation: directRel, depth: 0 });
+        }
+        // Process transitive relations from $graphLookup
+        const transitive = (directRel.transitiveRelations ?? []) as Document[];
+        for (const transRel of transitive) {
+          const tKey = `${transRel.fromEntityId}:${transRel.toEntityId}:${transRel.type}`;
+          const depth = ((transRel.depth as number) ?? 0) + 1;
+          if (!relationsByKey.has(tKey)) {
+            relationsByKey.set(tKey, { relation: transRel, depth });
+          }
         }
       }
+    }
+
+    if (bidirectional) {
+      // 2b. Use $facet for parallel forward + reverse traversal in one aggregation
+      const facetPipeline: Document[] = [
+        {
+          $facet: {
+            forward: [
+              { $match: { fromEntityId: entityId, agentId } },
+              {
+                $graphLookup: {
+                  from: `${prefix}relations`,
+                  startWith: "$toEntityId",
+                  connectFromField: "toEntityId",
+                  connectToField: "fromEntityId",
+                  as: "transitiveRelations",
+                  maxDepth: graphLookupDepth,
+                  depthField: "depth",
+                  restrictSearchWithMatch: { agentId },
+                },
+              },
+            ],
+            reverse: [
+              { $match: { toEntityId: entityId, agentId } },
+              {
+                $graphLookup: {
+                  from: `${prefix}relations`,
+                  startWith: "$fromEntityId",
+                  connectFromField: "fromEntityId",
+                  connectToField: "toEntityId",
+                  as: "transitiveRelations",
+                  maxDepth: graphLookupDepth,
+                  depthField: "depth",
+                  restrictSearchWithMatch: { agentId },
+                },
+              },
+            ],
+          },
+        },
+      ];
+
+      const [facetResult] = await relCol.aggregate(facetPipeline).toArray();
+      const forwardRels = (facetResult?.forward ?? []) as Document[];
+      const reverseRels = (facetResult?.reverse ?? []) as Document[];
+      collectRelations(forwardRels);
+      collectRelations(reverseRels);
+    } else {
+      // 2a. Outbound-only pipeline (original behavior)
+      const relPipeline: Document[] = [
+        { $match: { fromEntityId: entityId, agentId } },
+        {
+          $graphLookup: {
+            from: `${prefix}relations`,
+            startWith: "$toEntityId",
+            connectFromField: "toEntityId",
+            connectToField: "fromEntityId",
+            as: "transitiveRelations",
+            maxDepth: graphLookupDepth,
+            depthField: "depth",
+            restrictSearchWithMatch: { agentId },
+          },
+        },
+      ];
+
+      const relResults = await relCol.aggregate(relPipeline).toArray();
+      collectRelations(relResults);
     }
 
     // 4. Collect all connected entity IDs
@@ -338,7 +388,16 @@ export async function expandGraph(params: {
       }
     }
 
-    return { rootEntity, connections };
+    // 7. Apply maxConnections limit
+    const connectionLimit = maxConnections ?? 100;
+    const limitedConnections = connections.slice(0, connectionLimit);
+    if (connections.length > connectionLimit) {
+      log.warn(
+        `expandGraph: truncated ${connections.length} connections to maxConnections=${connectionLimit} for entity=${entityId}`,
+      );
+    }
+
+    return { rootEntity, connections: limitedConnections };
   } catch (err) {
     log.error(`expandGraph failed: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
@@ -379,6 +438,212 @@ export async function deleteEntity(params: {
     };
   } catch (err) {
     log.error(`deleteEntity failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rule-based entity extraction
+// ---------------------------------------------------------------------------
+
+// Stop words for quoted name filtering
+const STOP_WORDS = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "can",
+  "shall",
+  "must",
+  "need",
+  "not",
+  "and",
+  "or",
+  "but",
+  "if",
+  "then",
+  "else",
+  "when",
+  "where",
+  "how",
+  "what",
+  "which",
+  "who",
+  "whom",
+  "this",
+  "that",
+  "these",
+  "those",
+  "it",
+  "its",
+  "i",
+  "me",
+  "my",
+  "we",
+  "our",
+  "you",
+  "your",
+  "he",
+  "she",
+  "him",
+  "her",
+  "they",
+  "them",
+  "their",
+]);
+
+// Regex patterns for structural entity extraction
+const MENTION_REGEX = /@(\w{3,})/g;
+const TAG_REGEX = /#(\w{3,})/g;
+const URL_REGEX = /https?:\/\/[^\s)]+/g;
+const FILE_PATH_REGEX = /(?:^|\s)((?:[\w.-]+\/)+[\w.-]+\.\w+)/g;
+const QUOTED_NAME_REGEX = /"([^"]{3,})"/g;
+
+function makeEntityId(name: string, type: string): string {
+  return createHash("sha256").update(`${name.toLowerCase()}:${type}`).digest("hex").slice(0, 16);
+}
+
+type ExtractedEntity = { entityId: string; name: string; type: EntityType };
+
+/**
+ * Extract structural entities from event content and upsert them.
+ * Regex patterns: @mentions->person, #tags->topic, URLs->document,
+ * file paths->document, "quoted names"->person.
+ *
+ * Deterministic entityIds via hash of name.toLowerCase() + type.
+ * Fire-and-forget: caller decides whether to await.
+ * SEPARATE from writeEvent -- not called automatically.
+ */
+export async function extractAndUpsertEntities(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  eventContent: string;
+  scope: MemoryScope;
+  sourceEventId?: string;
+}): Promise<{ entities: ExtractedEntity[]; relationsCreated: number }> {
+  const { db, prefix, agentId, eventContent, scope, sourceEventId } = params;
+
+  const extracted: ExtractedEntity[] = [];
+  const seen = new Set<string>(); // dedup by entityId
+
+  // Helper to add an entity (dedup by entityId)
+  function addEntity(name: string, type: EntityType): void {
+    const entityId = makeEntityId(name, type);
+    if (!seen.has(entityId)) {
+      seen.add(entityId);
+      extracted.push({ entityId, name, type });
+    }
+  }
+
+  // 1. @mentions -> person
+  for (const match of eventContent.matchAll(MENTION_REGEX)) {
+    const name = match[1];
+    if (name && !STOP_WORDS.has(name.toLowerCase())) {
+      addEntity(name, "person");
+    }
+  }
+
+  // 2. #tags -> topic
+  for (const match of eventContent.matchAll(TAG_REGEX)) {
+    const name = match[1];
+    if (name && !STOP_WORDS.has(name.toLowerCase())) {
+      addEntity(name, "topic");
+    }
+  }
+
+  // 3. URLs -> document
+  for (const match of eventContent.matchAll(URL_REGEX)) {
+    addEntity(match[0], "document");
+  }
+
+  // 4. File paths -> document
+  for (const match of eventContent.matchAll(FILE_PATH_REGEX)) {
+    const filePath = match[1];
+    if (filePath) {
+      addEntity(filePath, "document");
+    }
+  }
+
+  // 5. "Quoted names" -> person (min 3 chars, stop-word filtered)
+  for (const match of eventContent.matchAll(QUOTED_NAME_REGEX)) {
+    const name = match[1];
+    if (name && name.trim().length >= 3 && !STOP_WORDS.has(name.toLowerCase().trim())) {
+      addEntity(name.trim(), "person");
+    }
+  }
+
+  if (extracted.length === 0) {
+    return { entities: [], relationsCreated: 0 };
+  }
+
+  // Upsert entities
+  try {
+    for (const entity of extracted) {
+      await upsertEntity({
+        db,
+        prefix,
+        entity: {
+          entityId: entity.entityId,
+          name: entity.name,
+          type: entity.type,
+          agentId,
+          scope,
+          updatedAt: new Date(),
+          ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
+        },
+      });
+    }
+
+    // Create "mentioned_with" relations between co-occurring entities
+    let relationsCreated = 0;
+    if (extracted.length >= 2) {
+      for (let i = 0; i < extracted.length - 1 && i < 5; i++) {
+        for (let j = i + 1; j < extracted.length && j < 6; j++) {
+          await upsertRelation({
+            db,
+            prefix,
+            relation: {
+              fromEntityId: extracted[i].entityId,
+              toEntityId: extracted[j].entityId,
+              type: "mentioned_with",
+              agentId,
+              scope,
+              updatedAt: new Date(),
+              ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
+            },
+          });
+          relationsCreated++;
+        }
+      }
+    }
+
+    log.info(
+      `extracted ${extracted.length} entities and ${relationsCreated} relations from event content for agent=${agentId}`,
+    );
+    return { entities: extracted, relationsCreated };
+  } catch (err) {
+    log.error(
+      `extractAndUpsertEntities failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     throw err;
   }
 }

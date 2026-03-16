@@ -18,6 +18,8 @@ export {
   getEventsBySession,
   getUnprojectedEvents,
   markEventsProjected,
+  markEventsConsolidated,
+  getUnconsolidatedEvents,
   projectChunksFromEvents,
   type CanonicalEvent,
 } from "./mongodb-events.js";
@@ -28,6 +30,7 @@ export {
   getEntitiesByType,
   expandGraph,
   deleteEntity,
+  extractAndUpsertEntities,
   type Entity,
   type EntityType,
   type Relation,
@@ -39,9 +42,11 @@ export {
   getEpisodesByTimeRange,
   getEpisodesByType,
   searchEpisodes,
+  checkAutoEpisodeTriggers,
   type Episode,
   type EpisodeType,
   type EpisodeSummarizer,
+  type AutoEpisodeTriggerResult,
 } from "./mongodb-episodes.js";
 export {
   recordIngestRun,
@@ -56,3 +61,4 @@ export {
   type RetrievalPath,
 } from "./mongodb-retrieval-planner.js";
 export { backfillEventsFromChunks } from "./mongodb-migration.js";
+export { rerankResults, type RerankWeights } from "./mongodb-manager.js";

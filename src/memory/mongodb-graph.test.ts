@@ -8,6 +8,7 @@ import {
   getEntitiesByType,
   expandGraph,
   deleteEntity,
+  extractAndUpsertEntities,
   type Entity,
   type Relation,
 } from "./mongodb-graph.js";
@@ -338,6 +339,186 @@ describe("mongodb-graph", () => {
     });
   });
 
+  describe("expandGraph bidirectional", () => {
+    it("backward compatible: bidirectional defaults to false (no $facet)", async () => {
+      const rootEntity = makeEntity();
+      const entitiesCol = createMockCollection();
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([]),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+      });
+
+      // Should NOT use $facet when bidirectional is not set
+      const [pipeline] = (relationsCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0];
+      const facetStage = pipeline.find((s: Document) => s.$facet);
+      expect(facetStage).toBeUndefined();
+    });
+
+    it("bidirectional=true uses $facet for parallel traversal", async () => {
+      const rootEntity = makeEntity();
+      const entitiesCol = createMockCollection();
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([{ forward: [], reverse: [] }]),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+        bidirectional: true,
+      });
+
+      // Should use $facet when bidirectional=true
+      const [pipeline] = (relationsCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0];
+      const facetStage = pipeline.find((s: Document) => s.$facet);
+      expect(facetStage).toBeDefined();
+      expect(facetStage.$facet.forward).toBeDefined();
+      expect(facetStage.$facet.reverse).toBeDefined();
+    });
+
+    it("maxConnections limits total connections returned", async () => {
+      const rootEntity = makeEntity();
+      const entities = Array.from({ length: 10 }, (_, i) =>
+        makeEntity({ entityId: `ent-${i + 2}`, name: `Entity${i + 2}`, type: "project" }),
+      );
+
+      const entitiesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue(entities),
+        }),
+      });
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      // Create 10 forward relations
+      const forwardRels = entities.map((e) => ({
+        fromEntityId: "ent-1",
+        toEntityId: e.entityId,
+        type: "works_on",
+        agentId: "agent-1",
+        scope: "agent",
+        updatedAt: new Date("2026-01-01"),
+        transitiveRelations: [],
+      }));
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue(forwardRels),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+        maxConnections: 5,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.connections.length).toBeLessThanOrEqual(5);
+    });
+
+    it("deduplicates connections from forward and reverse traversal", async () => {
+      const rootEntity = makeEntity();
+      const connectedEntity = makeEntity({ entityId: "ent-2", name: "ProjectX", type: "project" });
+
+      const entitiesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([connectedEntity]),
+        }),
+      });
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      // Same relation appears in both forward and reverse
+      const facetResult = {
+        forward: [
+          {
+            fromEntityId: "ent-1",
+            toEntityId: "ent-2",
+            type: "works_on",
+            agentId: "agent-1",
+            scope: "agent",
+            updatedAt: new Date("2026-01-01"),
+            transitiveRelations: [],
+          },
+        ],
+        reverse: [
+          {
+            fromEntityId: "ent-1",
+            toEntityId: "ent-2",
+            type: "works_on",
+            agentId: "agent-1",
+            scope: "agent",
+            updatedAt: new Date("2026-01-01"),
+            transitiveRelations: [],
+          },
+        ],
+      };
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([facetResult]),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+        bidirectional: true,
+      });
+
+      expect(result).not.toBeNull();
+      // Same relation in forward and reverse should be deduped
+      expect(result!.connections).toHaveLength(1);
+      expect(result!.connections[0].entity.entityId).toBe("ent-2");
+    });
+  });
+
   describe("error handling", () => {
     it("upsertEntity wraps and re-throws errors", async () => {
       const entitiesCol = createMockCollection({
@@ -359,6 +540,180 @@ describe("mongodb-graph", () => {
       await expect(
         deleteEntity({ db, prefix: PREFIX, entityId: "ent-1", agentId: "agent-1" }),
       ).rejects.toThrow("db delete failed");
+    });
+  });
+
+  describe("extractAndUpsertEntities", () => {
+    it("extracts @mentions as person entities", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Talked to @alice about the project",
+        scope: "agent",
+      });
+
+      expect(result.entities).toContainEqual(
+        expect.objectContaining({ name: "alice", type: "person" }),
+      );
+    });
+
+    it("extracts #tags as topic entities", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Working on #frontend #refactor today",
+        scope: "agent",
+      });
+
+      expect(result.entities).toHaveLength(2);
+      expect(result.entities[0].type).toBe("topic");
+      expect(result.entities[1].type).toBe("topic");
+    });
+
+    it("extracts URLs as document entities", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "See https://example.com/docs for details",
+        scope: "agent",
+      });
+
+      expect(result.entities).toContainEqual(
+        expect.objectContaining({ name: "https://example.com/docs", type: "document" }),
+      );
+    });
+
+    it("extracts file paths as document entities", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Modified src/memory/mongodb-graph.ts",
+        scope: "agent",
+      });
+
+      expect(result.entities).toContainEqual(
+        expect.objectContaining({ name: "src/memory/mongodb-graph.ts", type: "document" }),
+      );
+    });
+
+    it("extracts 'quoted names' as person entities (min 3 chars)", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: 'Meeting with "John Smith" about the design',
+        scope: "agent",
+      });
+
+      expect(result.entities).toContainEqual(
+        expect.objectContaining({ name: "John Smith", type: "person" }),
+      );
+    });
+
+    it("filters out stop words and short names", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: '"the" and "is" are not names. @me is too short',
+        scope: "agent",
+      });
+
+      expect(result.entities).toHaveLength(0);
+    });
+
+    it("generates deterministic entityIds via hash", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result1 = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Talked to @alice",
+        scope: "agent",
+      });
+      const result2 = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Met @alice again",
+        scope: "agent",
+      });
+
+      // Same @alice -> same entityId
+      const id1 = result1.entities.find((e) => e.name === "alice")?.entityId;
+      const id2 = result2.entities.find((e) => e.name === "alice")?.entityId;
+      expect(id1).toBe(id2);
+    });
+
+    it("returns empty result for content with no extractable entities", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "Just a plain message with no entities",
+        scope: "agent",
+      });
+
+      expect(result.entities).toHaveLength(0);
     });
   });
 });

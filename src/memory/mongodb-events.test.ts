@@ -14,6 +14,8 @@ import {
   getEventsBySession,
   getUnprojectedEvents,
   markEventsProjected,
+  markEventsConsolidated,
+  getUnconsolidatedEvents,
   projectChunksFromEvents,
   type CanonicalEvent,
 } from "./mongodb-events.js";
@@ -629,5 +631,144 @@ describe("projectChunksFromEvents", () => {
     expect(result.eventsProcessed).toBe(2);
     // Only 1 chunk was actually created (the other was a duplicate)
     expect(result.chunksCreated).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: markEventsConsolidated
+// ---------------------------------------------------------------------------
+
+describe("markEventsConsolidated", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("marks events with consolidatedAt and episodeId", async () => {
+    const col = createMockEventsCol();
+    vi.mocked(col.updateMany).mockResolvedValue({
+      modifiedCount: 3,
+      matchedCount: 3,
+      upsertedCount: 0,
+      upsertedId: null,
+      acknowledged: true,
+    });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    const result = await markEventsConsolidated({
+      db: mockDb(),
+      prefix: "test_",
+      eventIds: ["e1", "e2", "e3"],
+      episodeId: "ep-123",
+    });
+
+    expect(result).toBe(3);
+    expect(col.updateMany).toHaveBeenCalledOnce();
+    const [filter, update] = vi.mocked(col.updateMany).mock.calls[0];
+    expect(filter).toEqual({ eventId: { $in: ["e1", "e2", "e3"] } });
+    expect(update).toHaveProperty("$set");
+    const setClause = (update as Record<string, Record<string, unknown>>).$set;
+    expect(setClause.consolidatedAt).toBeInstanceOf(Date);
+    expect(setClause.consolidatedIntoEpisodeId).toBe("ep-123");
+  });
+
+  it("returns 0 for empty eventIds array", async () => {
+    const col = createMockEventsCol();
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    const result = await markEventsConsolidated({
+      db: mockDb(),
+      prefix: "test_",
+      eventIds: [],
+      episodeId: "ep-123",
+    });
+
+    expect(result).toBe(0);
+    expect(col.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: getUnconsolidatedEvents
+// ---------------------------------------------------------------------------
+
+describe("getUnconsolidatedEvents", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns events without consolidatedAt field", async () => {
+    const mockEvents: CanonicalEvent[] = [
+      {
+        eventId: "e1",
+        agentId: "agent-1",
+        role: "user",
+        body: "Unconsolidated",
+        scope: "agent",
+        timestamp: new Date(),
+      },
+    ];
+
+    const toArrayFn = vi.fn(async () => mockEvents);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    const result = await getUnconsolidatedEvents({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+    });
+
+    expect(result).toHaveLength(1);
+    expect(findFn).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      consolidatedAt: { $exists: false },
+    });
+    expect(limitFn).toHaveBeenCalledWith(500); // default limit
+  });
+
+  it("applies optional scope filter", async () => {
+    const toArrayFn = vi.fn(async () => []);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getUnconsolidatedEvents({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      scope: "session",
+    });
+
+    expect(findFn).toHaveBeenCalledWith({
+      agentId: "agent-1",
+      consolidatedAt: { $exists: false },
+      scope: "session",
+    });
+  });
+
+  it("applies optional limit", async () => {
+    const toArrayFn = vi.fn(async () => []);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getUnconsolidatedEvents({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      limit: 10,
+    });
+
+    expect(limitFn).toHaveBeenCalledWith(10);
   });
 });

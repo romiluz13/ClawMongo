@@ -1,14 +1,28 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock mongodb-events.js for checkAutoEpisodeTriggers tests
+vi.mock("./mongodb-events.js", () => ({
+  getEventsByTimeRange: vi.fn().mockResolvedValue([]),
+  getUnconsolidatedEvents: vi.fn().mockResolvedValue([]),
+  markEventsConsolidated: vi.fn().mockResolvedValue(0),
+}));
+
 import {
   materializeEpisode,
   getEpisodesByTimeRange,
   getEpisodesByType,
   searchEpisodes,
+  checkAutoEpisodeTriggers,
   type Episode,
   type EpisodeSummarizer,
 } from "./mongodb-episodes.js";
+import {
+  getUnconsolidatedEvents,
+  markEventsConsolidated,
+  getEventsByTimeRange as getEventsByTimeRangeMock,
+} from "./mongodb-events.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: stub MongoDB collection
@@ -96,21 +110,12 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      // Events collection returns 5 events for the time range
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      // Mock getEventsByTimeRange to return events (module-level mock)
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       // Episodes collection for the upsert
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -148,19 +153,10 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -189,19 +185,10 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(1, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -326,15 +313,7 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       // Episodes collection: second call means update (upsertedCount: 0)
       const episodesCol = createMockCollection({
@@ -343,7 +322,6 @@ describe("mongodb-episodes", () => {
           .mockResolvedValue({ upsertedCount: 0, matchedCount: 1, modifiedCount: 1 }),
       });
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -374,19 +352,10 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -416,19 +385,10 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -492,19 +452,10 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection();
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -533,21 +484,12 @@ describe("mongodb-episodes", () => {
       const end = new Date("2026-03-15T10:00:00Z");
       const eventDocs = makeEventDocs(5, start);
 
-      const eventsCol = createMockCollection({
-        find: vi.fn().mockReturnValue({
-          sort: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              toArray: vi.fn().mockResolvedValue(eventDocs),
-            }),
-          }),
-        }),
-      });
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
 
       const episodesCol = createMockCollection({
         updateOne: vi.fn().mockRejectedValue(new Error("db write failed")),
       });
       const db = createMockDb({
-        [`${PREFIX}events`]: eventsCol,
         [`${PREFIX}episodes`]: episodesCol,
       });
 
@@ -579,6 +521,319 @@ describe("mongodb-episodes", () => {
           agentId: AGENT_ID,
         }),
       ).rejects.toThrow("db read failed");
+    });
+  });
+
+  describe("checkAutoEpisodeTriggers", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("triggers episode on session gap (>30min default)", async () => {
+      // Events with a >30min gap between them
+      const events = [
+        {
+          eventId: "evt-0",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Start",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:00:00Z"),
+        },
+        {
+          eventId: "evt-1",
+          agentId: AGENT_ID,
+          role: "assistant",
+          body: "Reply",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:05:00Z"),
+        },
+        {
+          eventId: "evt-2",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "After gap",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T11:00:00Z"),
+        },
+      ];
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      // getEventsByTimeRange for materializeEpisode
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events as never);
+
+      // No recent episodes (rate limit passes)
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(result.triggered).toBe(true);
+      expect(result.reason).toBe("session_gap");
+    });
+
+    it("triggers episode on event count (>50 default)", async () => {
+      // Generate 51 events with no gap > 30min (1-min intervals)
+      const start = new Date("2026-03-15T10:00:00Z");
+      const events = Array.from({ length: 51 }, (_, i) => ({
+        eventId: `evt-${i}`,
+        agentId: AGENT_ID,
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `Message ${i}`,
+        scope: "agent",
+        timestamp: new Date(start.getTime() + i * 60_000),
+      }));
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events as never);
+
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(result.triggered).toBe(true);
+      expect(result.reason).toBe("event_count");
+    });
+
+    it("does not trigger when under thresholds", async () => {
+      // 10 events, no gap
+      const start = new Date("2026-03-15T10:00:00Z");
+      const events = Array.from({ length: 10 }, (_, i) => ({
+        eventId: `evt-${i}`,
+        agentId: AGENT_ID,
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `Message ${i}`,
+        scope: "agent",
+        timestamp: new Date(start.getTime() + i * 60_000),
+      }));
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(result.triggered).toBe(false);
+    });
+
+    it("respects rate limit (max 1 per hour per agent)", async () => {
+      const start = new Date("2026-03-15T10:00:00Z");
+      const events = [
+        {
+          eventId: "evt-0",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Start",
+          scope: "agent",
+          timestamp: start,
+        },
+        {
+          eventId: "evt-1",
+          agentId: AGENT_ID,
+          role: "assistant",
+          body: "Reply",
+          scope: "agent",
+          timestamp: new Date(start.getTime() + 60_000),
+        },
+        {
+          eventId: "evt-2",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Gap",
+          scope: "agent",
+          timestamp: new Date(start.getTime() + 60 * 60_000),
+        },
+      ];
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+
+      // Return a recent episode (within last hour)
+      const recentEpisode = makeEpisodeDoc();
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([recentEpisode]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe("rate_limited");
+    });
+
+    it("calls markEventsConsolidated after episode creation", async () => {
+      const events = [
+        {
+          eventId: "evt-0",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Start",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:00:00Z"),
+        },
+        {
+          eventId: "evt-1",
+          agentId: AGENT_ID,
+          role: "assistant",
+          body: "Reply",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:05:00Z"),
+        },
+        {
+          eventId: "evt-2",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "After gap",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T11:00:00Z"),
+        },
+      ];
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events as never);
+
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(markEventsConsolidated).toHaveBeenCalled();
+    });
+
+    it("supports explicit trigger (force=true bypasses thresholds and rate limit)", async () => {
+      const events = [
+        {
+          eventId: "evt-0",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "One",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:00:00Z"),
+        },
+        {
+          eventId: "evt-1",
+          agentId: AGENT_ID,
+          role: "assistant",
+          body: "Two",
+          scope: "agent",
+          timestamp: new Date("2026-03-15T10:01:00Z"),
+        },
+      ];
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events as never);
+
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+        force: true,
+      });
+
+      expect(result.triggered).toBe(true);
+      expect(result.reason).toBe("explicit");
+    });
+
+    it("returns insufficient_events when <2 unconsolidated events", async () => {
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue([
+        {
+          eventId: "evt-0",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Only one",
+          scope: "agent",
+          timestamp: new Date(),
+        },
+      ] as never);
+
+      const episodesCol = createMockCollection();
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+      });
+
+      expect(result.triggered).toBe(false);
+      expect(result.reason).toBe("insufficient_events");
     });
   });
 });
