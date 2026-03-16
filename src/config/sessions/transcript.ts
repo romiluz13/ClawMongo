@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { guardSessionManager } from "../../agents/session-tool-result-guard-wrapper.js";
+import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 import type { OpenClawConfig } from "../config.js";
 import { parseSessionThreadInfo } from "./delivery-info.js";
 import {
