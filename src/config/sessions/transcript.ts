@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
-import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
+import { guardSessionManager } from "../../agents/session-tool-result-guard-wrapper.js";
+import type { OpenClawConfig } from "../config.js";
 import { parseSessionThreadInfo } from "./delivery-info.js";
 import {
   resolveDefaultSessionStorePath,
@@ -131,7 +132,9 @@ export async function resolveSessionTranscriptFile(params: {
 }
 
 export async function appendAssistantMessageToSessionTranscript(params: {
+  cfg?: OpenClawConfig;
   agentId?: string;
+  sessionId?: string;
   sessionKey: string;
   text?: string;
   mediaUrls?: string[];
@@ -179,7 +182,12 @@ export async function appendAssistantMessageToSessionTranscript(params: {
 
   await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
 
-  const sessionManager = SessionManager.open(sessionFile);
+  const sessionManager = guardSessionManager(SessionManager.open(sessionFile), {
+    cfg: params.cfg,
+    agentId: params.agentId,
+    sessionId: params.sessionId ?? entry.sessionId,
+    sessionKey,
+  });
   sessionManager.appendMessage({
     role: "assistant",
     content: [{ type: "text", text: mirrorText }],
@@ -203,7 +211,6 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     stopReason: "stop",
     timestamp: Date.now(),
   });
-
-  emitSessionTranscriptUpdate(sessionFile);
+  await sessionManager.flushPendingPersistedWrites?.();
   return { ok: true, sessionFile };
 }

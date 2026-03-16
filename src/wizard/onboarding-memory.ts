@@ -369,7 +369,7 @@ This workspace uses the MongoDB memory backend. The agent should prefer MongoDB 
 - **Recall**: Use \`memory_search\` (not file reads) as the primary recall mechanism
 - **Store**: Use \`memory_write\` for structured data (decisions, preferences, facts)
 - **Reference**: Use \`kb_search\` for imported documents and reference materials
-- **MEMORY.md**: Use for informal scratch notes only — NOT your primary memory
+- **MEMORY.md**: Keep as a human-authored bridge note only — NOT agent-written runtime memory
 
 The MongoDB backend provides persistent, searchable, multi-instance memory with vector search,
 knowledge base ingestion, and structured agent memory.
@@ -382,7 +382,7 @@ This workspace uses the MongoDB memory backend.
 - Use \`memory_search\` for recall (not file reads)
 - Use \`memory_write\` for structured data (decisions, preferences, facts)
 - Use \`kb_search\` for reference documents
-- This file is for informal scratch notes only
+- This file is a human-authored bridge note, not the runtime memory store
 `;
 
 /**

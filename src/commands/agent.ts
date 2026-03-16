@@ -38,6 +38,7 @@ import {
 } from "../agents/model-selection.js";
 import { prepareSessionManagerForRun } from "../agents/pi-embedded-runner/session-manager-init.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
+import { guardSessionManager } from "../agents/session-tool-result-guard-wrapper.js";
 import { buildWorkspaceSkillSnapshot } from "../agents/skills.js";
 import { getSkillsSnapshotVersion } from "../agents/skills/refresh.js";
 import { normalizeSpawnedRunMetadata } from "../agents/spawned-context.js";
@@ -86,7 +87,6 @@ import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import { applyVerboseOverride } from "../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../sessions/model-overrides.js";
 import { resolveSendPolicy } from "../sessions/send-policy.js";
-import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveMessageChannel } from "../utils/message-channel.js";
 import { deliverAgentCommandResult } from "./agent/delivery.js";
 import { resolveAgentRunContext } from "./agent/run-context.js";
@@ -253,6 +253,7 @@ const ACP_TRANSCRIPT_USAGE = {
 } as const;
 
 async function persistAcpTurnTranscript(params: {
+  cfg: ReturnType<typeof loadConfig>;
   body: string;
   finalText: string;
   sessionId: string;
@@ -283,7 +284,12 @@ async function persistAcpTurnTranscript(params: {
     .access(sessionFile)
     .then(() => true)
     .catch(() => false);
-  const sessionManager = SessionManager.open(sessionFile);
+  const sessionManager = guardSessionManager(SessionManager.open(sessionFile), {
+    cfg: params.cfg,
+    agentId: params.sessionAgentId,
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
+  });
   await prepareSessionManagerForRun({
     sessionManager,
     sessionFile,
@@ -313,7 +319,7 @@ async function persistAcpTurnTranscript(params: {
     });
   }
 
-  emitSessionTranscriptUpdate(sessionFile);
+  await sessionManager.flushPendingPersistedWrites?.();
   return sessionEntry;
 }
 
@@ -820,6 +826,7 @@ async function agentCommandInternal(
       const finalText = visibleTextAccumulator.finalize();
       try {
         sessionEntry = await persistAcpTurnTranscript({
+          cfg,
           body,
           finalText: finalTextRaw,
           sessionId,

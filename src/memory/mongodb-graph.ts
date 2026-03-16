@@ -3,6 +3,7 @@ import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { entitiesCollection, relationsCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 
 const log = createSubsystemLogger("memory:mongodb:graph");
 
@@ -27,6 +28,7 @@ export type Entity = {
   aliases?: string[];
   agentId: string;
   scope: MemoryScope;
+  scopeRef?: string;
   metadata?: Record<string, unknown>;
   sourceEventIds?: string[];
   updatedAt: Date;
@@ -49,6 +51,7 @@ export type Relation = {
   weight?: number;
   agentId: string;
   scope: MemoryScope;
+  scopeRef?: string;
   sourceEventIds?: string[];
   updatedAt: Date;
 };
@@ -76,12 +79,18 @@ export async function upsertEntity(params: {
     const collection = entitiesCollection(db, prefix);
 
     const now = new Date();
+    const scopeRef = resolveScopeRef({
+      scope: entity.scope,
+      scopeRef: entity.scopeRef,
+      agentId: entity.agentId,
+    });
     const setDoc: Document = {
       entityId: entity.entityId,
       name: entity.name,
       type: entity.type,
       agentId: entity.agentId,
       scope: entity.scope,
+      scopeRef,
       updatedAt: now,
     };
     if (entity.aliases !== undefined) {
@@ -95,7 +104,7 @@ export async function upsertEntity(params: {
     }
 
     const result = await collection.updateOne(
-      { entityId: entity.entityId },
+      { entityId: entity.entityId, agentId: entity.agentId, scope: entity.scope, scopeRef },
       { $set: setDoc, $setOnInsert: { createdAt: now } },
       { upsert: true },
     );
@@ -123,12 +132,18 @@ export async function upsertRelation(params: {
     const collection = relationsCollection(db, prefix);
 
     const now = new Date();
+    const scopeRef = resolveScopeRef({
+      scope: relation.scope,
+      scopeRef: relation.scopeRef,
+      agentId: relation.agentId,
+    });
     const setDoc: Document = {
       fromEntityId: relation.fromEntityId,
       toEntityId: relation.toEntityId,
       type: relation.type,
       agentId: relation.agentId,
       scope: relation.scope,
+      scopeRef,
       updatedAt: now,
     };
     if (relation.weight !== undefined) {
@@ -143,6 +158,9 @@ export async function upsertRelation(params: {
         fromEntityId: relation.fromEntityId,
         toEntityId: relation.toEntityId,
         type: relation.type,
+        agentId: relation.agentId,
+        scope: relation.scope,
+        scopeRef,
       },
       { $set: setDoc, $setOnInsert: { createdAt: now } },
       { upsert: true },
@@ -517,8 +535,17 @@ const URL_REGEX = /https?:\/\/[^\s)]+/g;
 const FILE_PATH_REGEX = /(?:^|\s)((?:[\w.-]+\/)+[\w.-]+\.\w+)/g;
 const QUOTED_NAME_REGEX = /"([^"]{3,})"/g;
 
-function makeEntityId(name: string, type: string): string {
-  return createHash("sha256").update(`${name.toLowerCase()}:${type}`).digest("hex").slice(0, 16);
+function makeEntityId(
+  name: string,
+  type: string,
+  agentId: string,
+  scope: MemoryScope,
+  scopeRef: string,
+): string {
+  return createHash("sha256")
+    .update(`${agentId}:${scope}:${scopeRef}:${name.toLowerCase()}:${type}`)
+    .digest("hex")
+    .slice(0, 16);
 }
 
 type ExtractedEntity = { entityId: string; name: string; type: EntityType };
@@ -538,16 +565,18 @@ export async function extractAndUpsertEntities(params: {
   agentId: string;
   eventContent: string;
   scope: MemoryScope;
+  scopeRef?: string;
   sourceEventId?: string;
 }): Promise<{ entities: ExtractedEntity[]; relationsCreated: number }> {
   const { db, prefix, agentId, eventContent, scope, sourceEventId } = params;
+  const scopeRef = resolveScopeRef({ scope, scopeRef: params.scopeRef, agentId });
 
   const extracted: ExtractedEntity[] = [];
   const seen = new Set<string>(); // dedup by entityId
 
   // Helper to add an entity (dedup by entityId)
   function addEntity(name: string, type: EntityType): void {
-    const entityId = makeEntityId(name, type);
+    const entityId = makeEntityId(name, type, agentId, scope, scopeRef);
     if (!seen.has(entityId)) {
       seen.add(entityId);
       extracted.push({ entityId, name, type });
@@ -607,6 +636,7 @@ export async function extractAndUpsertEntities(params: {
           type: entity.type,
           agentId,
           scope,
+          scopeRef,
           updatedAt: new Date(),
           ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
         },
@@ -627,6 +657,7 @@ export async function extractAndUpsertEntities(params: {
               type: "mentioned_with",
               agentId,
               scope,
+              scopeRef,
               updatedAt: new Date(),
               ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
             },

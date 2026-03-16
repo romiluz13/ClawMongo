@@ -8,6 +8,7 @@ import {
   markEventsConsolidated,
 } from "./mongodb-events.js";
 import { episodesCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 
 const log = createSubsystemLogger("memory:mongodb:episodes");
 
@@ -24,6 +25,7 @@ export type Episode = {
   summary: string;
   agentId: string;
   scope: MemoryScope;
+  scopeRef: string;
   timeRange: { start: Date; end: Date };
   sourceEventCount: number;
   sourceEventIds?: string[];
@@ -55,10 +57,17 @@ export async function materializeEpisode(params: {
   type: EpisodeType;
   timeRange: { start: Date; end: Date };
   scope?: MemoryScope;
+  scopeRef?: string;
   summarizer: EpisodeSummarizer;
 }): Promise<Episode | null> {
   const { db, prefix, agentId, type, timeRange, scope, summarizer } = params;
   try {
+    const resolvedScope = scope ?? "agent";
+    const scopeRef = resolveScopeRef({
+      scope: resolvedScope,
+      scopeRef: params.scopeRef,
+      agentId,
+    });
     // 1. Read raw events for the time range
     const events = await getEventsByTimeRange({
       db,
@@ -66,7 +75,8 @@ export async function materializeEpisode(params: {
       agentId,
       start: timeRange.start,
       end: timeRange.end,
-      scope,
+      scope: resolvedScope,
+      scopeRef,
     });
 
     // 2. If fewer than 2 events, return null (not enough content for an episode)
@@ -103,7 +113,8 @@ export async function materializeEpisode(params: {
       title,
       summary,
       agentId,
-      scope: scope ?? "agent",
+      scope: resolvedScope,
+      scopeRef,
       timeRange: { start: timeRange.start, end: timeRange.end },
       sourceEventCount: events.length,
       sourceEventIds,
@@ -120,6 +131,8 @@ export async function materializeEpisode(params: {
       {
         agentId,
         type,
+        scope: resolvedScope,
+        scopeRef,
         "timeRange.start": timeRange.start,
         "timeRange.end": timeRange.end,
       },
@@ -133,7 +146,8 @@ export async function materializeEpisode(params: {
       title,
       summary,
       agentId,
-      scope: scope ?? "agent",
+      scope: resolvedScope,
+      scopeRef,
       timeRange: { start: timeRange.start, end: timeRange.end },
       sourceEventCount: events.length,
       sourceEventIds,

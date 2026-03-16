@@ -379,7 +379,7 @@ export function createMemoryWriteTool(options: {
     label: "Memory Write",
     name: "memory_write",
     description:
-      'Store a structured observation in persistent memory. Types: decision (choices made), preference (user likes/dislikes), fact (objective info), person (people info), todo (action items), project (project-level context), architecture (technical decisions), custom (anything else). Type+key is the dedup key: writing the same type+key updates the existing record. Set confidence 0.0-1.0 to express certainty. Use for important information; use MEMORY.md for informal scratch notes. Example: memory_write({type: "decision", key: "auth-method", value: "OAuth2 with PKCE"})',
+      'Store a structured observation in persistent memory. Types: decision (choices made), preference (user likes/dislikes), fact (objective info), person (people info), todo (action items), project (project-level context), architecture (technical decisions), custom (anything else). Type+key is the dedup key inside the active memory namespace. Set confidence 0.0-1.0 to express certainty. Use for important runtime knowledge; treat MEMORY.md as a human-authored bridge note, not the runtime memory store. Example: memory_write({type: "decision", key: "auth-method", value: "OAuth2 with PKCE"})',
     parameters: MemoryWriteSchema,
     execute: async (_toolCallId, params) => {
       const type = readStringParam(params, "type", { required: true });

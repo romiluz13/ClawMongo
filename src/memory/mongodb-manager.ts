@@ -1,17 +1,18 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
 import chokidar, { type FSWatcher } from "chokidar";
 import { MongoClient, type Db, type Document } from "mongodb";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 // v2 module imports
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
+import { normalizeExtraMemoryPaths } from "./internal.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
-import { writeEvent, projectChunksFromEvents, getEventsByTimeRange } from "./mongodb-events.js";
+import { writeEvent, projectEventChunk, getEventsByTimeRange } from "./mongodb-events.js";
 import { findEntitiesByName, expandGraph } from "./mongodb-graph.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
@@ -287,7 +288,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private readonly prefix: string;
   private readonly agentId: string;
   private readonly workspaceDir: string;
-  private readonly sessionMemoryEnabled: boolean;
+  private readonly extraMemoryPaths: string[];
   private readonly capabilities: DetectedCapabilities;
   private readonly config: ResolvedMemoryBackendConfig;
   private syncing: Promise<void> | null = null;
@@ -299,6 +300,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private dirty = true;
   private fileCount = 0;
   private chunkCount = 0;
+  private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(params: {
     client: MongoClient;
@@ -306,7 +308,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     prefix: string;
     agentId: string;
     workspaceDir: string;
-    sessionMemoryEnabled: boolean;
+    extraMemoryPaths?: string[];
     capabilities: DetectedCapabilities;
     config: ResolvedMemoryBackendConfig;
     relevance?: MongoDBRelevanceRuntime | null;
@@ -316,7 +318,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.prefix = params.prefix;
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
-    this.sessionMemoryEnabled = params.sessionMemoryEnabled;
+    this.extraMemoryPaths = params.extraMemoryPaths ?? [];
     this.capabilities = params.capabilities;
     this.config = params.config;
     this.relevance = params.relevance ?? null;
@@ -330,9 +332,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     cfg: OpenClawConfig;
     agentId: string;
     resolved: ResolvedMemoryBackendConfig;
-    /** Resolved per-agent sessionMemory flag from resolveMemorySearchConfig().
-     *  When provided, the manager uses this instead of reading the raw defaults-level config. */
-    sessionMemoryEnabled?: boolean;
+    extraPaths?: string[];
   }): Promise<MongoDBMemoryManager | null> {
     const mongoCfg = params.resolved.mongodb;
     if (!mongoCfg) {
@@ -340,13 +340,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
-    // Prefer the caller-provided resolved value (which merges defaults + per-agent overrides
-    // + MongoDB auto-default). Fall back to raw defaults-level flag for backward compat.
-    const sessionMemoryEnabled =
-      params.sessionMemoryEnabled ??
-      params.cfg.agents?.defaults?.memorySearch?.experimental?.sessionMemory ??
-      false;
-
     // Connect to MongoDB with a timeout to avoid hanging
     const safeUri = redactMongoURI(mongoCfg.uri);
     log.info(`connecting to MongoDB: ${safeUri} (db=${mongoCfg.database})`);
@@ -413,13 +406,20 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       prefix,
       agentId: params.agentId,
       workspaceDir,
-      sessionMemoryEnabled,
+      extraMemoryPaths: normalizeExtraMemoryPaths(workspaceDir, params.extraPaths),
       capabilities,
       config: params.resolved,
       relevance,
     });
 
-    // Start watching memory files for changes
+    try {
+      await manager.sync({ reason: "startup" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`initial memory sync failed: ${msg}`);
+    }
+
+    // Start watching bridge memory files for changes
     manager.ensureWatcher();
 
     // Opt-in: Change Streams for cross-instance sync (requires replica set)
@@ -428,7 +428,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       const csWatcher = new MongoDBChangeStreamWatcher(
         chunksCollection(db, prefix),
         (event) => {
-          manager.dirty = true;
           if (event.resumeToken !== undefined && event.resumeToken !== null) {
             void manager.persistChangeStreamResumeToken(event.resumeToken);
           }
@@ -470,19 +469,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const cleaned = query.trim();
     if (!cleaned) {
       return [];
-    }
-
-    // Keep searches strongly fresh when the index is marked dirty.
-    if (this.dirty) {
-      try {
-        await this.sync({ reason: "search" });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        throw new Error(`memory sync failed before search: ${msg}`, { cause: err });
-      }
-    }
-    if (this.dirty) {
-      throw new Error("memory index is still dirty after sync");
     }
 
     const mongoCfg = this.config.mongodb!;
@@ -1242,7 +1228,10 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         db: this.db,
         prefix: this.prefix,
         agentId: this.agentId,
-        sessionMemoryEnabled: this.sessionMemoryEnabled,
+        // Runtime conversation memory is event-native in MongoDB. Manager-level
+        // sync only keeps bridge Markdown in sync and must not rebuild live
+        // conversation memory from session transcript files.
+        sessionMemoryEnabled: false,
         workspaceDir: this.workspaceDir,
         embeddingMode: mongoCfg.embeddingMode,
         reason: params?.reason,
@@ -1386,7 +1375,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
     const mongoCfg = this.config.mongodb!;
     const debounceMs = mongoCfg.watchDebounceMs;
-    const watchPaths = [resolveSessionTranscriptsDirForAgent(this.agentId)];
+    const watchPaths = new Set<string>([
+      path.join(this.workspaceDir, "MEMORY.md"),
+      path.join(this.workspaceDir, "memory.md"),
+      path.join(this.workspaceDir, "memory"),
+      ...this.extraMemoryPaths,
+    ]);
     this.watcher = chokidar.watch(Array.from(watchPaths), {
       ignoreInitial: true,
       awaitWriteFinish: {
@@ -1468,9 +1462,64 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     return writeFn({
       db: this.db,
       prefix: this.prefix,
-      entry,
+      entry: { ...entry, workspaceDir: this.workspaceDir },
       embeddingMode: mongoCfg.embeddingMode,
     });
+  }
+
+  async writeConversationEvent(event: {
+    role: "user" | "assistant" | "system" | "tool";
+    body: string;
+    sessionId?: string;
+    timestamp?: Date;
+    metadata?: Record<string, unknown>;
+    scope?: MemoryScope;
+  }): Promise<{ eventId: string; chunkCreated: boolean }> {
+    const execute = async () => {
+      const eventId = randomUUID();
+      const scope = event.scope ?? ("agent" as MemoryScope);
+      const written = await writeEvent({
+        db: this.db,
+        prefix: this.prefix,
+        event: {
+          eventId,
+          agentId: this.agentId,
+          sessionId: event.sessionId,
+          role: event.role,
+          body: event.body,
+          scope,
+          timestamp: event.timestamp,
+          metadata: event.metadata,
+        },
+      });
+      const projected = await projectEventChunk({
+        db: this.db,
+        prefix: this.prefix,
+        event: {
+          eventId: written.eventId,
+          agentId: this.agentId,
+          role: event.role,
+          body: event.body,
+          scope,
+          scopeRef: written.scopeRef,
+          timestamp: written.timestamp,
+          ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+          ...(event.metadata ? { metadata: event.metadata } : {}),
+        },
+      });
+      if (projected.chunkCreated) {
+        this.chunkCount += 1;
+      }
+      this.dirty = false;
+      return { eventId: written.eventId, chunkCreated: projected.chunkCreated };
+    };
+
+    const next = this.writeQueue.then(execute, execute);
+    this.writeQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
   }
 
   // ---------------------------------------------------------------------------
@@ -1529,6 +1578,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         // Ignore sync errors during close — already logged in runSync
       }
     }
+    await this.writeQueue;
 
     // Close the MongoDB connection
     try {
@@ -1575,6 +1625,7 @@ export async function writeEventAndProject(
       db,
       prefix,
       event: {
+        eventId: randomUUID(),
         agentId: event.agentId,
         role: event.role as "user" | "assistant" | "system" | "tool",
         body: event.body,
@@ -1585,10 +1636,20 @@ export async function writeEventAndProject(
       },
     });
 
-    const projected = await projectChunksFromEvents({
+    const projected = await projectEventChunk({
       db,
       prefix,
-      agentId: event.agentId,
+      event: {
+        eventId: written.eventId,
+        agentId: event.agentId,
+        role: event.role as "user" | "assistant" | "system" | "tool",
+        body: event.body,
+        scope: event.scope as MemoryScope,
+        scopeRef: written.scopeRef,
+        timestamp: written.timestamp,
+        ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+        ...(event.metadata ? { metadata: event.metadata } : {}),
+      },
     });
 
     const durationMs = Date.now() - startMs;
@@ -1605,7 +1666,7 @@ export async function writeEventAndProject(
       },
     });
 
-    return { eventId: written.eventId, chunksCreated: projected.chunksCreated };
+    return { eventId: written.eventId, chunksCreated: projected.chunkCreated ? 1 : 0 };
   } catch (err) {
     const durationMs = Date.now() - startMs;
     await recordIngestRun({

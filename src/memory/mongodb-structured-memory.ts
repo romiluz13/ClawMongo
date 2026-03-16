@@ -5,6 +5,7 @@ import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import {
   buildVectorSearchStage,
   MONGODB_MAX_NUM_CANDIDATES,
@@ -39,6 +40,8 @@ export type StructuredMemoryEntry = {
   agentId: string;
   tags?: string[];
   scope?: MemoryScope;
+  scopeRef?: string;
+  workspaceDir?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -59,12 +62,21 @@ export async function writeStructuredMemory(params: {
   let embeddingStatus: EmbeddingStatus = "pending";
 
   const now = new Date();
+  const scope = entry.scope ?? "agent";
+  const scopeRef = resolveScopeRef({
+    scope,
+    scopeRef: entry.scopeRef,
+    agentId: entry.agentId,
+    sessionId: entry.sessionId,
+    workspaceDir: entry.workspaceDir,
+  });
   const setDoc: Document = {
     type: entry.type,
     key: entry.key,
     value: entry.value,
     agentId: entry.agentId,
-    scope: entry.scope ?? "agent",
+    scope,
+    scopeRef,
     embeddingStatus,
     updatedAt: now,
   };
@@ -90,7 +102,7 @@ export async function writeStructuredMemory(params: {
 
   // Upsert by type + key (composite unique key)
   const result = await collection.updateOne(
-    { agentId: entry.agentId, type: entry.type, key: entry.key },
+    { agentId: entry.agentId, scope, scopeRef, type: entry.type, key: entry.key },
     { $set: setDoc, $setOnInsert: setOnInsert },
     { upsert: true },
   );

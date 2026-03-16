@@ -111,6 +111,36 @@ describe("installSessionToolResultGuard", () => {
     expectPersistedRoles(sm, ["assistant", "toolResult"]);
   });
 
+  it("tracks async post-persist callbacks until flushed", async () => {
+    const sm = SessionManager.inMemory();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const guard = installSessionToolResultGuard(sm, {
+      afterMessagePersisted: async () => blocked,
+    });
+
+    sm.appendMessage(
+      asAppendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: "persist me" }],
+        stopReason: "stop",
+      }),
+    );
+
+    let flushed = false;
+    const flush = guard.flushPendingPersistedWrites().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    release();
+    await flush;
+    expect(flushed).toBe(true);
+  });
+
   it("clears pending tool calls without inserting synthetic tool results", () => {
     const sm = SessionManager.inMemory();
     const guard = installSessionToolResultGuard(sm);

@@ -817,6 +817,7 @@ async function deliverOutboundPayloadsCore(
     });
     if (mirrorText) {
       await appendAssistantMessageToSessionTranscript({
+        cfg: params.cfg,
         agentId: params.mirror.agentId,
         sessionKey: params.mirror.sessionKey,
         text: mirrorText,

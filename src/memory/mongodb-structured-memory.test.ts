@@ -86,9 +86,15 @@ describe("writeStructuredMemory", () => {
     expect(result.id).toBeDefined();
     expect(col.updateOne).toHaveBeenCalledTimes(1);
 
-    // Verify upsert filter uses agentId + type + key
+    // Verify upsert filter includes the resolved memory namespace.
     const call = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toEqual({ agentId: "main", type: "decision", key: "framework-choice" });
+    expect(call[0]).toEqual({
+      agentId: "main",
+      scope: "agent",
+      scopeRef: "agent:main",
+      type: "decision",
+      key: "framework-choice",
+    });
     expect(call[2]).toEqual({ upsert: true });
   });
 
@@ -167,6 +173,7 @@ describe("writeStructuredMemory", () => {
 
     const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(updateCall[1].$set.scope).toBe("workspace");
+    expect(updateCall[1].$set.scopeRef).toBe("workspace:main");
   });
 
   it("defaults scope to agent when not specified", async () => {

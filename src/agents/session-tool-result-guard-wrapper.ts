@@ -1,4 +1,6 @@
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { OpenClawConfig } from "../config/config.js";
+import { persistConversationMessageToMongo } from "../memory/runtime-write.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import {
   applyInputProvenanceToUserMessage,
@@ -11,6 +13,8 @@ export type GuardedSessionManager = SessionManager & {
   flushPendingToolResults?: () => void;
   /** Clear pending tool calls without persisting synthetic tool results. Idempotent. */
   clearPendingToolResults?: () => void;
+  /** Wait for any best-effort post-persist memory writes to complete. */
+  flushPendingPersistedWrites?: () => Promise<void>;
 };
 
 /**
@@ -20,7 +24,9 @@ export type GuardedSessionManager = SessionManager & {
 export function guardSessionManager(
   sessionManager: SessionManager,
   opts?: {
+    cfg?: OpenClawConfig;
     agentId?: string;
+    sessionId?: string;
     sessionKey?: string;
     inputProvenance?: InputProvenance;
     allowSyntheticToolResults?: boolean;
@@ -61,6 +67,8 @@ export function guardSessionManager(
         return out?.message ?? message;
       }
     : undefined;
+  const memoryWriteCfg = opts?.cfg;
+  const memoryWriteAgentId = opts?.agentId;
 
   const guard = installSessionToolResultGuard(sessionManager, {
     transformMessageForPersistence: (message) =>
@@ -69,8 +77,21 @@ export function guardSessionManager(
     allowSyntheticToolResults: opts?.allowSyntheticToolResults,
     allowedToolNames: opts?.allowedToolNames,
     beforeMessageWriteHook: beforeMessageWrite,
+    afterMessagePersisted:
+      memoryWriteCfg && memoryWriteAgentId
+        ? ({ message, meta }) =>
+            persistConversationMessageToMongo({
+              cfg: memoryWriteCfg,
+              agentId: memoryWriteAgentId,
+              sessionId: opts.sessionId,
+              message,
+              meta,
+            })
+        : undefined,
   });
   (sessionManager as GuardedSessionManager).flushPendingToolResults = guard.flushPendingToolResults;
   (sessionManager as GuardedSessionManager).clearPendingToolResults = guard.clearPendingToolResults;
+  (sessionManager as GuardedSessionManager).flushPendingPersistedWrites =
+    guard.flushPendingPersistedWrites;
   return sessionManager as GuardedSessionManager;
 }

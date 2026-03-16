@@ -42,11 +42,11 @@ function buildMongoDBBridgeSection(params: {
   if (!tools || tools.has("kb_search")) {
     lines.push("- To find reference docs: use kb_search");
   }
+  lines.push("- MEMORY.md is retrieval guidance only, not a runtime knowledge store");
   lines.push(
-    "- MEMORY.md is retrieval guidance only, not a runtime knowledge store",
-    "- Do not treat MEMORY.md or memory/*.md as evidence for fresh answers",
-    "",
+    "- Treat MEMORY.md and memory/*.md as human-authored bridge notes, not agent-written durable memory",
   );
+  lines.push("");
   return lines;
 }
 

@@ -67,7 +67,7 @@ const TOOL_DENY_BY_MESSAGE_PROVIDER: Readonly<Record<string, readonly string[]>>
   voice: ["tts"],
 };
 const TOOL_DENY_FOR_XAI_PROVIDERS = new Set(["web_search"]);
-const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "write"]);
+const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "memory_write"]);
 
 function normalizeMessageProvider(messageProvider?: string): string | undefined {
   const normalized = messageProvider?.trim().toLowerCase();
@@ -273,9 +273,6 @@ export function createOpenClawCodingTools(options?: {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
   const isMemoryFlushRun = options?.trigger === "memory";
-  if (isMemoryFlushRun && !options?.memoryFlushWritePath) {
-    throw new Error("memoryFlushWritePath required for memory-triggered tool runs");
-  }
   const memoryFlushWritePath = isMemoryFlushRun ? options.memoryFlushWritePath : undefined;
   const {
     agentId,
@@ -535,28 +532,27 @@ export function createOpenClawCodingTools(options?: {
       onYield: options?.onYield,
     }),
   ];
-  const toolsForMemoryFlush =
-    isMemoryFlushRun && memoryFlushWritePath
-      ? tools.flatMap((tool) => {
-          if (!MEMORY_FLUSH_ALLOWED_TOOL_NAMES.has(tool.name)) {
-            return [];
-          }
-          if (tool.name === "write") {
-            return [
-              wrapToolMemoryFlushAppendOnlyWrite(tool, {
-                root: sandboxRoot ?? workspaceRoot,
-                relativePath: memoryFlushWritePath,
-                containerWorkdir: sandbox?.containerWorkdir,
-                sandbox:
-                  sandboxRoot && sandboxFsBridge
-                    ? { root: sandboxRoot, bridge: sandboxFsBridge }
-                    : undefined,
-              }),
-            ];
-          }
-          return [tool];
-        })
-      : tools;
+  const toolsForMemoryFlush = isMemoryFlushRun
+    ? tools.flatMap((tool) => {
+        if (!MEMORY_FLUSH_ALLOWED_TOOL_NAMES.has(tool.name)) {
+          return [];
+        }
+        if (tool.name === "write" && memoryFlushWritePath) {
+          return [
+            wrapToolMemoryFlushAppendOnlyWrite(tool, {
+              root: sandboxRoot ?? workspaceRoot,
+              relativePath: memoryFlushWritePath,
+              containerWorkdir: sandbox?.containerWorkdir,
+              sandbox:
+                sandboxRoot && sandboxFsBridge
+                  ? { root: sandboxRoot, bridge: sandboxFsBridge }
+                  : undefined,
+            }),
+          ];
+        }
+        return [tool];
+      })
+    : tools;
   const toolsForMessageProvider = applyMessageProviderToolPolicy(
     toolsForMemoryFlush,
     options?.messageProvider,

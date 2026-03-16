@@ -88,7 +88,12 @@ describe("mongodb-graph", () => {
       expect(entitiesCol.updateOne).toHaveBeenCalledOnce();
       const [filter, update, opts] = (entitiesCol.updateOne as ReturnType<typeof vi.fn>).mock
         .calls[0];
-      expect(filter).toEqual({ entityId: "ent-1" });
+      expect(filter).toEqual({
+        entityId: "ent-1",
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+      });
       expect(update.$set).toBeDefined();
       expect(update.$set.name).toBe("Alice");
       expect(update.$set.type).toBe("person");
@@ -131,6 +136,9 @@ describe("mongodb-graph", () => {
         fromEntityId: "ent-1",
         toEntityId: "ent-2",
         type: "works_on",
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
       });
       expect(update.$set.agentId).toBe("agent-1");
       expect(update.$set.scope).toBe("agent");

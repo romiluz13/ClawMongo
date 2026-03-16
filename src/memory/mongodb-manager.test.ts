@@ -19,6 +19,7 @@ import type { MemorySearchResult } from "./types.js";
 vi.mock("./mongodb-events.js", () => ({
   writeEvent: vi.fn(),
   projectChunksFromEvents: vi.fn(),
+  projectEventChunk: vi.fn(),
   getEventsByTimeRange: vi.fn(),
 }));
 
@@ -315,8 +316,7 @@ describe("resolveExplainSources", () => {
 // ---------------------------------------------------------------------------
 
 // Dynamic imports for mocked modules
-const { writeEvent, projectChunksFromEvents, getEventsByTimeRange } =
-  await import("./mongodb-events.js");
+const { writeEvent, projectEventChunk, getEventsByTimeRange } = await import("./mongodb-events.js");
 const { recordIngestRun, getProjectionLag } = await import("./mongodb-ops.js");
 const { planRetrieval } = await import("./mongodb-retrieval-planner.js");
 const { searchEpisodes } = await import("./mongodb-episodes.js");
@@ -337,9 +337,13 @@ describe("writeEventAndProject", () => {
     vi.clearAllMocks();
   });
 
-  it("calls writeEvent + projectChunksFromEvents + recordIngestRun and returns result", async () => {
-    vi.mocked(writeEvent).mockResolvedValue({ eventId: "evt-1" });
-    vi.mocked(projectChunksFromEvents).mockResolvedValue({ eventsProcessed: 1, chunksCreated: 2 });
+  it("calls writeEvent + projectEventChunk + recordIngestRun and returns result", async () => {
+    vi.mocked(writeEvent).mockResolvedValue({
+      eventId: "evt-1",
+      timestamp: new Date("2026-03-16T00:00:00.000Z"),
+      scopeRef: "agent:agent-1",
+    });
+    vi.mocked(projectEventChunk).mockResolvedValue({ chunkCreated: true });
     vi.mocked(recordIngestRun).mockResolvedValue("run-1");
 
     const result = await writeEventAndProject(fakeDb, fakePrefix, {
@@ -350,10 +354,10 @@ describe("writeEventAndProject", () => {
     });
 
     expect(result.eventId).toBe("evt-1");
-    expect(result.chunksCreated).toBe(2);
+    expect(result.chunksCreated).toBe(1);
 
     expect(writeEvent).toHaveBeenCalledOnce();
-    expect(projectChunksFromEvents).toHaveBeenCalledOnce();
+    expect(projectEventChunk).toHaveBeenCalledOnce();
     expect(recordIngestRun).toHaveBeenCalledWith(
       expect.objectContaining({
         db: fakeDb,

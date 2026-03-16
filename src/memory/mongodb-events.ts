@@ -3,6 +3,7 @@ import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { eventsCollection, chunksCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 
 const log = createSubsystemLogger("memory:mongodb:events");
 
@@ -19,11 +20,17 @@ export type CanonicalEvent = {
   body: string;
   metadata?: Record<string, unknown>;
   scope: MemoryScope;
+  scopeRef: string;
   timestamp: Date;
   projectedAt?: Date;
   consolidatedAt?: Date;
   consolidatedIntoEpisodeId?: string;
 };
+
+function renderEventChunkText(event: Pick<CanonicalEvent, "role" | "body">): string {
+  const roleLabel = event.role.charAt(0).toUpperCase() + event.role.slice(1);
+  return `${roleLabel}: ${event.body}`;
+}
 
 // ---------------------------------------------------------------------------
 // Write
@@ -32,22 +39,31 @@ export type CanonicalEvent = {
 export async function writeEvent(params: {
   db: Db;
   prefix: string;
-  event: Omit<CanonicalEvent, "eventId" | "timestamp"> & {
+  event: Omit<CanonicalEvent, "eventId" | "timestamp" | "scopeRef"> & {
     eventId?: string;
     timestamp?: Date;
+    scopeRef?: string;
   };
-}): Promise<{ eventId: string }> {
+}): Promise<{ eventId: string; timestamp: Date; scopeRef: string }> {
   const { db, prefix, event } = params;
   const collection = eventsCollection(db, prefix);
   const eventId = event.eventId ?? randomUUID();
   const timestamp = event.timestamp ?? new Date();
+  const scope = event.scope ?? ("agent" as MemoryScope);
+  const scopeRef = resolveScopeRef({
+    scope,
+    scopeRef: event.scopeRef,
+    agentId: event.agentId,
+    sessionId: event.sessionId,
+  });
 
   const doc: CanonicalEvent = {
     eventId,
     agentId: event.agentId,
     role: event.role,
     body: event.body,
-    scope: event.scope ?? ("agent" as MemoryScope),
+    scope,
+    scopeRef,
     timestamp,
     ...(event.sessionId && { sessionId: event.sessionId }),
     ...(event.channel && { channel: event.channel }),
@@ -57,7 +73,7 @@ export async function writeEvent(params: {
   await collection.updateOne({ eventId }, { $setOnInsert: doc }, { upsert: true });
 
   log.info(`event written: ${eventId} role=${event.role}`);
-  return { eventId };
+  return { eventId, timestamp, scopeRef };
 }
 
 // ---------------------------------------------------------------------------
@@ -71,9 +87,10 @@ export async function getEventsByTimeRange(params: {
   start: Date;
   end: Date;
   scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<CanonicalEvent[]> {
-  const { db, prefix, agentId, start, end, scope, limit } = params;
+  const { db, prefix, agentId, start, end, scope, scopeRef, limit } = params;
   const collection = eventsCollection(db, prefix);
   const filter: Document = {
     agentId,
@@ -81,6 +98,9 @@ export async function getEventsByTimeRange(params: {
   };
   if (scope) {
     filter.scope = scope;
+  }
+  if (scopeRef) {
+    filter.scopeRef = scopeRef;
   }
 
   return (await collection
@@ -182,9 +202,10 @@ export async function getUnconsolidatedEvents(params: {
   prefix: string;
   agentId: string;
   scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<CanonicalEvent[]> {
-  const { db, prefix, agentId, scope, limit } = params;
+  const { db, prefix, agentId, scope, scopeRef, limit } = params;
   const collection = eventsCollection(db, prefix);
   const filter: Document = {
     agentId,
@@ -192,6 +213,9 @@ export async function getUnconsolidatedEvents(params: {
   };
   if (scope) {
     filter.scope = scope;
+  }
+  if (scopeRef) {
+    filter.scopeRef = scopeRef;
   }
 
   return (await collection
@@ -204,8 +228,8 @@ export async function getUnconsolidatedEvents(params: {
 
 /**
  * Project unprojected events into the chunks collection.
- * Each event becomes a chunk with path `events/{eventId}`, source `"conversation"`,
- * and a SHA-256 content hash of the body.
+ * Each event becomes a conversation chunk at `events/{eventId}` using a
+ * role-labeled text rendering for recall quality.
  */
 export async function projectChunksFromEvents(params: {
   db: Db;
@@ -220,35 +244,15 @@ export async function projectChunksFromEvents(params: {
     return { eventsProcessed: 0, chunksCreated: 0 };
   }
 
-  const chunks = chunksCollection(db, prefix);
   let chunksCreated = 0;
 
   try {
     for (const event of events) {
-      const path = `events/${event.eventId}`;
-      const hash = createHash("sha256").update(event.body).digest("hex");
-
-      const result = await chunks.updateOne(
-        { path },
-        {
-          $setOnInsert: {
-            path,
-            text: event.body,
-            hash,
-            source: "conversation",
-            agentId: event.agentId,
-            updatedAt: new Date(),
-          },
-        },
-        { upsert: true },
-      );
-      if (result.upsertedCount > 0) {
+      const { chunkCreated } = await projectEventChunk({ db, prefix, event });
+      if (chunkCreated) {
         chunksCreated++;
       }
     }
-
-    const eventIds = events.map((e) => e.eventId);
-    await markEventsProjected({ db, prefix, eventIds });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(
@@ -259,4 +263,34 @@ export async function projectChunksFromEvents(params: {
 
   log.info(`projected ${chunksCreated} chunks from ${events.length} events for agent=${agentId}`);
   return { eventsProcessed: events.length, chunksCreated };
+}
+
+export async function projectEventChunk(params: {
+  db: Db;
+  prefix: string;
+  event: CanonicalEvent;
+}): Promise<{ chunkCreated: boolean }> {
+  const { db, prefix, event } = params;
+  const chunks = chunksCollection(db, prefix);
+  const path = `events/${event.eventId}`;
+  const text = renderEventChunkText(event);
+  const hash = createHash("sha256").update(text).digest("hex");
+  const result = await chunks.updateOne(
+    { path },
+    {
+      $setOnInsert: {
+        path,
+        text,
+        hash,
+        source: "conversation",
+        agentId: event.agentId,
+        scope: event.scope,
+        scopeRef: event.scopeRef,
+        updatedAt: new Date(),
+      },
+    },
+    { upsert: true },
+  );
+  await markEventsProjected({ db, prefix, eventIds: [event.eventId] });
+  return { chunkCreated: result.upsertedCount > 0 };
 }

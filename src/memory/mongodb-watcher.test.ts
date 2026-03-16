@@ -1,4 +1,3 @@
-import path from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
@@ -189,15 +188,16 @@ describe("MongoDBMemoryManager file watcher", () => {
   // ensureWatcher()
   // -------------------------------------------------------------------------
 
-  it("sets up chokidar watcher on create() with correct paths", async () => {
+  it("sets up chokidar watcher on bridge memory paths", async () => {
     const manager = await createManager();
 
     expect(chokidar.watch).toHaveBeenCalledTimes(1);
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
 
-    expect(watchedPaths).toHaveLength(1);
-    expect(watchedPaths[0]).toContain(path.join("agents", "main", "sessions"));
+    expect(watchedPaths).toEqual(
+      expect.arrayContaining(["/workspace/MEMORY.md", "/workspace/memory.md", "/workspace/memory"]),
+    );
 
     await manager.close();
   });
@@ -226,7 +226,7 @@ describe("MongoDBMemoryManager file watcher", () => {
     await manager.close();
   });
 
-  it("does not include extraPaths in the watch list", async () => {
+  it("includes extraPaths in the watch list", async () => {
     const { normalizeExtraMemoryPaths } = await import("./internal.js");
     vi.mocked(normalizeExtraMemoryPaths).mockReturnValue(["/extra/path1.md", "/extra/path2"]);
 
@@ -234,9 +234,9 @@ describe("MongoDBMemoryManager file watcher", () => {
 
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
-    expect(watchedPaths).not.toContain("/extra/path1.md");
-    expect(watchedPaths).not.toContain("/extra/path2");
-    expect(normalizeExtraMemoryPaths).not.toHaveBeenCalled();
+    expect(watchedPaths).toContain("/extra/path1.md");
+    expect(watchedPaths).toContain("/extra/path2");
+    expect(normalizeExtraMemoryPaths).toHaveBeenCalled();
 
     await manager.close();
   });
@@ -367,6 +367,42 @@ describe("MongoDBMemoryManager file watcher", () => {
     // At 500ms — should sync
     await vi.advanceTimersByTimeAsync(100);
     expect(syncToMongoDB).toHaveBeenCalledTimes(1);
+
+    await manager.close();
+  });
+
+  it("does not force a sync during search when bridge data is marked dirty", async () => {
+    const { syncToMongoDB } = await import("./mongodb-sync.js");
+    const { mongoSearch } = await import("./mongodb-search.js");
+    vi.mocked(mongoSearch).mockResolvedValue([
+      {
+        path: "events/e1",
+        startLine: 1,
+        endLine: 1,
+        score: 0.82,
+        snippet: "User: hi",
+        source: "conversation",
+        sourceType: "conversation",
+      },
+    ]);
+    const manager = await createManager({
+      sources: {
+        conversation: { enabled: true },
+        reference: { enabled: false },
+        structured: { enabled: false },
+      } as ResolvedMemoryBackendConfig["mongodb"]["sources"],
+    });
+
+    vi.mocked(syncToMongoDB).mockClear();
+    const changeHandler = mockWatcherInstance.on.mock.calls.find(
+      (call: unknown[]) => call[0] === "change",
+    )![1] as () => void;
+    changeHandler();
+
+    const results = await manager.search("hi");
+
+    expect(results).toHaveLength(1);
+    expect(syncToMongoDB).not.toHaveBeenCalled();
 
     await manager.close();
   });

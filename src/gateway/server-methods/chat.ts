@@ -9,6 +9,7 @@ import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.j
 import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
+import type { OpenClawConfig } from "../../config/config.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
@@ -644,9 +645,11 @@ function transcriptHasIdempotencyKey(transcriptPath: string, idempotencyKey: str
 }
 
 function appendAssistantTranscriptMessage(params: {
+  cfg?: OpenClawConfig;
   message: string;
   label?: string;
   sessionId: string;
+  sessionKey?: string;
   storePath: string | undefined;
   sessionFile?: string;
   agentId?: string;
@@ -686,6 +689,10 @@ function appendAssistantTranscriptMessage(params: {
   }
 
   return appendInjectedAssistantMessageToTranscript({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    sessionId: params.sessionId,
+    sessionKey: params.sessionKey,
     transcriptPath,
     message: params.message,
     label: params.label,
@@ -727,14 +734,17 @@ function persistAbortedPartials(params: {
   if (params.snapshots.length === 0) {
     return;
   }
-  const { storePath, entry } = loadSessionEntry(params.sessionKey);
+  const { cfg, storePath, entry } = loadSessionEntry(params.sessionKey);
   for (const snapshot of params.snapshots) {
     const sessionId = entry?.sessionId ?? snapshot.sessionId ?? snapshot.runId;
     const appended = appendAssistantTranscriptMessage({
+      cfg,
       message: snapshot.text,
       sessionId,
+      sessionKey: params.sessionKey,
       storePath,
       sessionFile: entry?.sessionFile,
+      agentId: resolveSessionAgentId({ sessionKey: params.sessionKey, config: cfg }),
       createIfMissing: true,
       idempotencyKey: `${snapshot.runId}:assistant`,
       abortMeta: {
@@ -1345,8 +1355,10 @@ export const chatHandlers: GatewayRequestHandlers = {
                 loadSessionEntry(sessionKey);
               const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
               const appended = appendAssistantTranscriptMessage({
+                cfg,
                 message: combinedReply,
                 sessionId,
+                sessionKey,
                 storePath: latestStorePath,
                 sessionFile: latestEntry?.sessionFile,
                 agentId,
@@ -1464,9 +1476,11 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
 
     const appended = appendAssistantTranscriptMessage({
+      cfg,
       message: p.message,
       label: p.label,
       sessionId,
+      sessionKey: rawSessionKey,
       storePath,
       sessionFile: entry?.sessionFile,
       agentId: resolveSessionAgentId({ sessionKey: rawSessionKey, config: cfg }),

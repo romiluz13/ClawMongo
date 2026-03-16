@@ -101,14 +101,25 @@ export function installSessionToolResultGuard(
     beforeMessageWriteHook?: (
       event: PluginHookBeforeMessageWriteEvent,
     ) => PluginHookBeforeMessageWriteResult | undefined;
+    /**
+     * Best-effort callback invoked after a message is persisted to the session transcript.
+     * Async work is tracked and can be awaited via flushPendingPersistedWrites().
+     */
+    afterMessagePersisted?: (event: {
+      message: AgentMessage;
+      meta?: { toolCallId?: string; toolName?: string; isSynthetic?: boolean };
+      sessionFile?: string;
+    }) => void | Promise<void>;
   },
 ): {
   flushPendingToolResults: () => void;
   clearPendingToolResults: () => void;
   getPendingIds: () => string[];
+  flushPendingPersistedWrites: () => Promise<void>;
 } {
   const originalAppend = sessionManager.appendMessage.bind(sessionManager);
   const pendingState = createPendingToolCallState();
+  const pendingPersistedWrites = new Set<Promise<void>>();
   const persistMessage = (message: AgentMessage) => {
     const transformer = opts?.transformMessageForPersistence;
     return transformer ? transformer(message) : message;
@@ -124,6 +135,43 @@ export function installSessionToolResultGuard(
 
   const allowSyntheticToolResults = opts?.allowSyntheticToolResults ?? true;
   const beforeWrite = opts?.beforeMessageWriteHook;
+  const afterPersisted = opts?.afterMessagePersisted;
+
+  const trackPersistedMessage = (
+    message: AgentMessage,
+    meta?: { toolCallId?: string; toolName?: string; isSynthetic?: boolean },
+  ) => {
+    const sessionFile = (
+      sessionManager as { getSessionFile?: () => string | null }
+    ).getSessionFile?.();
+    if (sessionFile) {
+      emitSessionTranscriptUpdate(sessionFile);
+    }
+    if (!afterPersisted) {
+      return;
+    }
+    const pending = Promise.resolve(
+      afterPersisted({
+        message,
+        meta,
+        sessionFile: sessionFile ?? undefined,
+      }),
+    )
+      .catch(() => undefined)
+      .finally(() => {
+        pendingPersistedWrites.delete(pending);
+      });
+    pendingPersistedWrites.add(pending);
+  };
+
+  const appendPersistedMessage = (
+    message: AgentMessage,
+    meta?: { toolCallId?: string; toolName?: string; isSynthetic?: boolean },
+  ) => {
+    const result = originalAppend(message as never);
+    trackPersistedMessage(message, meta);
+    return result;
+  };
 
   /**
    * Run the before_message_write hook. Returns the (possibly modified) message,
@@ -158,7 +206,11 @@ export function installSessionToolResultGuard(
           }),
         );
         if (flushed) {
-          originalAppend(flushed as never);
+          appendPersistedMessage(flushed, {
+            toolCallId: id,
+            toolName: name,
+            isSynthetic: true,
+          });
         }
       }
     }
@@ -167,6 +219,12 @@ export function installSessionToolResultGuard(
 
   const clearPendingToolResults = () => {
     pendingState.clear();
+  };
+  const flushPendingPersistedWrites = async () => {
+    if (pendingPersistedWrites.size === 0) {
+      return;
+    }
+    await Promise.allSettled(Array.from(pendingPersistedWrites));
   };
 
   const guardedAppend = (message: AgentMessage) => {
@@ -206,7 +264,11 @@ export function installSessionToolResultGuard(
       if (!persisted) {
         return undefined;
       }
-      return originalAppend(persisted as never);
+      return appendPersistedMessage(persisted, {
+        toolCallId: id ?? undefined,
+        toolName,
+        isSynthetic: false,
+      });
     }
 
     // Skip tool call extraction for aborted/errored assistant messages.
@@ -239,14 +301,7 @@ export function installSessionToolResultGuard(
     if (!finalMessage) {
       return undefined;
     }
-    const result = originalAppend(finalMessage as never);
-
-    const sessionFile = (
-      sessionManager as { getSessionFile?: () => string | null }
-    ).getSessionFile?.();
-    if (sessionFile) {
-      emitSessionTranscriptUpdate(sessionFile);
-    }
+    const result = appendPersistedMessage(finalMessage);
 
     if (toolCalls.length > 0) {
       pendingState.trackToolCalls(toolCalls);
@@ -262,5 +317,6 @@ export function installSessionToolResultGuard(
     flushPendingToolResults,
     clearPendingToolResults,
     getPendingIds: pendingState.getPendingIds,
+    flushPendingPersistedWrites,
   };
 }

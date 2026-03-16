@@ -171,6 +171,7 @@ const STRUCTURED_MEM_SCHEMA: Document = {
         enum: ["session", "user", "agent", "workspace", "tenant", "global"],
         description: "Memory scope (v2)",
       },
+      scopeRef: { bsonType: "string", description: "Resolved concrete namespace for the scope" },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
     },
@@ -263,13 +264,14 @@ const SCOPE_ENUM = ["session", "user", "agent", "workspace", "tenant", "global"]
 const EVENTS_SCHEMA: Document = {
   $jsonSchema: {
     bsonType: "object",
-    required: ["eventId", "agentId", "role", "body", "scope", "timestamp"],
+    required: ["eventId", "agentId", "role", "body", "scope", "scopeRef", "timestamp"],
     properties: {
       eventId: { bsonType: "string", description: "Unique event identifier" },
       agentId: { bsonType: "string", description: "Agent that generated this event" },
       role: { enum: ["user", "assistant", "system", "tool"], description: "Message role" },
       body: { bsonType: "string", description: "Event body text" },
       scope: { enum: SCOPE_ENUM, description: "Memory scope" },
+      scopeRef: { bsonType: "string", description: "Resolved concrete namespace for the scope" },
       timestamp: { bsonType: "date", description: "Event timestamp" },
       sessionId: { bsonType: "string" },
       channel: { bsonType: "string" },
@@ -290,13 +292,14 @@ const EVENTS_SCHEMA: Document = {
 const ENTITIES_SCHEMA: Document = {
   $jsonSchema: {
     bsonType: "object",
-    required: ["entityId", "name", "type", "agentId", "scope", "updatedAt"],
+    required: ["entityId", "name", "type", "agentId", "scope", "scopeRef", "updatedAt"],
     properties: {
       entityId: { bsonType: "string", description: "Unique entity identifier" },
       name: { bsonType: "string", description: "Entity name" },
       type: { bsonType: "string", description: "Entity type (person, project, concept, etc.)" },
       agentId: { bsonType: "string" },
       scope: { enum: SCOPE_ENUM },
+      scopeRef: { bsonType: "string" },
       updatedAt: { bsonType: "date" },
       aliases: {
         bsonType: "array",
@@ -312,13 +315,14 @@ const ENTITIES_SCHEMA: Document = {
 const RELATIONS_SCHEMA: Document = {
   $jsonSchema: {
     bsonType: "object",
-    required: ["fromEntityId", "toEntityId", "type", "agentId", "scope", "updatedAt"],
+    required: ["fromEntityId", "toEntityId", "type", "agentId", "scope", "scopeRef", "updatedAt"],
     properties: {
       fromEntityId: { bsonType: "string" },
       toEntityId: { bsonType: "string" },
       type: { bsonType: "string", description: "Relation type (works_on, knows, etc.)" },
       agentId: { bsonType: "string" },
       scope: { enum: SCOPE_ENUM },
+      scopeRef: { bsonType: "string" },
       updatedAt: { bsonType: "date" },
       weight: { bsonType: "number", minimum: 0, maximum: 1 },
       metadata: { bsonType: "object" },
@@ -337,6 +341,7 @@ const EPISODES_SCHEMA: Document = {
       "summary",
       "agentId",
       "scope",
+      "scopeRef",
       "timeRange",
       "sourceEventCount",
       "updatedAt",
@@ -351,6 +356,7 @@ const EPISODES_SCHEMA: Document = {
       summary: { bsonType: "string" },
       agentId: { bsonType: "string" },
       scope: { enum: SCOPE_ENUM },
+      scopeRef: { bsonType: "string" },
       timeRange: {
         bsonType: "object",
         required: ["start", "end"],
@@ -630,9 +636,14 @@ export async function ensureStandardIndexes(
   } catch {
     // Index may not exist — safe to ignore.
   }
+  try {
+    await structured.dropIndex("uq_structured_agent_type_key");
+  } catch {
+    // Index may not exist — safe to ignore.
+  }
   await structured.createIndex(
-    { agentId: 1, type: 1, key: 1 },
-    { name: "uq_structured_agent_type_key", unique: true },
+    { agentId: 1, scope: 1, scopeRef: 1, type: 1, key: 1 },
+    { name: "uq_structured_agent_scope_scoperef_type_key", unique: true },
   );
   applied++;
   await structured.createIndex({ type: 1, updatedAt: -1 }, { name: "idx_structured_type_updated" });
@@ -721,11 +732,17 @@ export async function ensureStandardIndexes(
 
   // Events indexes
   const events = eventsCollection(db, prefix);
-  await events.createIndex({ agentId: 1, timestamp: -1 }, { name: "idx_events_agent_ts" });
+  await events.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, timestamp: -1 },
+    { name: "idx_events_agent_scope_scoperef_ts" },
+  );
   applied++;
   await events.createIndex({ eventId: 1 }, { name: "uq_events_eventid", unique: true });
   applied++;
-  await events.createIndex({ scope: 1, timestamp: -1 }, { name: "idx_events_scope_ts" });
+  await events.createIndex(
+    { scope: 1, scopeRef: 1, timestamp: -1 },
+    { name: "idx_events_scope_scoperef_ts" },
+  );
   applied++;
   await events.createIndex(
     { sessionId: 1, timestamp: -1 },
@@ -742,11 +759,14 @@ export async function ensureStandardIndexes(
 
   // Entities indexes
   const entities = entitiesCollection(db, prefix);
-  await entities.createIndex({ entityId: 1 }, { name: "uq_entities_entityid", unique: true });
+  await entities.createIndex(
+    { entityId: 1, agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "uq_entities_entityid_agent_scope_scoperef", unique: true },
+  );
   applied++;
   await entities.createIndex(
-    { agentId: 1, type: 1, name: 1 },
-    { name: "idx_entities_agent_type_name" },
+    { agentId: 1, scope: 1, scopeRef: 1, type: 1, name: 1 },
+    { name: "idx_entities_agent_scope_scoperef_type_name" },
   );
   applied++;
   await entities.createIndex({ name: "text", aliases: "text" }, { name: "idx_entities_text" });
@@ -754,11 +774,20 @@ export async function ensureStandardIndexes(
 
   // Relations indexes
   const relations = relationsCollection(db, prefix);
-  await relations.createIndex({ fromEntityId: 1, type: 1 }, { name: "idx_relations_from_type" });
+  await relations.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, fromEntityId: 1, type: 1 },
+    { name: "idx_relations_agent_scope_scoperef_from_type" },
+  );
   applied++;
-  await relations.createIndex({ toEntityId: 1 }, { name: "idx_relations_to" });
+  await relations.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, toEntityId: 1 },
+    { name: "idx_relations_agent_scope_scoperef_to" },
+  );
   applied++;
-  await relations.createIndex({ agentId: 1, scope: 1 }, { name: "idx_relations_agent_scope" });
+  await relations.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "idx_relations_agent_scope_scoperef" },
+  );
   applied++;
 
   // Episodes indexes
@@ -766,8 +795,8 @@ export async function ensureStandardIndexes(
   await episodes.createIndex({ episodeId: 1 }, { name: "uq_episodes_episodeid", unique: true });
   applied++;
   await episodes.createIndex(
-    { agentId: 1, type: 1, "timeRange.start": -1 },
-    { name: "idx_episodes_agent_type_start" },
+    { agentId: 1, scope: 1, scopeRef: 1, type: 1, "timeRange.start": -1 },
+    { name: "idx_episodes_agent_scope_scoperef_type_start" },
   );
   applied++;
   await episodes.createIndex({ summary: "text", title: "text" }, { name: "idx_episodes_text" });
@@ -788,8 +817,8 @@ export async function ensureStandardIndexes(
 
   // v2-ready structured memory scope index
   await structured.createIndex(
-    { agentId: 1, scope: 1, type: 1, key: 1 },
-    { name: "uq_structured_agent_scope_type_key", unique: true, sparse: true },
+    { agentId: 1, scope: 1, scopeRef: 1, type: 1, key: 1 },
+    { name: "uq_structured_agent_scope_scoperef_type_key_v2", unique: true, sparse: true },
   );
   applied++;
 
