@@ -467,10 +467,47 @@ describe("resolveMemoryBackendConfig", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // mongo_v2 runtime mode tests (Phase 1)
+  // v2 architecture defaults (episodes + graph enabled by default)
   // ---------------------------------------------------------------------------
 
-  it("resolves mongo_v2 runtimeMode without error", () => {
+  it("enables episodes by default", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.episodes.enabled).toBe(true);
+    expect(resolved.mongodb!.graph.enabled).toBe(true);
+  });
+
+  it("allows disabling episodes explicitly", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", episodes: { enabled: false } },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.episodes.enabled).toBe(false);
+  });
+
+  it("allows disabling graph explicitly", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017", graph: { enabled: false } },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.graph.enabled).toBe(false);
+  });
+
+  it("ignores old runtimeMode field without error (backward compat)", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -479,86 +516,18 @@ describe("resolveMemoryBackendConfig", () => {
         mongodb: { uri: "mongodb://localhost:27017" },
       },
     } as unknown as OpenClawConfig;
+    // Should not throw
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.runtimeMode).toBe("mongo_v2");
+    expect(resolved.mongodb).toBeDefined();
+    // runtimeMode should NOT exist on resolved config
+    expect("runtimeMode" in resolved.mongodb!).toBe(false);
   });
 
-  it("still resolves mongo_canonical runtimeMode (regression)", () => {
+  it("resolves custom episode and graph config", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
         backend: "mongodb",
-        runtimeMode: "mongo_canonical",
-        mongodb: { uri: "mongodb://localhost:27017" },
-      },
-    } as unknown as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.runtimeMode).toBe("mongo_canonical");
-  });
-
-  it("defaults v2 config fields when runtimeMode is mongo_v2", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: {
-        backend: "mongodb",
-        runtimeMode: "mongo_v2",
-        mongodb: { uri: "mongodb://localhost:27017" },
-      },
-    } as unknown as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.episodes).toEqual({ enabled: true, minEventsForEpisode: 10 });
-    expect(resolved.mongodb!.graph).toEqual({ enabled: true, maxGraphDepth: 2 });
-  });
-
-  it("defaults v2 config fields to disabled when runtimeMode is mongo_canonical", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: {
-        backend: "mongodb",
-        runtimeMode: "mongo_canonical",
-        mongodb: { uri: "mongodb://localhost:27017" },
-      },
-    } as unknown as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.episodes).toEqual({ enabled: false, minEventsForEpisode: 10 });
-    expect(resolved.mongodb!.graph).toEqual({ enabled: false, maxGraphDepth: 2 });
-  });
-
-  it("throws on invalid runtimeMode", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: {
-        backend: "mongodb",
-        runtimeMode: "invalid_mode",
-        mongodb: { uri: "mongodb://localhost:27017" },
-      },
-    } as unknown as OpenClawConfig;
-    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
-      /Unsupported memory\.runtimeMode/,
-    );
-  });
-
-  it("passes through runtimeMode to resolved config instead of hardcoding", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: {
-        backend: "mongodb",
-        runtimeMode: "mongo_v2",
-        mongodb: { uri: "mongodb://localhost:27017" },
-      },
-    } as unknown as OpenClawConfig;
-    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    // Must NOT be "mongo_canonical" when "mongo_v2" is configured
-    expect(resolved.mongodb!.runtimeMode).not.toBe("mongo_canonical");
-    expect(resolved.mongodb!.runtimeMode).toBe("mongo_v2");
-  });
-
-  it("resolves custom v2 episode and graph config", () => {
-    const cfg = {
-      agents: { defaults: { workspace: "/tmp/memory-test" } },
-      memory: {
-        backend: "mongodb",
-        runtimeMode: "mongo_v2",
         mongodb: {
           uri: "mongodb://localhost:27017",
           episodes: { enabled: false, minEventsForEpisode: 20 },

@@ -559,7 +559,6 @@ describe("getV2Status", () => {
 
     const status = await getV2Status(fakeDb, fakePrefix, "agent-1");
 
-    expect(status.runtimeMode).toBe("mongo_v2");
     expect(status.events.count).toBe(42);
     expect(status.events.latestTimestamp).toEqual(latestDate);
     expect(status.entities.count).toBe(42);

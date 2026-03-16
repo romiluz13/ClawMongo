@@ -33,7 +33,7 @@ New install? Start here: [Getting started](https://docs.openclaw.ai/start/gettin
 ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB-native system:
 
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
-- **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot auto-generates embeddings at index time and query time via Voyage AI. No separate embedding service, no manual vector management.
+- **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot delegates to the Voyage AI API for embedding generation at index time and query time. No application-side embedding code or manual vector management.
 - **Canonical events architecture (v2)**: events are the primary write target. Chunks, entities, relations, and episodes are all derived projections from the event stream.
 - **Knowledge graph with `$graphLookup`**: entities and relations form a traversable graph. Bi-directional expansion, entity extraction from conversations, and graph-aware retrieval paths.
 - **Episode materialization**: raw event sequences are consolidated into searchable episodes (daily, topic, decision, weekly types) with summarization.
@@ -114,7 +114,7 @@ ClawMongo uses MongoDB Community Search (`mongot`) with Voyage AI automatic embe
 - **Index-time**: mongot reads the `text` field and calls the Voyage AI API to generate embeddings automatically
 - **Query-time**: `$vectorSearch` with `query: { text: "search query" }` — mongot embeds the query text and runs ANN search
 - **Model**: `voyage-4-large` (1024 dimensions) across chunks, kb_chunks, and structured_mem collections
-- **No application-side embedding code** — the entire embedding pipeline is handled by mongot + Voyage AI
+- **No application-side embedding code** — mongot delegates to the Voyage AI API for embedding generation. You need a Voyage AI API key configured in mongot, but no embedding code in the application layer
 
 ```json5
 // Vector search index definition (autoEmbed)
@@ -300,7 +300,7 @@ Run `clawmongo doctor` to surface risky/misconfigured DM policies.
 ### Memory v2 (MongoDB-native)
 
 - **Canonical events**: append-only event stream as the single source of truth. Chunks are derived projections from events via `writeEventAndProject()`.
-- **Voyage AI autoEmbed**: `voyage-4-large` automatic embeddings via `mongot` on chunks, kb_chunks, and structured_mem. `$vectorSearch` with `query: { text: "..." }` — zero application-side embedding code.
+- **Voyage AI autoEmbed**: `voyage-4-large` embeddings via `mongot` (which delegates to the Voyage AI API) on chunks, kb_chunks, and structured_mem. `$vectorSearch` with `query: { text: "..." }` — zero application-side embedding code.
 - **Knowledge graph**: rule-based entity extraction (5 types: @mentions, #tags, URLs, file paths, "Quoted Names"), typed weighted relations, bi-directional `$graphLookup` expansion via `$facet`.
 - **Episode materialization**: consolidation of event sequences into searchable episodes (daily, topic, decision, weekly). Auto-triggers on session gaps, event count thresholds, or explicit requests with rate limiting.
 - **Retrieval planner**: pure-function scoring of 6 retrieval paths (hybrid, raw-window, graph, episodic, structured, kb) based on query analysis.

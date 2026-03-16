@@ -46,7 +46,6 @@ function makeConfig(overrides?: Partial<ResolvedMongoDBConfig>): ResolvedMongoDB
       retention: { days: 30 },
       benchmark: { enabled: false, datasetPath: "" },
     },
-    runtimeMode: "mongo_canonical",
     episodes: { enabled: false, minEventsForEpisode: 10 },
     graph: { enabled: false, maxGraphDepth: 2 },
     sources: {

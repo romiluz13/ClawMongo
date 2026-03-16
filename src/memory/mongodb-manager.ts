@@ -1668,9 +1668,32 @@ export async function searchV2(
         let pathResults: MemorySearchResult[] = [];
 
         switch (path) {
-          case "structured":
-            log.debug("searchV2: structured path delegated to caller");
+          case "structured": {
+            const structuredHits = await searchStructuredMemory(
+              structuredMemCollection(db, prefix),
+              query,
+              null,
+              {
+                maxResults: context.maxResults ?? 10,
+                minScore: 0.1,
+                filter: { agentId },
+                numCandidates: 200,
+                capabilities: {
+                  vectorSearch: true,
+                  textSearch: true,
+                  scoreFusion: true,
+                  rankFusion: false,
+                },
+                vectorIndexName: `${prefix}structured_mem_vector`,
+                embeddingMode: "automated",
+              },
+            ).catch((err) => {
+              log.warn(`searchV2 structured path failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            });
+            pathResults = structuredHits;
             break;
+          }
           case "raw-window": {
             const now = new Date();
             const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -1740,12 +1763,52 @@ export async function searchV2(
             }));
             break;
           }
-          case "hybrid":
-            log.debug("searchV2: hybrid path delegated to existing search infrastructure");
+          case "hybrid": {
+            const hybridHits = await mongoSearch(chunksCollection(db, prefix), query, null, {
+              maxResults: context.maxResults ?? 10,
+              minScore: 0.1,
+              numCandidates: 200,
+              fusionMethod: "scoreFusion",
+              capabilities: {
+                vectorSearch: true,
+                textSearch: true,
+                scoreFusion: true,
+                rankFusion: false,
+              },
+              vectorIndexName: `${prefix}chunks_vector`,
+              textIndexName: `${prefix}chunks_text`,
+              vectorWeight: 0.7,
+              textWeight: 0.3,
+              embeddingMode: "automated",
+            }).catch((err) => {
+              log.warn(`searchV2 hybrid path failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            });
+            pathResults = hybridHits;
             break;
-          case "kb":
-            log.debug("searchV2: kb path delegated to existing search infrastructure");
+          }
+          case "kb": {
+            const kbHits = await searchKB(kbChunksCollection(db, prefix), query, null, {
+              maxResults: Math.max(3, Math.floor((context.maxResults ?? 10) / 3)),
+              minScore: 0.1,
+              numCandidates: 200,
+              vectorIndexName: `${prefix}kb_chunks_vector`,
+              textIndexName: `${prefix}kb_chunks_text`,
+              capabilities: {
+                vectorSearch: true,
+                textSearch: true,
+                scoreFusion: true,
+                rankFusion: false,
+              },
+              embeddingMode: "automated",
+              kbDocs: kbCollection(db, prefix),
+            }).catch((err) => {
+              log.warn(`searchV2 kb path failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            });
+            pathResults = kbHits;
             break;
+          }
         }
 
         if (pathResults.length > 0) {
@@ -1779,7 +1842,6 @@ export async function searchV2(
 // ---------------------------------------------------------------------------
 
 export type V2Status = {
-  runtimeMode: "mongo_v2";
   events: { count: number; latestTimestamp?: Date };
   entities: { count: number };
   relations: { count: number };
@@ -1835,7 +1897,6 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
     }
 
     return {
-      runtimeMode: "mongo_v2",
       events: {
         count: eventCount,
         latestTimestamp: latestEvent?.timestamp,

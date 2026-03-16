@@ -1060,7 +1060,6 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       const status = await getV2Status(db, PREFIX, AGENT_ID);
 
       console.log("\n  ═══ V2 System Status ═══");
-      console.log(`  Runtime mode: ${status.runtimeMode}`);
       console.log(
         `  Events: ${status.events.count} (latest: ${status.events.latestTimestamp?.toISOString() ?? "none"})`,
       );
@@ -1073,7 +1072,6 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       console.log(`  Retrieval paths: ${status.retrievalPaths.join(", ")}`);
       console.log("  ════════════════════════\n");
 
-      expect(status.runtimeMode).toBe("mongo_v2");
       expect(status.events.count).toBeGreaterThan(0);
       expect(status.entities.count).toBeGreaterThan(0);
       expect(status.episodes.count).toBeGreaterThanOrEqual(1);

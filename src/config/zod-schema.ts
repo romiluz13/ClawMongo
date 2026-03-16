@@ -156,18 +156,7 @@ const MemorySchema = z
   .object({
     backend: z.literal("mongodb").optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
-    runtimeMode: z
-      .string()
-      .optional()
-      .superRefine((value, ctx) => {
-        if (value === undefined || value === "mongo_canonical") {
-          return;
-        }
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `runtimeMode "${value}" is not supported in ClawMongo. Use runtimeMode "mongo_canonical".`,
-        });
-      }),
+    runtimeMode: z.string().optional(),
     sources: z
       .object({
         reference: z.object({ enabled: z.boolean().optional() }).strict().optional(),

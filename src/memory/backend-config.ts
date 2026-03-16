@@ -4,7 +4,6 @@ import type {
   MemoryMongoDBDeploymentProfile,
   MemoryMongoDBEmbeddingMode,
   MemoryMongoDBFusionMethod,
-  MemoryRuntimeMode,
 } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
@@ -71,7 +70,6 @@ export type ResolvedMongoDBConfig = {
       datasetPath: string;
     };
   };
-  runtimeMode: MemoryRuntimeMode;
   episodes: { enabled: boolean; minEventsForEpisode: number };
   graph: { enabled: boolean; maxGraphDepth: number };
   sources: {
@@ -91,7 +89,6 @@ const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
 const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "automated";
-const DEFAULT_RUNTIME_MODE = "mongo_canonical" as const;
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -105,16 +102,10 @@ export function resolveMemoryBackendConfig(params: {
 }): ResolvedMemoryBackendConfig {
   const backend = params.cfg.memory?.backend ?? DEFAULT_BACKEND;
   const citations = params.cfg.memory?.citations ?? DEFAULT_CITATIONS;
-  const runtimeMode = params.cfg.memory?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
 
   if (backend !== "mongodb") {
     throw new Error(
       `Unsupported memory.backend "${String(backend)}". ClawMongo supports only the MongoDB memory backend.`,
-    );
-  }
-  if (runtimeMode !== "mongo_canonical" && runtimeMode !== "mongo_v2") {
-    throw new Error(
-      `Unsupported memory.runtimeMode "${String(runtimeMode)}". ClawMongo supports "mongo_canonical" or "mongo_v2".`,
     );
   }
 
@@ -316,12 +307,8 @@ export function resolveMemoryBackendConfig(params: {
                 : resolveUserPath(DEFAULT_RELEVANCE_DATASET),
           },
         },
-        runtimeMode,
         episodes: {
-          enabled:
-            mongoCfg?.episodes?.enabled !== undefined
-              ? mongoCfg.episodes.enabled
-              : runtimeMode === "mongo_v2",
+          enabled: mongoCfg?.episodes?.enabled !== false,
           minEventsForEpisode:
             typeof mongoCfg?.episodes?.minEventsForEpisode === "number" &&
             Number.isFinite(mongoCfg.episodes.minEventsForEpisode) &&
@@ -330,10 +317,7 @@ export function resolveMemoryBackendConfig(params: {
               : 10,
         },
         graph: {
-          enabled:
-            mongoCfg?.graph?.enabled !== undefined
-              ? mongoCfg.graph.enabled
-              : runtimeMode === "mongo_v2",
+          enabled: mongoCfg?.graph?.enabled !== false,
           maxGraphDepth:
             typeof mongoCfg?.graph?.maxGraphDepth === "number" &&
             Number.isFinite(mongoCfg.graph.maxGraphDepth) &&

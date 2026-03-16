@@ -67,7 +67,7 @@ describe("searchKB", () => {
     });
 
     expect(results).toHaveLength(1);
-    expect(results[0].source).toBe("kb");
+    expect(results[0].source).toBe("reference");
     expect(results[0].score).toBe(0.85);
     expect(results[0].snippet).toContain("KB content about architecture");
   });
@@ -119,7 +119,7 @@ describe("searchKB", () => {
     });
 
     expect(results).toHaveLength(1);
-    expect(results[0].source).toBe("kb");
+    expect(results[0].source).toBe("reference");
   });
 
   it("caps numCandidates at 10000 in KB search (F1)", async () => {
