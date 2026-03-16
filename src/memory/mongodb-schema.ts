@@ -164,7 +164,7 @@ const STRUCTURED_MEM_SCHEMA: Document = {
       key: { bsonType: "string", description: "Unique key within type" },
       value: { bsonType: "string", description: "The observation/fact text" },
       context: { bsonType: "string" },
-      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
       tags: { bsonType: "array", items: { bsonType: "string" } },
       agentId: { bsonType: "string" },
       scope: {
@@ -304,7 +304,7 @@ const ENTITIES_SCHEMA: Document = {
         description: "Alternative names",
       },
       attributes: { bsonType: "object", description: "Arbitrary key-value attributes" },
-      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
     },
   },
 };
@@ -320,9 +320,9 @@ const RELATIONS_SCHEMA: Document = {
       agentId: { bsonType: "string" },
       scope: { enum: SCOPE_ENUM },
       updatedAt: { bsonType: "date" },
-      weight: { bsonType: "double", minimum: 0, maximum: 1 },
+      weight: { bsonType: "number", minimum: 0, maximum: 1 },
       metadata: { bsonType: "object" },
-      confidence: { bsonType: "double", minimum: 0, maximum: 1 },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
     },
   },
 };
