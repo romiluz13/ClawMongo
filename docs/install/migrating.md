@@ -45,7 +45,7 @@ Common defaults:
 - `~/.openclaw/workspace/` (recommended workspace)
 - a custom folder you created
 
-Your workspace is where files like `MEMORY.md`, `USER.md`, and `memory/*.md` live.
+Your workspace is where files like `MEMORY.md`, `USER.md`, and `memory/*.md` live. In ClawMongo, these remain bridge and identity files; durable runtime memory lives in MongoDB.
 
 ### 3) Understand what you will preserve
 

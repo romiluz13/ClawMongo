@@ -112,7 +112,7 @@ describe("runEmbeddedPiAgent usage reporting", () => {
     );
   });
 
-  it("forwards memory flush write paths into memory-triggered attempts", async () => {
+  it("forwards memory trigger state into embedded attempts without legacy file-write hints", async () => {
     mockedRunEmbeddedAttempt.mockResolvedValueOnce({
       aborted: false,
       promptError: null,
@@ -131,13 +131,11 @@ describe("runEmbeddedPiAgent usage reporting", () => {
       timeoutMs: 30000,
       runId: "run-memory-forwarding",
       trigger: "memory",
-      memoryFlushWritePath: "memory/2026-03-10.md",
     });
 
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         trigger: "memory",
-        memoryFlushWritePath: "memory/2026-03-10.md",
       }),
     );
   });

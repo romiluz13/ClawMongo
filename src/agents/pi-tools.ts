@@ -36,7 +36,6 @@ import {
   createSandboxedWriteTool,
   normalizeToolParams,
   patchToolSchemaForClaudeCompatibility,
-  wrapToolMemoryFlushAppendOnlyWrite,
   wrapToolWorkspaceRootGuard,
   wrapToolWorkspaceRootGuardWithOptions,
   wrapToolParamNormalization,
@@ -210,8 +209,6 @@ export function createOpenClawCodingTools(options?: {
   runId?: string;
   /** What initiated this run (for trigger-specific tool restrictions). */
   trigger?: string;
-  /** Relative workspace path that memory-triggered writes may append to. */
-  memoryFlushWritePath?: string;
   agentDir?: string;
   workspaceDir?: string;
   /**
@@ -275,7 +272,6 @@ export function createOpenClawCodingTools(options?: {
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
   const isMemoryFlushRun = options?.trigger === "memory";
-  const memoryFlushWritePath = isMemoryFlushRun ? options.memoryFlushWritePath : undefined;
   const {
     agentId,
     globalPolicy,
@@ -541,19 +537,6 @@ export function createOpenClawCodingTools(options?: {
     ? tools.flatMap((tool) => {
         if (!MEMORY_FLUSH_ALLOWED_TOOL_NAMES.has(tool.name)) {
           return [];
-        }
-        if (tool.name === "write" && memoryFlushWritePath) {
-          return [
-            wrapToolMemoryFlushAppendOnlyWrite(tool, {
-              root: sandboxRoot ?? workspaceRoot,
-              relativePath: memoryFlushWritePath,
-              containerWorkdir: sandbox?.containerWorkdir,
-              sandbox:
-                sandboxRoot && sandboxFsBridge
-                  ? { root: sandboxRoot, bridge: sandboxFsBridge }
-                  : undefined,
-            }),
-          ];
         }
         return [tool];
       })

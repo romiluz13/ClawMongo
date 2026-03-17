@@ -466,10 +466,6 @@ export async function runMemoryFlushIfNeeded(params: {
   }
   let memoryCompactionCompleted = false;
   const memoryFlushNowMs = Date.now();
-  const memoryFlushWritePath = resolveMemoryFlushRelativePathForRun({
-    cfg: params.cfg,
-    nowMs: memoryFlushNowMs,
-  });
   const flushSystemPrompt = [
     params.followupRun.run.extraSystemPrompt,
     memoryFlushSettings.systemPrompt,
@@ -496,7 +492,6 @@ export async function runMemoryFlushIfNeeded(params: {
           ...runBaseParams,
           allowGatewaySubagentBinding: true,
           trigger: "memory",
-          memoryFlushWritePath,
           prompt: resolveMemoryFlushPromptForRun({
             prompt: memoryFlushSettings.prompt,
             cfg: params.cfg,

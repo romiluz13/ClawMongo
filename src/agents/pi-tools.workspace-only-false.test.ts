@@ -195,16 +195,10 @@ describe("FS tools with workspaceOnly=false", () => {
     ).rejects.toThrow(/Path escapes (workspace|sandbox) root/);
   });
 
-  it("restricts memory-triggered writes to append-only canonical memory files", async () => {
-    const allowedRelativePath = "memory/2026-03-07.md";
-    const allowedAbsolutePath = path.join(workspaceDir, allowedRelativePath);
-    await fs.mkdir(path.dirname(allowedAbsolutePath), { recursive: true });
-    await fs.writeFile(allowedAbsolutePath, "seed");
-
+  it("removes file-mutation tools from memory-triggered runs", async () => {
     const tools = createOpenClawCodingTools({
       workspaceDir,
       trigger: "memory",
-      memoryFlushWritePath: allowedRelativePath,
       config: {
         tools: {
           exec: {
@@ -218,26 +212,10 @@ describe("FS tools with workspaceOnly=false", () => {
       modelId: "gpt-5",
     });
 
-    const writeTool = tools.find((tool) => tool.name === "write");
-    expect(writeTool).toBeDefined();
-    expect(tools.map((tool) => tool.name).toSorted()).toEqual(["read", "write"]);
-
-    await expect(
-      writeTool!.execute("test-call-memory-deny", {
-        path: outsideFile,
-        content: "should not write here",
-      }),
-    ).rejects.toThrow(/Memory flush writes are restricted to memory\/2026-03-07\.md/);
-
-    const result = await writeTool!.execute("test-call-memory-append", {
-      path: allowedRelativePath,
-      content: "new note",
-    });
-    expect(hasToolError(result)).toBe(false);
-    expect(result.content).toContainEqual({
-      type: "text",
-      text: "Appended content to memory/2026-03-07.md.",
-    });
-    await expect(fs.readFile(allowedAbsolutePath, "utf-8")).resolves.toBe("seed\nnew note");
+    expect(tools.find((tool) => tool.name === "write")).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "edit")).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "exec")).toBeUndefined();
+    expect(tools.find((tool) => tool.name === "read")).toBeDefined();
+    expect(tools.map((tool) => tool.name)).not.toContain("write");
   });
 });

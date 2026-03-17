@@ -28,7 +28,6 @@ type AgentRunParams = {
 type EmbeddedRunParams = {
   prompt?: string;
   extraSystemPrompt?: string;
-  memoryFlushWritePath?: string;
   bootstrapPromptWarningSignaturesSeen?: string[];
   bootstrapPromptWarningSignature?: string;
   onAgentEvent?: (evt: { stream?: string; data?: { phase?: string; willRetry?: boolean } }) => void;
@@ -1782,13 +1781,11 @@ describe("runReplyAgent memory flush", () => {
       const calls: Array<{
         prompt?: string;
         extraSystemPrompt?: string;
-        memoryFlushWritePath?: string;
       }> = [];
       state.runEmbeddedPiAgentMock.mockImplementation(async (params: EmbeddedRunParams) => {
         calls.push({
           prompt: params.prompt,
           extraSystemPrompt: params.extraSystemPrompt,
-          memoryFlushWritePath: params.memoryFlushWritePath,
         });
         if (params.prompt?.includes("Pre-compaction memory flush.")) {
           return { payloads: [], meta: {} };
