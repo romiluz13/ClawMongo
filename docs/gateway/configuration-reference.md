@@ -2949,7 +2949,7 @@ Notes:
 
 ## Wizard
 
-Metadata written by CLI wizards (`onboard`, `configure`, `doctor`):
+Metadata written by CLI guided setup flows (`onboard`, `configure`, `doctor`):
 
 ```json5
 {
