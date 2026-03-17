@@ -7,11 +7,10 @@ import {
   type ApiKeyStorageOptions,
   writeOAuthCredentials,
   type WriteOAuthCredentialsOptions,
-} from "./auth-credentials.js";
-export { CLOUDFLARE_AI_GATEWAY_DEFAULT_MODEL_REF } from "../agents/cloudflare-ai-gateway.js";
-export { MISTRAL_DEFAULT_MODEL_REF } from "../../extensions/mistral/onboard.js";
-export { MODELSTUDIO_DEFAULT_MODEL_REF } from "../../extensions/modelstudio/onboard.js";
-export { XAI_DEFAULT_MODEL_REF } from "../../extensions/xai/onboard.js";
+} from "./provider-auth-helpers.js";
+
+const resolveAuthAgentDir = (agentDir?: string) => agentDir ?? resolveOpenClawAgentDir();
+
 export { KILOCODE_DEFAULT_MODEL_REF };
 export {
   buildApiKeyCredential,
@@ -20,14 +19,11 @@ export {
   type WriteOAuthCredentialsOptions,
 };
 
-const resolveAuthAgentDir = (agentDir?: string) => agentDir ?? resolveOpenClawAgentDir();
-
 export async function setAnthropicApiKey(
   key: SecretInput,
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "anthropic:default",
     credential: buildApiKeyCredential("anthropic", key, undefined, options),
@@ -52,7 +48,6 @@ export async function setGeminiApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "google:default",
     credential: buildApiKeyCredential("google", key, undefined, options),
@@ -67,7 +62,6 @@ export async function setMinimaxApiKey(
   options?: ApiKeyStorageOptions,
 ) {
   const provider = profileId.split(":")[0] ?? "minimax";
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId,
     credential: buildApiKeyCredential(provider, key, undefined, options),
@@ -80,7 +74,6 @@ export async function setMoonshotApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "moonshot:default",
     credential: buildApiKeyCredential("moonshot", key, undefined, options),
@@ -93,7 +86,6 @@ export async function setKimiCodingApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "kimi:default",
     credential: buildApiKeyCredential("kimi", key, undefined, options),
@@ -130,7 +122,6 @@ export async function setSyntheticApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "synthetic:default",
     credential: buildApiKeyCredential("synthetic", key, undefined, options),
@@ -143,7 +134,6 @@ export async function setVeniceApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "venice:default",
     credential: buildApiKeyCredential("venice", key, undefined, options),
@@ -164,7 +154,6 @@ export async function setZaiApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Write to resolved agent dir so gateway finds credentials on startup.
   upsertAuthProfile({
     profileId: "zai:default",
     credential: buildApiKeyCredential("zai", key, undefined, options),
@@ -189,7 +178,6 @@ export async function setOpenrouterApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  // Never persist the literal "undefined" (e.g. when prompt returns undefined and caller used String(key)).
   const safeKey = typeof key === "string" && key === "undefined" ? "" : key;
   upsertAuthProfile({
     profileId: "openrouter:default",
@@ -267,12 +255,11 @@ async function setSharedOpencodeApiKey(
   agentDir?: string,
   options?: ApiKeyStorageOptions,
 ) {
-  const resolvedAgentDir = resolveAuthAgentDir(agentDir);
   for (const provider of ["opencode", "opencode-go"] as const) {
     upsertAuthProfile({
       profileId: `${provider}:default`,
       credential: buildApiKeyCredential(provider, key, undefined, options),
-      agentDir: resolvedAgentDir,
+      agentDir: resolveAuthAgentDir(agentDir),
     });
   }
 }
