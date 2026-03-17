@@ -1042,6 +1042,7 @@ export async function compactEmbeddedPiSessionDirect(
                 messageCount: messageCountAfter,
                 tokenCount: tokensAfter,
                 compactedCount,
+                sessionFile: params.sessionFile,
               },
               {
                 sessionId: params.sessionId,
