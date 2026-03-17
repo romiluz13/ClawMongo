@@ -1,9 +1,9 @@
 import { requireActivePluginRegistry } from "../plugins/runtime.js";
-import { CHANNEL_IDS, CHAT_CHANNEL_ORDER, type ChatChannelId } from "./builtin-registry.js";
+import { CHANNEL_IDS, CHAT_CHANNEL_ORDER, type ChatChannelId } from "./ids.js";
 import type { ChannelMeta } from "./plugins/types.js";
 import type { ChannelId } from "./plugins/types.js";
-export { CHANNEL_IDS, CHAT_CHANNEL_ORDER } from "./builtin-registry.js";
-export type { ChatChannelId } from "./builtin-registry.js";
+export { CHANNEL_IDS, CHAT_CHANNEL_ORDER } from "./ids.js";
+export type { ChatChannelId } from "./ids.js";
 
 export type ChatChannelMeta = ChannelMeta;
 

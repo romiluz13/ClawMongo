@@ -46,6 +46,7 @@ export {
   resolveDiscordGroupRequireMention,
   resolveDiscordGroupToolPolicy,
 } from "../channels/plugins/group-mentions.js";
+export { discordSetupWizard } from "../../extensions/discord/src/plugin-shared.js";
 export { DiscordConfigSchema } from "../config/zod-schema.providers-core.js";
 
 export {
