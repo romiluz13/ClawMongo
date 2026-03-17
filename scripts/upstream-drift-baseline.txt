@@ -1,6 +1,5 @@
 .github/workflows/upstream-drift.yml
 .secrets.baseline
-CLAWMONGO-MONGODB-MEMORY-BLUEPRINT.md
 .gitignore
 README-clawmongo-header-v2.png
 README-clawmongo-header.png
@@ -17,10 +16,6 @@ docs/concepts/memory.md
 docs/concepts/system-prompt.md
 docs/gateway/configuration-reference.md
 docs/gateway/sandbox-vs-tool-policy-vs-elevated.md
-docs/plans/2026-03-15-memory-architecture-v2-design.md
-docs/plans/2026-03-15-memory-architecture-v2-plan.md
-docs/plans/2026-03-16-memory-v2-consolidation-plan.md
-docs/plans/2026-03-16-memory-v2-enhancements-plan.md
 docs/tools/index.md
 docs/tools/multi-agent-sandbox-tools.md
 package.json
