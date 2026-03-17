@@ -1,3 +1,4 @@
+import { hasPotentialConfiguredChannels } from "../channels/config-presence.js";
 import { resolveCommandSecretRefsViaGateway } from "../cli/command-secret-gateway.js";
 import { getStatusCommandSecretTargetIds } from "../cli/command-secret-targets.js";
 import { withProgress } from "../cli/progress.js";
@@ -6,14 +7,12 @@ import { readBestEffortConfig } from "../config/config.js";
 import { buildGatewayConnectionDetails, callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
 import { probeGateway } from "../gateway/probe.js";
-import { collectChannelStatusIssues } from "../infra/channels-status-issues.js";
 import { resolveOsSummary } from "../infra/os-summary.js";
 import { getTailnetHostname } from "../infra/tailscale.js";
 import { getMemorySearchManager } from "../memory/index.js";
 import type { MemoryProviderStatus } from "../memory/types.js";
 import { runExec } from "../process/exec.js";
 import type { RuntimeEnv } from "../runtime.js";
-import { buildChannelsTable } from "./status-all/channels.js";
 import { getAgentLocalStatuses } from "./status.agent-local.js";
 import {
   pickGatewaySelfPresence,
@@ -46,6 +45,23 @@ type GatewayProbeSnapshot = {
   gatewayProbe: Awaited<ReturnType<typeof probeGateway>> | null;
 };
 
+let pluginRegistryModulePromise: Promise<typeof import("../cli/plugin-registry.js")> | undefined;
+let statusScanRuntimeModulePromise: Promise<typeof import("./status.scan.runtime.js")> | undefined;
+
+function loadPluginRegistryModule() {
+  pluginRegistryModulePromise ??= import("../cli/plugin-registry.js");
+  return pluginRegistryModulePromise;
+}
+
+function loadStatusScanRuntimeModule() {
+  statusScanRuntimeModulePromise ??= import("./status.scan.runtime.js");
+  return statusScanRuntimeModulePromise;
+}
+
+type StatusScanRuntimeModule = Awaited<ReturnType<typeof loadStatusScanRuntimeModule>>;
+type ChannelStatusIssues = ReturnType<StatusScanRuntimeModule["collectChannelStatusIssues"]>;
+type ChannelsTable = Awaited<ReturnType<StatusScanRuntimeModule["buildChannelsTable"]>>;
+
 function deferResult<T>(promise: Promise<T>): Promise<DeferredResult<T>> {
   return promise.then(
     (value) => ({ ok: true, value }),
@@ -69,9 +85,6 @@ function resolveMemoryPluginStatus(cfg: OpenClawConfig): MemoryPluginStatus {
   if (raw && raw.toLowerCase() === "none") {
     return { enabled: false, slot: null, reason: 'plugins.slots.memory="none"' };
   }
-  if (raw && raw !== "memory-core") {
-    return { enabled: false, slot: raw, reason: `unsupported memory slot "${raw}"` };
-  }
   return { enabled: true, slot: raw || "memory-core" };
 }
 
@@ -93,6 +106,7 @@ async function resolveGatewayProbeSnapshot(params: {
         url: gatewayConnection.url,
         auth: gatewayProbeAuthResolution.auth,
         timeoutMs: Math.min(params.opts.all ? 5000 : 2500, params.opts.timeoutMs ?? 10_000),
+        detailLevel: "presence",
       }).catch(() => null);
   if (gatewayProbeAuthWarning && gatewayProbe?.ok === false) {
     gatewayProbe.error = gatewayProbe.error
@@ -149,12 +163,11 @@ export type StatusScanResult = {
   gatewayProbe: Awaited<ReturnType<typeof probeGateway>> | null;
   gatewayReachable: boolean;
   gatewaySelf: ReturnType<typeof pickGatewaySelfPresence>;
-  channelIssues: ReturnType<typeof collectChannelStatusIssues>;
+  channelIssues: ChannelStatusIssues;
   agentStatus: Awaited<ReturnType<typeof getAgentLocalStatuses>>;
-  channels: Awaited<ReturnType<typeof buildChannelsTable>>;
+  channels: ChannelsTable;
   summary: Awaited<ReturnType<typeof getStatusSummary>>;
   memory: MemoryStatusSnapshot | null;
-  memoryError: string | null;
   memoryPlugin: MemoryPluginStatus;
 };
 
@@ -193,8 +206,12 @@ async function scanStatusJsonFast(opts: {
       config: loadedRaw,
       commandName: "status --json",
       targetIds: getStatusCommandSecretTargetIds(),
-      mode: "summary",
+      mode: "read_only_status",
     });
+  if (hasPotentialConfiguredChannels(cfg)) {
+    const { ensurePluginRegistryLoaded } = await loadPluginRegistryModule();
+    ensurePluginRegistryLoaded({ scope: "configured-channels" });
+  }
   const osSummary = resolveOsSummary();
   const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
   const updateTimeoutMs = opts.all ? 6500 : 2500;
@@ -239,15 +256,9 @@ async function scanStatusJsonFast(opts: {
   const gatewaySelf = gatewayProbe?.presence
     ? pickGatewaySelfPresence(gatewayProbe.presence)
     : null;
-  const channelsStatusPromise = resolveChannelsStatus({ cfg, gatewayReachable, opts });
   const memoryPlugin = resolveMemoryPluginStatus(cfg);
-  const memoryPromise = deferResult(
-    resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin }),
-  );
-  const [channelsStatus, memoryResult] = await Promise.all([channelsStatusPromise, memoryPromise]);
-  const memory = memoryResult.ok ? memoryResult.value : null;
-  const memoryError = memoryResult.ok ? null : String(memoryResult.error);
-  const channelIssues = channelsStatus ? collectChannelStatusIssues(channelsStatus) : [];
+  const memoryPromise = resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin });
+  const memory = await memoryPromise;
 
   return {
     cfg,
@@ -266,12 +277,11 @@ async function scanStatusJsonFast(opts: {
     gatewayProbe,
     gatewayReachable,
     gatewaySelf,
-    channelIssues,
+    channelIssues: [],
     agentStatus,
     channels: { rows: [], details: [] },
     summary,
     memory,
-    memoryError,
     memoryPlugin,
   };
 }
@@ -301,7 +311,7 @@ export async function scanStatus(
           config: loadedRaw,
           commandName: "status",
           targetIds: getStatusCommandSecretTargetIds(),
-          mode: "summary",
+          mode: "read_only_status",
         });
       const osSummary = resolveOsSummary();
       const tailscaleMode = cfg.gateway?.tailscale?.mode ?? "off";
@@ -358,6 +368,8 @@ export async function scanStatus(
 
       progress.setLabel("Querying channel status…");
       const channelsStatus = await resolveChannelsStatus({ cfg, gatewayReachable, opts });
+      const { collectChannelStatusIssues, buildChannelsTable } =
+        await loadStatusScanRuntimeModule();
       const channelIssues = channelsStatus ? collectChannelStatusIssues(channelsStatus) : [];
       progress.tick();
 
@@ -372,11 +384,7 @@ export async function scanStatus(
 
       progress.setLabel("Checking memory…");
       const memoryPlugin = resolveMemoryPluginStatus(cfg);
-      const memoryResult = await deferResult(
-        resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin }),
-      );
-      const memory = memoryResult.ok ? memoryResult.value : null;
-      const memoryError = memoryResult.ok ? null : String(memoryResult.error);
+      const memory = await resolveMemoryStatusSnapshot({ cfg, agentStatus, memoryPlugin });
       progress.tick();
 
       progress.setLabel("Reading sessions…");
@@ -408,7 +416,6 @@ export async function scanStatus(
         channels,
         summary,
         memory,
-        memoryError,
         memoryPlugin,
       };
     },
