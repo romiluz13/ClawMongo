@@ -1,8 +1,10 @@
+import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMongoDBConfig } from "./backend-config.js";
 import { resolveMemoryBackendConfig } from "./backend-config.js";
+import { normalizeExtraMemoryPaths } from "./internal.js";
 import type { MemorySearchManager } from "./types.js";
 
 const log = createSubsystemLogger("memory");
@@ -31,20 +33,27 @@ export async function getMemorySearchManager(params: {
     return { manager: null, error: "mongodb memory config missing" };
   }
 
-  const cacheKey = buildMongoDBCacheKey(params.agentId, resolved.mongodb);
+  const resolvedSearch = resolveMemorySearchConfig(params.cfg, params.agentId);
+  const workspaceDir = resolveAgentWorkspaceDir(params.cfg, params.agentId);
+  const extraMemoryPaths = normalizeExtraMemoryPaths(workspaceDir, resolvedSearch?.extraPaths);
+  const cacheKey = buildMongoDBCacheKey({
+    agentId: params.agentId,
+    config: resolved.mongodb,
+    workspaceDir,
+    extraMemoryPaths,
+  });
   const cached = MONGODB_MANAGER_CACHE.get(cacheKey);
   if (cached) {
     return { manager: cached };
   }
 
   try {
-    const resolvedSearch = resolveMemorySearchConfig(params.cfg, params.agentId);
     const { MongoDBMemoryManager } = await import("./mongodb-manager.js");
     const manager = await MongoDBMemoryManager.create({
       cfg: params.cfg,
       agentId: params.agentId,
       resolved,
-      extraPaths: resolvedSearch?.extraPaths,
+      extraPaths: extraMemoryPaths,
     });
     if (!manager) {
       const error = "mongodb memory manager initialization returned null";
@@ -76,8 +85,18 @@ export async function closeAllMemorySearchManagers(): Promise<void> {
 // IMPORTANT: stableSerialize includes sources config in the cache key.
 // Changing source policy (reference/conversation/structured enabled/disabled)
 // at runtime will produce a different cache key, ensuring no stale managers.
-export function buildMongoDBCacheKey(agentId: string, config: ResolvedMongoDBConfig): string {
-  return `${agentId}:${stableSerialize(config)}`;
+export function buildMongoDBCacheKey(params: {
+  agentId: string;
+  config: ResolvedMongoDBConfig;
+  workspaceDir: string;
+  extraMemoryPaths?: string[];
+}): string {
+  return stableSerialize({
+    agentId: params.agentId,
+    config: params.config,
+    workspaceDir: params.workspaceDir,
+    extraMemoryPaths: params.extraMemoryPaths ?? [],
+  });
 }
 
 function stableSerialize(value: unknown): string {

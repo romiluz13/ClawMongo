@@ -873,6 +873,9 @@ export async function ensureSearchIndexes(
           text: { type: "string", analyzer: "lucene.standard" },
           source: { type: "token" },
           path: { type: "token" },
+          agentId: { type: "token" },
+          scope: { type: "token" },
+          scopeRef: { type: "token" },
           updatedAt: { type: "date" },
         },
       },
@@ -898,6 +901,9 @@ export async function ensureSearchIndexes(
     const filterFields: Document[] = [
       { type: "filter", path: "source" },
       { type: "filter", path: "path" },
+      { type: "filter", path: "agentId" },
+      { type: "filter", path: "scope" },
+      { type: "filter", path: "scopeRef" },
     ];
 
     const vectorDef: Document = {
@@ -994,6 +1000,9 @@ export async function ensureSearchIndexes(
           type: { type: "token" },
           key: { type: "token" },
           tags: { type: "token" },
+          agentId: { type: "token" },
+          scope: { type: "token" },
+          scopeRef: { type: "token" },
           updatedAt: { type: "date" },
         },
       },
@@ -1015,6 +1024,8 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "type" },
       { type: "filter", path: "tags" },
       { type: "filter", path: "agentId" },
+      { type: "filter", path: "scope" },
+      { type: "filter", path: "scopeRef" },
     ];
 
     const structVectorDef: Document = {

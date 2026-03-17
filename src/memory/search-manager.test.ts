@@ -74,24 +74,48 @@ describe("buildMongoDBCacheKey", () => {
       },
     });
 
-    const key1 = buildMongoDBCacheKey("agent-1", allEnabled);
-    const key2 = buildMongoDBCacheKey("agent-1", structuredDisabled);
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config: allEnabled,
+      workspaceDir: "/tmp/workspace-a",
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config: structuredDisabled,
+      workspaceDir: "/tmp/workspace-a",
+    });
 
     expect(key1).not.toBe(key2);
   });
 
   it("same config produces same cache key (stability)", () => {
     const config = makeConfig();
-    const key1 = buildMongoDBCacheKey("agent-1", config);
-    const key2 = buildMongoDBCacheKey("agent-1", config);
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+    });
 
     expect(key1).toBe(key2);
   });
 
   it("different agentIds produce different cache keys", () => {
     const config = makeConfig();
-    const key1 = buildMongoDBCacheKey("agent-1", config);
-    const key2 = buildMongoDBCacheKey("agent-2", config);
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-2",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+    });
 
     expect(key1).not.toBe(key2);
   });
@@ -112,8 +136,52 @@ describe("buildMongoDBCacheKey", () => {
       },
     });
 
-    const key1 = buildMongoDBCacheKey("agent-1", enabled);
-    const key2 = buildMongoDBCacheKey("agent-1", disabled);
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config: enabled,
+      workspaceDir: "/tmp/workspace-a",
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config: disabled,
+      workspaceDir: "/tmp/workspace-a",
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("cache key changes when workspace changes for the same agent and config", () => {
+    const config = makeConfig();
+
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-b",
+    });
+
+    expect(key1).not.toBe(key2);
+  });
+
+  it("cache key changes when normalized extra memory paths change", () => {
+    const config = makeConfig();
+
+    const key1 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+      extraMemoryPaths: ["/tmp/workspace-a/memory/extra.md"],
+    });
+    const key2 = buildMongoDBCacheKey({
+      agentId: "agent-1",
+      config,
+      workspaceDir: "/tmp/workspace-a",
+      extraMemoryPaths: ["/tmp/workspace-a/memory/extra.md", "/tmp/shared/notes.md"],
+    });
 
     expect(key1).not.toBe(key2);
   });

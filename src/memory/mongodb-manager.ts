@@ -487,6 +487,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     };
   }
 
+  private getBridgeChunkBudget(maxResults: number): number {
+    // Bridge notes should remain searchable, but they are auxiliary to the
+    // live runtime memory stream and should not monopolize the result budget.
+    return Math.max(2, Math.ceil(maxResults / 3));
+  }
+
   async search(
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
@@ -524,6 +530,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Source policy enforcement: only search sources that are enabled in config.
     const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
+    const bridgeMaxResults = this.getBridgeChunkBudget(maxResults);
 
     // Search all sources in parallel with Promise.all for performance.
     // Legacy search does NOT have .catch() — it's the primary search,
@@ -556,7 +563,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       !activeSources.conversation
         ? emptyResults
         : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
-            maxResults,
+            maxResults: bridgeMaxResults,
             minScore,
             numCandidates: mongoCfg.numCandidates,
             sessionKey: opts?.sessionKey,
@@ -637,7 +644,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     if (dedupCount > 0) {
       log.debug(`search dedup: removed ${dedupCount} duplicate result(s)`);
     }
-    const finalResults = deduped.slice(0, maxResults);
+    const finalResults = rerankResults(deduped, cleaned).slice(0, maxResults);
     const successfulTrace = [...traceEvents].toReversed().find((event) => event.ok);
     const fallbackPath =
       successfulTrace && successfulTrace.method !== mongoCfg.fusionMethod
@@ -738,6 +745,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     // explicitly requested via sourceScope (matches search() behavior).
     const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
     const explainSources = resolveExplainSources(sourceScope, activeSources);
+    const bridgeMaxResults = this.getBridgeChunkBudget(maxResults);
     const emptyResults: MemorySearchResult[] = [];
 
     let mergedResults: MemorySearchResult[] = [];
@@ -747,7 +755,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       } else {
         const [runtimeHits, bridgeHits] = await Promise.all([
           mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
-            maxResults,
+            maxResults: bridgeMaxResults,
             minScore,
             numCandidates: mongoCfg.numCandidates,
             sessionKey: params.sessionKey,
@@ -782,8 +790,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
         const normalizedRuntime = normalizeSearchResults(runtimeHits, legacyMethod);
         const normalizedBridge = normalizeSearchResults(bridgeHits, legacyMethod);
-        mergedResults = deduplicateSearchResults(
-          [...normalizedRuntime, ...normalizedBridge].toSorted((a, b) => b.score - a.score),
+        mergedResults = rerankResults(
+          deduplicateSearchResults(
+            [...normalizedRuntime, ...normalizedBridge].toSorted((a, b) => b.score - a.score),
+          ),
+          query,
         ).slice(0, maxResults);
       }
     } else if (sourceScope === "kb") {
@@ -844,7 +855,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         !explainSources.conversation
           ? emptyResults
           : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
-              maxResults,
+              maxResults: bridgeMaxResults,
               minScore,
               numCandidates: mongoCfg.numCandidates,
               sessionKey: params.sessionKey,
@@ -906,7 +917,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       const merged = [...normalizedLegacy, ...normalizedKb, ...normalizedStructured].toSorted(
         (a, b) => b.score - a.score,
       );
-      mergedResults = deduplicateSearchResults(merged).slice(0, maxResults);
+      mergedResults = rerankResults(deduplicateSearchResults(merged), query).slice(0, maxResults);
     }
 
     const successfulTrace = [...traces].toReversed().find((event) => event.ok);
@@ -1160,9 +1171,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       if (!kbPath) {
         throw new Error("path required");
       }
-      const record = await kbCollection(this.db, this.prefix).findOne({
-        $or: [{ "source.path": kbPath }, { title: kbPath }],
-      });
+      const record = await kbCollection(this.db, this.prefix).findOne(
+        {
+          $or: [{ "source.path": kbPath }, { title: kbPath }],
+        },
+        { sort: { updatedAt: -1, _id: 1 } },
+      );
       if (!record) {
         return {
           text: "",
@@ -1388,6 +1402,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         // conversation memory from session transcript files.
         sessionMemoryEnabled: false,
         workspaceDir: this.workspaceDir,
+        extraPaths: this.extraMemoryPaths,
         embeddingMode: mongoCfg.embeddingMode,
         reason: params?.reason,
         force: params?.force,
