@@ -65,6 +65,7 @@ type SlackInteractiveDispatchContext = Omit<
   PluginInteractiveSlackHandlerContext,
   | "interaction"
   | "respond"
+  | "channel"
   | "requestConversationBinding"
   | "detachConversationBinding"
   | "getCurrentConversationBinding"
@@ -141,37 +142,33 @@ export function registerPluginInteractiveHandler(
       error: `Interactive handler namespace "${namespace}" already registered by plugin "${existing.pluginId}"`,
     };
   }
-  switch (registration.channel) {
-    case "telegram":
-      interactiveHandlers.set(key, {
-        ...registration,
-        namespace,
-        channel: "telegram",
-        pluginId,
-        pluginName: opts?.pluginName,
-        pluginRoot: opts?.pluginRoot,
-      });
-      break;
-    case "discord":
-      interactiveHandlers.set(key, {
-        ...registration,
-        namespace,
-        channel: "discord",
-        pluginId,
-        pluginName: opts?.pluginName,
-        pluginRoot: opts?.pluginRoot,
-      });
-      break;
-    case "slack":
-      interactiveHandlers.set(key, {
-        ...registration,
-        namespace,
-        channel: "slack",
-        pluginId,
-        pluginName: opts?.pluginName,
-        pluginRoot: opts?.pluginRoot,
-      });
-      break;
+  if (registration.channel === "telegram") {
+    interactiveHandlers.set(key, {
+      ...registration,
+      namespace,
+      channel: "telegram",
+      pluginId,
+      pluginName: opts?.pluginName,
+      pluginRoot: opts?.pluginRoot,
+    });
+  } else if (registration.channel === "slack") {
+    interactiveHandlers.set(key, {
+      ...registration,
+      namespace,
+      channel: "slack",
+      pluginId,
+      pluginName: opts?.pluginName,
+      pluginRoot: opts?.pluginRoot,
+    });
+  } else {
+    interactiveHandlers.set(key, {
+      ...registration,
+      namespace,
+      channel: "discord",
+      pluginId,
+      pluginName: opts?.pluginName,
+      pluginRoot: opts?.pluginRoot,
+    });
   }
   return { ok: true };
 }
