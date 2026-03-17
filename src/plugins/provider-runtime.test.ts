@@ -431,5 +431,55 @@ describe("provider-runtime", () => {
     expectCodexMissingAuthHint(buildProviderMissingAuthMessageWithPlugin);
     expectCodexBuiltInSuppression(resolveProviderBuiltInModelSuppression);
     await expectAugmentedCodexCatalog(augmentModelCatalogWithProviderPlugins);
+
+    expect(prepareDynamicModel).toHaveBeenCalledTimes(1);
+    expect(refreshOAuth).toHaveBeenCalledTimes(1);
+    expect(prepareRuntimeAuth).toHaveBeenCalledTimes(1);
+    expect(resolveUsageAuth).toHaveBeenCalledTimes(1);
+    expect(fetchUsageSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves bundled catalog hooks without loading provider plugins", async () => {
+    expect(
+      resolveProviderBuiltInModelSuppression({
+        env: process.env,
+        context: {
+          env: process.env,
+          provider: "openai",
+          modelId: "gpt-5.3-codex-spark",
+        },
+      }),
+    ).toMatchObject({
+      suppress: true,
+    });
+
+    await expect(
+      augmentModelCatalogWithProviderPlugins({
+        env: process.env,
+        context: {
+          env: process.env,
+          entries: [
+            { provider: "openai", id: "gpt-5.2", name: "GPT-5.2" },
+            { provider: "openai", id: "gpt-5.2-pro", name: "GPT-5.2 Pro" },
+            { provider: "openai", id: "gpt-5-mini", name: "GPT-5 mini" },
+            { provider: "openai", id: "gpt-5-nano", name: "GPT-5 nano" },
+            { provider: "openai-codex", id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+          ],
+        },
+      }),
+    ).resolves.toEqual([
+      { provider: "openai", id: "gpt-5.4", name: "gpt-5.4" },
+      { provider: "openai", id: "gpt-5.4-pro", name: "gpt-5.4-pro" },
+      { provider: "openai", id: "gpt-5.4-mini", name: "gpt-5.4-mini" },
+      { provider: "openai", id: "gpt-5.4-nano", name: "gpt-5.4-nano" },
+      { provider: "openai-codex", id: "gpt-5.4", name: "gpt-5.4" },
+      {
+        provider: "openai-codex",
+        id: "gpt-5.3-codex-spark",
+        name: "gpt-5.3-codex-spark",
+      },
+    ]);
+
+    expect(resolvePluginProvidersMock).not.toHaveBeenCalled();
   });
 });
