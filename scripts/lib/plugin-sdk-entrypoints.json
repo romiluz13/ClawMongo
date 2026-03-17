@@ -7,6 +7,7 @@
   "sandbox",
   "self-hosted-provider-setup",
   "routing",
+  "setup",
   "telegram",
   "discord",
   "slack",
@@ -45,5 +46,11 @@
   "zalo",
   "zalouser",
   "account-id",
-  "keyed-async-queue"
+  "allow-from",
+  "boolean-param",
+  "channel-config-helpers",
+  "group-access",
+  "json-store",
+  "keyed-async-queue",
+  "request-url"
 ]
