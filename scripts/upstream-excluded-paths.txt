@@ -3,7 +3,6 @@
 
 extensions/memory-lancedb/
 scripts/sqlite-vec-smoke.mjs
-scripts/lib/plugin-sdk-entrypoints.json
 src/memory/index.test.ts
 src/memory/manager-embedding-ops.ts
 src/memory/manager-sync-ops.ts

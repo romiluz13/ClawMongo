@@ -1,6 +1,10 @@
 import pluginSdkEntryList from "./plugin-sdk-entrypoints.json" with { type: "json" };
 
-export const pluginSdkEntrypoints = [...pluginSdkEntryList];
+// Mirror the runtime filter so build scripts can accept upstream entrypoint
+// additions without reintroducing the removed LanceDB memory backend.
+export const pluginSdkEntrypoints = pluginSdkEntryList.filter(
+  (entry) => entry !== "memory-lancedb",
+);
 
 export const pluginSdkSubpaths = pluginSdkEntrypoints.filter((entry) => entry !== "index");
 

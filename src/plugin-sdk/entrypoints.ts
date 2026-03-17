@@ -1,6 +1,10 @@
 import pluginSdkEntryList from "../../scripts/lib/plugin-sdk-entrypoints.json" with { type: "json" };
 
-export const pluginSdkEntrypoints = [...pluginSdkEntryList];
+// Keep ClawMongo aligned with upstream plugin-sdk entrypoints while refusing
+// to surface the removed LanceDB memory backend from package exports/builds.
+export const pluginSdkEntrypoints = pluginSdkEntryList.filter(
+  (entry) => entry !== "memory-lancedb",
+);
 
 export const pluginSdkSubpaths = pluginSdkEntrypoints.filter((entry) => entry !== "index");
 

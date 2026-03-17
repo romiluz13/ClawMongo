@@ -15,6 +15,11 @@ import * as sdk from "./index.js";
 const pluginSdkSpecifiers = buildPluginSdkSpecifiers();
 
 describe("plugin-sdk exports", () => {
+  it("keeps removed memory backends out of plugin-sdk exports", () => {
+    expect(pluginSdkEntrypoints).not.toContain("memory-lancedb");
+    expect(buildPluginSdkPackageExports()).not.toHaveProperty("./plugin-sdk/memory-lancedb");
+  });
+
   it("does not expose runtime modules", () => {
     const forbidden = [
       "chunkMarkdownText",
