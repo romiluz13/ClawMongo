@@ -10,6 +10,7 @@ import {
   resolveOwningPluginIdsForProvider,
   resolvePluginProviders,
 } from "./providers.js";
+import { resolvePluginCacheInputs } from "./roots.js";
 import type {
   ProviderAuthDoctorHintContext,
   ProviderAugmentModelCatalogContext,
@@ -130,8 +131,16 @@ function resolveHookProviderCacheBucket(params: {
   return bucket;
 }
 
-function buildHookProviderCacheKey(params: { workspaceDir?: string; onlyPluginIds?: string[] }) {
-  return `${params.workspaceDir ?? ""}::${JSON.stringify(params.onlyPluginIds ?? [])}`;
+function buildHookProviderCacheKey(params: {
+  workspaceDir?: string;
+  onlyPluginIds?: string[];
+  env?: NodeJS.ProcessEnv;
+}) {
+  const { roots } = resolvePluginCacheInputs({
+    workspaceDir: params.workspaceDir,
+    env: params.env,
+  });
+  return `${roots.workspace ?? ""}::${roots.global}::${roots.stock ?? ""}::${JSON.stringify(params.onlyPluginIds ?? [])}`;
 }
 
 export function resetProviderRuntimeHookCacheForTest(): void {
@@ -164,6 +173,7 @@ function resolveProviderPluginsForHooks(params: {
   const cacheKey = buildHookProviderCacheKey({
     workspaceDir: params.workspaceDir,
     onlyPluginIds,
+    env,
   });
   const cached = cacheBucket.get(cacheKey);
   if (cached) {

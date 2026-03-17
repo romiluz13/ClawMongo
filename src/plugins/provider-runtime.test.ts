@@ -94,8 +94,17 @@ describe("provider-runtime", () => {
     expect(resolvePluginProvidersMock).toHaveBeenCalledWith(
       expect.objectContaining({
         onlyPluginIds: ["openrouter"],
-        bundledProviderAllowlistCompat: true,
-        bundledProviderVitestCompat: true,
+        bundledProviderAllowlistCompat: false,
+        bundledProviderVitestCompat: false,
+        config: expect.objectContaining({
+          plugins: expect.objectContaining({
+            enabled: true,
+            allow: ["openrouter"],
+            slots: expect.objectContaining({
+              memory: "none",
+            }),
+          }),
+        }),
       }),
     );
   });

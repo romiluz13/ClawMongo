@@ -1,4 +1,8 @@
+import { formatCliCommand as formatCliCommandImpl } from "../cli/command-format.js";
+import { formatDocsLink as formatDocsLinkImpl } from "../terminal/links.js";
+
 export type { OpenClawConfig } from "../config/config.js";
+export type { DmPolicy } from "../config/types.js";
 export type { WizardPrompter } from "../wizard/prompts.js";
 export type { ChannelSetupAdapter } from "../channels/plugins/types.adapters.js";
 export type { ChannelSetupDmPolicy } from "../channels/plugins/setup-wizard-types.js";
@@ -31,7 +35,8 @@ export {
 } from "../channels/plugins/setup-wizard-helpers.js";
 export { detectBinary } from "../commands/onboard-helpers.js";
 export { installSignalCli } from "../commands/signal-install.js";
-export { formatCliCommand } from "../cli/command-format.js";
-export { formatDocsLink } from "../terminal/links.js";
 export { hasConfiguredSecretInput } from "../config/types.secrets.js";
 export { normalizeE164, pathExists } from "../utils.js";
+
+export const formatCliCommand = formatCliCommandImpl;
+export const formatDocsLink = formatDocsLinkImpl;
