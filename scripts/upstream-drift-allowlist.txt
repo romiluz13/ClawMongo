@@ -73,3 +73,4 @@ tsdown.config.ts
 src/version.ts
 src/version.test.ts
 test/helpers/memory-tool-manager-mock.ts
+test/helpers/extensions/plugin-runtime-mock.ts
