@@ -99,6 +99,19 @@ function resolveLegacySourceFilter(sessionKey?: string): InternalMemoryStoredSou
   return undefined;
 }
 
+function mergeFilters(...filters: Array<Document | undefined>): Document | undefined {
+  const active = filters.filter(
+    (filter): filter is Document => filter !== undefined && Object.keys(filter).length > 0,
+  );
+  if (active.length === 0) {
+    return undefined;
+  }
+  if (active.length === 1) {
+    return active[0];
+  }
+  return { $and: active };
+}
+
 // ---------------------------------------------------------------------------
 // $vectorSearch stage builder
 // ---------------------------------------------------------------------------
@@ -149,6 +162,7 @@ export async function vectorSearch(
     maxResults: number;
     minScore: number;
     sessionKey?: string;
+    filter?: Document;
     indexName: string;
     queryText?: string;
     embeddingMode?: MemoryMongoDBEmbeddingMode;
@@ -161,6 +175,7 @@ export async function vectorSearch(
   if (sourceFilter) {
     filter.source = sourceFilter;
   }
+  const mergedFilter = mergeFilters(Object.keys(filter).length > 0 ? filter : undefined, opts.filter);
 
   const vsStage = buildVectorSearchStage({
     queryVector,
@@ -169,7 +184,7 @@ export async function vectorSearch(
     indexName: opts.indexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults,
-    filter,
+    filter: mergedFilter,
   });
 
   if (!vsStage) {
@@ -219,15 +234,16 @@ export async function keywordSearch(
     maxResults: number;
     minScore: number;
     sessionKey?: string;
+    filter?: Document;
     indexName: string;
     explain?: SearchExplainOptions;
   },
 ): Promise<MemorySearchResult[]> {
-  const filterClauses: Document[] = [];
   const sourceFilter = resolveLegacySourceFilter(opts.sessionKey);
-  if (sourceFilter) {
-    filterClauses.push({ equals: { path: "source", value: sourceFilter } });
-  }
+  const postMatch = mergeFilters(
+    sourceFilter ? ({ source: sourceFilter } as Document) : undefined,
+    opts.filter,
+  );
 
   const pipeline: Document[] = [
     {
@@ -235,11 +251,11 @@ export async function keywordSearch(
         index: opts.indexName,
         compound: {
           must: [{ text: { query, path: "text" } }],
-          ...(filterClauses.length > 0 ? { filter: filterClauses } : {}),
         },
         ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
       },
     },
+    ...(postMatch ? [{ $match: postMatch }] : []),
     { $limit: opts.maxResults * 4 },
     {
       $project: {
@@ -295,6 +311,7 @@ export async function hybridSearchScoreFusion(
     maxResults: number;
     minScore: number;
     sessionKey?: string;
+    filter?: Document;
     vectorIndexName: string;
     textIndexName: string;
     vectorWeight: number;
@@ -309,11 +326,10 @@ export async function hybridSearchScoreFusion(
   if (source) {
     sourceFilter.source = source;
   }
-
-  const textFilterClauses: Document[] = [];
-  if (source) {
-    textFilterClauses.push({ equals: { path: "source", value: source } });
-  }
+  const mergedFilter = mergeFilters(
+    Object.keys(sourceFilter).length > 0 ? sourceFilter : undefined,
+    opts.filter,
+  );
 
   const vsStage = buildVectorSearchStage({
     queryVector,
@@ -322,7 +338,7 @@ export async function hybridSearchScoreFusion(
     indexName: opts.vectorIndexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
-    filter: sourceFilter,
+    filter: mergedFilter,
   });
 
   if (!vsStage) {
@@ -341,10 +357,10 @@ export async function hybridSearchScoreFusion(
                   index: opts.textIndexName,
                   compound: {
                     must: [{ text: { query, path: "text" } }],
-                    ...(textFilterClauses.length > 0 ? { filter: textFilterClauses } : {}),
                   },
                 },
               },
+              ...(mergedFilter ? [{ $match: mergedFilter }] : []),
               { $limit: opts.maxResults * 4 },
             ],
           },
@@ -401,6 +417,7 @@ export async function hybridSearchRankFusion(
     maxResults: number;
     minScore: number;
     sessionKey?: string;
+    filter?: Document;
     vectorIndexName: string;
     textIndexName: string;
     vectorWeight: number;
@@ -415,11 +432,10 @@ export async function hybridSearchRankFusion(
   if (source) {
     sourceFilter.source = source;
   }
-
-  const textFilterClauses: Document[] = [];
-  if (source) {
-    textFilterClauses.push({ equals: { path: "source", value: source } });
-  }
+  const mergedFilter = mergeFilters(
+    Object.keys(sourceFilter).length > 0 ? sourceFilter : undefined,
+    opts.filter,
+  );
 
   const vsStage = buildVectorSearchStage({
     queryVector,
@@ -428,7 +444,7 @@ export async function hybridSearchRankFusion(
     indexName: opts.vectorIndexName,
     numCandidates: opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     limit: opts.maxResults * 4,
-    filter: sourceFilter,
+    filter: mergedFilter,
   });
 
   if (!vsStage) {
@@ -447,10 +463,10 @@ export async function hybridSearchRankFusion(
                   index: opts.textIndexName,
                   compound: {
                     must: [{ text: { query, path: "text" } }],
-                    ...(textFilterClauses.length > 0 ? { filter: textFilterClauses } : {}),
                   },
                 },
               },
+              ...(mergedFilter ? [{ $match: mergedFilter }] : []),
               { $limit: opts.maxResults * 4 },
             ],
           },
@@ -527,6 +543,7 @@ export async function mongoSearch(
     sessionKey?: string;
     fusionMethod: MemoryMongoDBFusionMethod;
     capabilities: DetectedCapabilities;
+    filter?: Document;
     vectorIndexName: string;
     textIndexName: string;
     vectorWeight?: number;
@@ -674,11 +691,12 @@ export async function mongoSearch(
 
   // Last resort: basic $text index search (Community without mongot)
   try {
-    const filter: Document = { $text: { $search: query } };
     const sourceFilter = resolveLegacySourceFilter(opts.sessionKey);
-    if (sourceFilter) {
-      filter.source = sourceFilter;
-    }
+    const filter = mergeFilters(
+      { $text: { $search: query } } as Document,
+      sourceFilter ? ({ source: sourceFilter } as Document) : undefined,
+      opts.filter,
+    ) ?? { $text: { $search: query } };
     const docs = await collection
       .aggregate([
         { $match: filter },

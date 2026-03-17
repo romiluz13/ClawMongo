@@ -176,8 +176,10 @@ export async function getEpisodesByTimeRange(params: {
   start: Date;
   end: Date;
   type?: EpisodeType;
+  scope?: MemoryScope;
+  scopeRef?: string;
 }): Promise<Episode[]> {
-  const { db, prefix, agentId, start, end, type } = params;
+  const { db, prefix, agentId, start, end, type, scope, scopeRef } = params;
   try {
     const col = episodesCollection(db, prefix);
 
@@ -189,6 +191,12 @@ export async function getEpisodesByTimeRange(params: {
     };
     if (type) {
       filter.type = type;
+    }
+    if (scope) {
+      filter.scope = scope;
+    }
+    if (scopeRef) {
+      filter.scopeRef = scopeRef;
     }
 
     // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
@@ -210,14 +218,21 @@ export async function getEpisodesByType(params: {
   prefix: string;
   agentId: string;
   type: EpisodeType;
+  scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<Episode[]> {
-  const { db, prefix, agentId, type, limit } = params;
+  const { db, prefix, agentId, type, scope, scopeRef, limit } = params;
   try {
     const col = episodesCollection(db, prefix);
 
     const docs = await col
-      .find({ agentId, type })
+      .find({
+        agentId,
+        type,
+        ...(scope ? { scope } : {}),
+        ...(scopeRef ? { scopeRef } : {}),
+      })
       // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
@@ -239,9 +254,11 @@ export async function searchEpisodes(params: {
   prefix: string;
   query: string;
   agentId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<Episode[]> {
-  const { db, prefix, query, agentId, limit } = params;
+  const { db, prefix, query, agentId, scope, scopeRef, limit } = params;
 
   // Guard: empty/whitespace-only query would produce a match-all regex
   if (!query.trim()) {
@@ -261,6 +278,12 @@ export async function searchEpisodes(params: {
       agentId,
       $or: [{ title: { $regex: regex } }, { summary: { $regex: regex } }],
     };
+    if (scope) {
+      filter.scope = scope;
+    }
+    if (scopeRef) {
+      filter.scopeRef = scopeRef;
+    }
 
     const docs = await col
       .find(filter)

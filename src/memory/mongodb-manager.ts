@@ -57,6 +57,7 @@ import type {
 } from "./mongodb-search.js";
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
 import type {
   MemoryEmbeddingProbeResult,
@@ -288,6 +289,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private readonly prefix: string;
   private readonly agentId: string;
   private readonly workspaceDir: string;
+  private readonly agentScopeRef: string;
+  private readonly workspaceScopeRef: string;
   private readonly extraMemoryPaths: string[];
   private readonly capabilities: DetectedCapabilities;
   private readonly config: ResolvedMemoryBackendConfig;
@@ -318,6 +321,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.prefix = params.prefix;
     this.agentId = params.agentId;
     this.workspaceDir = params.workspaceDir;
+    this.agentScopeRef = resolveScopeRef({ scope: "agent", agentId: params.agentId });
+    this.workspaceScopeRef = resolveScopeRef({
+      scope: "workspace",
+      agentId: params.agentId,
+      workspaceDir: params.workspaceDir,
+    });
     this.extraMemoryPaths = params.extraMemoryPaths ?? [];
     this.capabilities = params.capabilities;
     this.config = params.config;
@@ -462,6 +471,22 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   // MemorySearchManager.search
   // ---------------------------------------------------------------------------
 
+  private buildConversationChunkFilter(): Document {
+    return {
+      source: { $in: ["conversation", "sessions"] },
+      agentId: this.agentId,
+    };
+  }
+
+  private buildBridgeChunkFilter(): Document {
+    return {
+      source: "memory",
+      agentId: this.agentId,
+      scope: "workspace",
+      scopeRef: this.workspaceScopeRef,
+    };
+  }
+
   async search(
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
@@ -504,8 +529,30 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     // Legacy search does NOT have .catch() — it's the primary search,
     // so total failure propagates. KB and structured keep their .catch(() => []).
     const emptyResults: MemorySearchResult[] = [];
-    const [conversationResults, kbResults, structuredResults] = await Promise.all([
-      // Conversation chunks — skip if conversation source is disabled
+    const [runtimeConversationResults, bridgeConversationResults, kbResults, structuredResults] =
+      await Promise.all([
+        // Runtime conversation chunks — skip if conversation source is disabled
+        !activeSources.conversation
+          ? emptyResults
+          : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
+              maxResults,
+              minScore,
+              numCandidates: mongoCfg.numCandidates,
+              sessionKey: opts?.sessionKey,
+              filter: this.buildConversationChunkFilter(),
+              fusionMethod: mongoCfg.fusionMethod,
+              capabilities: this.capabilities,
+              vectorIndexName: `${this.prefix}chunks_vector`,
+              textIndexName: `${this.prefix}chunks_text`,
+              vectorWeight: 0.7,
+              textWeight: 0.3,
+              embeddingMode: mongoCfg.embeddingMode,
+              explain: explainOpts,
+              onTrace: (event) => {
+                traceEvents.push(event);
+              },
+            }),
+        // Bridge-note chunks live in MongoDB but must stay workspace-scoped.
       !activeSources.conversation
         ? emptyResults
         : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
@@ -513,6 +560,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             minScore,
             numCandidates: mongoCfg.numCandidates,
             sessionKey: opts?.sessionKey,
+            filter: this.buildBridgeChunkFilter(),
             fusionMethod: mongoCfg.fusionMethod,
             capabilities: this.capabilities,
             vectorIndexName: `${this.prefix}chunks_vector`,
@@ -563,7 +611,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             log.warn(`structured memory search failed: ${String(err)}`);
             return [] as MemorySearchResult[];
           }),
-    ]);
+      ]);
+
+    const conversationResults = [...runtimeConversationResults, ...bridgeConversationResults];
 
     // F23 FIX: Normalize scores to [0,1] before cross-source merge.
     // Different search methods produce scores on different scales:
@@ -692,13 +742,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     let mergedResults: MemorySearchResult[] = [];
     if (sourceScope === "memory") {
-      mergedResults = !explainSources.conversation
-        ? emptyResults
-        : await mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+      if (!explainSources.conversation) {
+        mergedResults = emptyResults;
+      } else {
+        const [runtimeHits, bridgeHits] = await Promise.all([
+          mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
             maxResults,
             minScore,
             numCandidates: mongoCfg.numCandidates,
             sessionKey: params.sessionKey,
+            filter: this.buildConversationChunkFilter(),
             fusionMethod: mongoCfg.fusionMethod,
             capabilities: this.capabilities,
             vectorIndexName: `${this.prefix}chunks_vector`,
@@ -708,7 +761,31 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             embeddingMode: mongoCfg.embeddingMode,
             explain: explainOpts,
             onTrace: (event) => traces.push(event),
-          });
+          }),
+          mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+            maxResults,
+            minScore,
+            numCandidates: mongoCfg.numCandidates,
+            sessionKey: params.sessionKey,
+            filter: this.buildBridgeChunkFilter(),
+            fusionMethod: mongoCfg.fusionMethod,
+            capabilities: this.capabilities,
+            vectorIndexName: `${this.prefix}chunks_vector`,
+            textIndexName: `${this.prefix}chunks_text`,
+            vectorWeight: 0.7,
+            textWeight: 0.3,
+            embeddingMode: mongoCfg.embeddingMode,
+            explain: explainOpts,
+            onTrace: (event) => traces.push(event),
+          }),
+        ]);
+        const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
+        const normalizedRuntime = normalizeSearchResults(runtimeHits, legacyMethod);
+        const normalizedBridge = normalizeSearchResults(bridgeHits, legacyMethod);
+        mergedResults = deduplicateSearchResults(
+          [...normalizedRuntime, ...normalizedBridge].toSorted((a, b) => b.score - a.score),
+        ).slice(0, maxResults);
+      }
     } else if (sourceScope === "kb") {
       mergedResults = !explainSources.reference
         ? emptyResults
@@ -742,8 +819,28 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             },
           );
     } else {
-      const [conversationResults, kbResults, structuredResults] = await Promise.all([
-        // Conversation chunks — skip if conversation source is disabled
+      const [runtimeConversationResults, bridgeConversationResults, kbResults, structuredResults] =
+        await Promise.all([
+          // Runtime conversation chunks — skip if conversation source is disabled
+          !explainSources.conversation
+            ? emptyResults
+            : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+                maxResults,
+                minScore,
+                numCandidates: mongoCfg.numCandidates,
+                sessionKey: params.sessionKey,
+                filter: this.buildConversationChunkFilter(),
+                fusionMethod: mongoCfg.fusionMethod,
+                capabilities: this.capabilities,
+                vectorIndexName: `${this.prefix}chunks_vector`,
+                textIndexName: `${this.prefix}chunks_text`,
+                vectorWeight: 0.7,
+                textWeight: 0.3,
+                embeddingMode: mongoCfg.embeddingMode,
+                explain: explainOpts,
+                onTrace: (event) => traces.push(event),
+              }),
+          // Bridge-note chunks — same collection, different namespace filter
         !explainSources.conversation
           ? emptyResults
           : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
@@ -751,6 +848,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
               minScore,
               numCandidates: mongoCfg.numCandidates,
               sessionKey: params.sessionKey,
+              filter: this.buildBridgeChunkFilter(),
               fusionMethod: mongoCfg.fusionMethod,
               capabilities: this.capabilities,
               vectorIndexName: `${this.prefix}chunks_vector`,
@@ -799,7 +897,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
               log.warn(`relevanceExplain structured memory search failed: ${String(err)}`);
               return [] as MemorySearchResult[];
             }),
-      ]);
+        ]);
+      const conversationResults = [...runtimeConversationResults, ...bridgeConversationResults];
       const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
       const normalizedLegacy = normalizeSearchResults(conversationResults, legacyMethod);
       const normalizedKb = normalizeSearchResults(kbResults, "kb");
@@ -1009,15 +1108,21 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     if (rawPath.startsWith("structured:")) {
-      const [, type, ...keyParts] = rawPath.split(":");
+      const [basePath, queryString] = rawPath.split("?", 2);
+      const [, type, ...keyParts] = basePath.split(":");
       const key = keyParts.join(":").trim();
       if (!type || !key) {
         throw new Error("path required");
       }
+      const query = new URLSearchParams(queryString ?? "");
+      const scope = query.get("scope");
+      const scopeRef = query.get("scopeRef");
       const record = await structuredMemCollection(this.db, this.prefix).findOne({
         agentId: this.agentId,
         type,
         key,
+        ...(scope ? { scope } : {}),
+        ...(scopeRef ? { scopeRef } : {}),
       });
       if (!record) {
         return {
@@ -1077,7 +1182,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       };
     }
 
-    return await this.readConversationChunk(rawPath, params.from, params.lines);
+    if (rawPath.startsWith("conversation:") || rawPath.startsWith("events/") || rawPath.startsWith("sessions/")) {
+      return await this.readConversationChunk(rawPath, params.from, params.lines);
+    }
+
+    return await this.readBridgeChunk(rawPath, params.from, params.lines);
   }
 
   // ---------------------------------------------------------------------------
@@ -1161,6 +1270,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       .find({
         path: normalizedPath,
         source: { $in: ["sessions", "conversation"] },
+        agentId: this.agentId,
         ...(from || lines
           ? {
               $or: [
@@ -1192,6 +1302,51 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       locator: `conversation:${normalizedPath}`,
       source: "conversation" as const,
       sourceType: "conversation" as const,
+    };
+  }
+
+  private async readBridgeChunk(rawPath: string, from?: number, lines?: number) {
+    const start = Math.max(1, from ?? 1);
+    const count = Math.max(1, lines ?? Number.MAX_SAFE_INTEGER);
+    const end = start + count - 1;
+    const docs = await chunksCollection(this.db, this.prefix)
+      .find({
+        path: rawPath,
+        source: "memory",
+        agentId: this.agentId,
+        scope: "workspace",
+        scopeRef: this.workspaceScopeRef,
+        ...(from || lines
+          ? {
+              $or: [
+                { startLine: { $gte: start, $lte: end } },
+                { endLine: { $gte: start, $lte: end } },
+                { startLine: { $lte: start }, endLine: { $gte: end } },
+              ],
+            }
+          : {}),
+      })
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+      .sort({ startLine: 1 })
+      .toArray();
+    if (docs.length === 0) {
+      return {
+        text: "",
+        path: rawPath,
+        locator: rawPath,
+        source: "reference" as const,
+        sourceType: "reference" as const,
+      };
+    }
+    return {
+      text: docs
+        .map((doc: Document) => (typeof doc.text === "string" ? doc.text : ""))
+        .filter(Boolean)
+        .join("\n"),
+      path: rawPath,
+      locator: rawPath,
+      source: "reference" as const,
+      sourceType: "reference" as const,
     };
   }
 
@@ -1716,6 +1871,11 @@ export async function searchV2(
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
   try {
+    const agentScopeRef = resolveScopeRef({ scope: "agent", agentId });
+    const conversationChunkFilter: Document = {
+      source: { $in: ["conversation", "sessions"] },
+      agentId,
+    };
     const plan = planRetrieval(query, {
       availablePaths: context.availablePaths,
       knownEntityNames: context.knownEntityNames,
@@ -1771,6 +1931,8 @@ export async function searchV2(
               agentId,
               start: dayAgo,
               end: now,
+              scope: "agent",
+              scopeRef: agentScopeRef,
             });
             pathResults = events.map((e, i) => ({
               path: `event:${e.eventId}`,
@@ -1790,6 +1952,8 @@ export async function searchV2(
                 prefix,
                 query: context.knownEntityNames[0],
                 agentId,
+                scope: "agent",
+                scopeRef: agentScopeRef,
               });
               if (entities.length > 0) {
                 const graph = await expandGraph({
@@ -1797,6 +1961,8 @@ export async function searchV2(
                   prefix,
                   entityId: entities[0].entityId,
                   agentId,
+                  scope: "agent",
+                  scopeRef: agentScopeRef,
                 });
                 if (graph) {
                   pathResults = graph.connections.map((c, i) => ({
@@ -1819,6 +1985,8 @@ export async function searchV2(
               prefix,
               query,
               agentId,
+              scope: "agent",
+              scopeRef: agentScopeRef,
             });
             pathResults = episodes.map((ep, i) => ({
               path: `episode:${ep.episodeId}`,
@@ -1836,6 +2004,7 @@ export async function searchV2(
               maxResults: context.maxResults ?? 10,
               minScore: 0.1,
               numCandidates: 200,
+              filter: conversationChunkFilter,
               fusionMethod: "scoreFusion",
               capabilities: {
                 vectorSearch: true,

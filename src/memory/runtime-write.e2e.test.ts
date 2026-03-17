@@ -178,4 +178,233 @@ describe("MongoDB runtime write e2e", () => {
       .catch(() => false);
     expect(transcriptExists).toBe(false);
   }, 45_000);
+
+  it("preserves event chunks across bridge-note sync and supports exact bridge reads", async () => {
+    const localWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "clawmongo-bridge-sync-"));
+    const localAgentId = "main";
+    const localPrefix = `runtime_${randomUUID().slice(0, 8)}_`;
+    const localCfg: OpenClawConfig = {
+      ...cfg,
+      agents: {
+        defaults: {
+          ...cfg.agents?.defaults,
+          workspace: localWorkspace,
+          memorySearch: cfg.agents?.defaults?.memorySearch,
+        },
+      },
+      memory: {
+        ...cfg.memory,
+        mongodb: {
+          ...cfg.memory?.mongodb!,
+          collectionPrefix: localPrefix,
+        },
+      },
+    };
+
+    const { manager, error } = await getMemorySearchManager({ cfg: localCfg, agentId: localAgentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    const writableManager = manager as typeof manager & {
+      sync?: (params?: { reason?: string; force?: boolean }) => Promise<void>;
+    };
+
+    const sessionManager = guardSessionManager(SessionManager.inMemory(), {
+      cfg: localCfg,
+      agentId: localAgentId,
+      sessionId: `bridge-sync-${randomUUID().slice(0, 8)}`,
+    });
+    const liveMarker = `live-marker-${randomUUID().slice(0, 8)}`;
+    const bridgeMarker = `bridge-marker-${randomUUID().slice(0, 8)}`;
+
+    sessionManager.appendMessage(
+      asAppendMessage({
+        role: "user",
+        content: `Keep ${liveMarker} in canonical runtime memory.`,
+        timestamp: Date.now(),
+      }),
+    );
+    sessionManager.appendMessage(
+      asAppendMessage({
+        role: "assistant",
+        content: [{ type: "text", text: `Confirmed ${liveMarker}.` }],
+        timestamp: Date.now(),
+        stopReason: "stop",
+      }),
+    );
+    await sessionManager.flushPendingPersistedWrites?.();
+
+    await fs.mkdir(path.join(localWorkspace, "memory"), { recursive: true });
+    await fs.writeFile(
+      path.join(localWorkspace, "memory", "bridge.md"),
+      `# Bridge\n\nThis bridge note stores ${bridgeMarker} for operator context.\n`,
+      "utf-8",
+    );
+
+    await writableManager.sync?.({ reason: "test", force: true });
+
+    const liveResults = await manager.search(liveMarker, { maxResults: 5, minScore: 0 });
+    expect(liveResults.some((result) => result.path.startsWith("events/"))).toBe(true);
+
+    const bridgeResults = await manager.search(bridgeMarker, { maxResults: 5, minScore: 0 });
+    expect(bridgeResults.some((result) => result.path === "memory/bridge.md")).toBe(true);
+
+    const bridgeRead = await manager.readFile({ relPath: "memory/bridge.md" });
+    expect(bridgeRead.text).toContain(bridgeMarker);
+
+    const eventChunks = await chunksCollection(db, localPrefix)
+      .find({ agentId: localAgentId, source: "conversation" })
+      .toArray();
+    expect(eventChunks.some((chunk) => String(chunk.path).startsWith("events/"))).toBe(true);
+
+    await fs.rm(localWorkspace, { recursive: true, force: true }).catch(() => {});
+  }, 45_000);
+
+  it("keeps bridge imports isolated across agents and workspaces sharing one MongoDB collection set", async () => {
+    const sharedPrefix = `runtime_${randomUUID().slice(0, 8)}_`;
+    const workspaceA = await fs.mkdtemp(path.join(os.tmpdir(), "clawmongo-workspace-a-"));
+    const workspaceB = await fs.mkdtemp(path.join(os.tmpdir(), "clawmongo-workspace-b-"));
+    const agentA = `runtime-agent-a-${randomUUID().slice(0, 6)}`;
+    const agentB = `runtime-agent-b-${randomUUID().slice(0, 6)}`;
+    const markerA = `workspace-a-${randomUUID().slice(0, 8)}`;
+    const markerB = `workspace-b-${randomUUID().slice(0, 8)}`;
+
+    const makeCfg = (workspace: string): OpenClawConfig => ({
+      ...cfg,
+      agents: {
+        defaults: {
+          ...cfg.agents?.defaults,
+          workspace,
+          memorySearch: cfg.agents?.defaults?.memorySearch,
+        },
+        list: [
+          { id: agentA, workspace: workspaceA },
+          { id: agentB, workspace: workspaceB },
+        ],
+      },
+      memory: {
+        ...cfg.memory,
+        mongodb: {
+          ...cfg.memory?.mongodb!,
+          collectionPrefix: sharedPrefix,
+        },
+      },
+    });
+
+    await fs.writeFile(path.join(workspaceA, "MEMORY.md"), `Workspace A note ${markerA}\n`, "utf-8");
+    await fs.writeFile(path.join(workspaceB, "MEMORY.md"), `Workspace B note ${markerB}\n`, "utf-8");
+
+    const { manager: managerA } = await getMemorySearchManager({ cfg: makeCfg(workspaceA), agentId: agentA });
+    const { manager: managerB } = await getMemorySearchManager({ cfg: makeCfg(workspaceB), agentId: agentB });
+    expect(managerA).toBeTruthy();
+    expect(managerB).toBeTruthy();
+    if (!managerA || !managerB) {
+      throw new Error("expected both MongoDB managers");
+    }
+
+    await (managerA as typeof managerA & { sync?: (params?: { reason?: string; force?: boolean }) => Promise<void> }).sync?.({
+      reason: "test",
+      force: true,
+    });
+    await (managerB as typeof managerB & { sync?: (params?: { reason?: string; force?: boolean }) => Promise<void> }).sync?.({
+      reason: "test",
+      force: true,
+    });
+
+    const resultsA = await managerA.search(markerA, { maxResults: 5, minScore: 0 });
+    const resultsB = await managerB.search(markerB, { maxResults: 5, minScore: 0 });
+    const leakIntoA = await managerA.search(markerB, { maxResults: 5, minScore: 0 });
+    const leakIntoB = await managerB.search(markerA, { maxResults: 5, minScore: 0 });
+
+    expect(resultsA.some((result) => result.path === "MEMORY.md")).toBe(true);
+    expect(resultsB.some((result) => result.path === "MEMORY.md")).toBe(true);
+    expect(leakIntoA.some((result) => result.snippet.includes(markerB))).toBe(false);
+    expect(leakIntoB.some((result) => result.snippet.includes(markerA))).toBe(false);
+
+    await fs.rm(workspaceA, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(workspaceB, { recursive: true, force: true }).catch(() => {});
+  }, 45_000);
+
+  it("reads scope-qualified structured memory locators without crossing namespaces", async () => {
+    const localWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "clawmongo-structured-read-"));
+    const localAgentId = "main";
+    const localPrefix = `runtime_${randomUUID().slice(0, 8)}_`;
+    const localCfg: OpenClawConfig = {
+      ...cfg,
+      agents: {
+        defaults: {
+          ...cfg.agents?.defaults,
+          workspace: localWorkspace,
+          memorySearch: cfg.agents?.defaults?.memorySearch,
+        },
+      },
+      memory: {
+        ...cfg.memory,
+        mongodb: {
+          ...cfg.memory?.mongodb!,
+          collectionPrefix: localPrefix,
+        },
+      },
+    };
+
+    const { manager, error } = await getMemorySearchManager({ cfg: localCfg, agentId: localAgentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    const structuredManager = manager as typeof manager & {
+      writeStructuredMemory?: (entry: {
+        type: "decision";
+        key: string;
+        value: string;
+        agentId: string;
+        scope: "agent" | "session";
+        sessionId?: string;
+      }) => Promise<unknown>;
+    };
+    expect(typeof structuredManager.writeStructuredMemory).toBe("function");
+
+    const sharedKey = `shared-key-${randomUUID().slice(0, 8)}`;
+    const sessionId = `structured-session-${randomUUID().slice(0, 8)}`;
+    await structuredManager.writeStructuredMemory?.({
+      type: "decision",
+      key: sharedKey,
+      value: "Agent scoped decision",
+      agentId: localAgentId,
+      scope: "agent",
+    });
+    await structuredManager.writeStructuredMemory?.({
+      type: "decision",
+      key: sharedKey,
+      value: "Session scoped decision",
+      agentId: localAgentId,
+      scope: "session",
+      sessionId,
+    });
+
+    const structuredHits = await manager.search("scoped decision", { maxResults: 10, minScore: 0 });
+    const structuredPaths = structuredHits
+      .filter((result) => result.source === "structured")
+      .map((result) => result.path);
+
+    expect(structuredPaths.some((path) => path.includes("scope=agent"))).toBe(true);
+    expect(structuredPaths.some((path) => path.includes("scope=session"))).toBe(true);
+
+    const agentLocator = structuredPaths.find((path) => path.includes("scope=agent"));
+    const sessionLocator = structuredPaths.find((path) => path.includes("scope=session"));
+    expect(agentLocator).toBeDefined();
+    expect(sessionLocator).toBeDefined();
+
+    const agentRead = await manager.readFile({ relPath: agentLocator! });
+    const sessionRead = await manager.readFile({ relPath: sessionLocator! });
+    expect(agentRead.text).toContain("Agent scoped decision");
+    expect(sessionRead.text).toContain("Session scoped decision");
+
+    await fs.rm(localWorkspace, { recursive: true, force: true }).catch(() => {});
+  }, 45_000);
 });

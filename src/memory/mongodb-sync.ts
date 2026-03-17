@@ -17,6 +17,7 @@ import {
   listSessionFilesForAgent,
   type SessionFileEntry,
 } from "./session-files.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import type { InternalMemoryStoredSource, MemorySyncProgressUpdate } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:sync");
@@ -28,13 +29,46 @@ export { chunkMarkdown };
 // File metadata operations
 // ---------------------------------------------------------------------------
 
+type SyncNamespace = {
+  source: InternalMemoryStoredSource;
+  agentId?: string;
+  scope?: string;
+  scopeRef?: string;
+};
+
+function buildNamespaceFilter(namespace: SyncNamespace): Document {
+  const filter: Document = { source: namespace.source };
+  if (namespace.agentId) {
+    filter.agentId = namespace.agentId;
+  }
+  if (namespace.scope) {
+    filter.scope = namespace.scope;
+  }
+  if (namespace.scopeRef) {
+    filter.scopeRef = namespace.scopeRef;
+  }
+  return filter;
+}
+
+function buildStorageId(namespace: SyncNamespace, relPath: string): string {
+  return [
+    namespace.source,
+    namespace.agentId ?? "_",
+    namespace.scope ?? "_",
+    namespace.scopeRef ?? "_",
+    relPath,
+  ].join("::");
+}
+
 async function getStoredFiles(
   files: Collection,
+  namespace: SyncNamespace,
 ): Promise<Map<string, { hash: string; mtime: number; size: number }>> {
-  const docs = await files.find({}).toArray();
+  const docs = await files.find(buildNamespaceFilter(namespace)).toArray();
   const map = new Map<string, { hash: string; mtime: number; size: number }>();
   for (const doc of docs) {
-    map.set(String(doc._id), {
+    const relPath = typeof doc.path === "string" ? doc.path : String(doc._id);
+    map.set(relPath, {
       hash: doc.hash as string,
       mtime: doc.mtime as number,
       size: doc.size as number,
@@ -46,19 +80,23 @@ async function getStoredFiles(
 async function upsertFileMetadata(
   files: Collection,
   entry: MemoryFileEntry,
-  source: InternalMemoryStoredSource,
+  namespace: SyncNamespace,
   session?: ClientSession,
 ): Promise<void> {
   const update = {
     $set: {
-      source,
+      path: entry.path,
+      source: namespace.source,
+      ...(namespace.agentId ? { agentId: namespace.agentId } : {}),
+      ...(namespace.scope ? { scope: namespace.scope } : {}),
+      ...(namespace.scopeRef ? { scopeRef: namespace.scopeRef } : {}),
       hash: entry.hash,
       mtime: entry.mtimeMs,
       size: entry.size,
       updatedAt: new Date(),
     },
   };
-  const filter = { _id: entry.path } as Record<string, unknown>;
+  const filter = { _id: buildStorageId(namespace, entry.path) } as Record<string, unknown>;
   if (session) {
     await files.updateOne(filter, update, { upsert: true, session });
   } else {
@@ -70,14 +108,14 @@ async function upsertFileMetadata(
 // Chunk operations
 // ---------------------------------------------------------------------------
 
-function buildChunkId(path: string, startLine: number, endLine: number): string {
-  return `${path}:${startLine}:${endLine}`;
+function buildChunkId(storageId: string, startLine: number, endLine: number): string {
+  return `${storageId}:${startLine}:${endLine}`;
 }
 
 async function upsertChunks(
   chunks: Collection,
   path: string,
-  source: InternalMemoryStoredSource,
+  namespace: SyncNamespace,
   chunkList: MemoryChunk[],
   model: string,
   embeddings: number[][] | null,
@@ -89,10 +127,13 @@ async function upsertChunks(
   }
 
   const ops = chunkList.map((chunk, index) => {
-    const chunkId = buildChunkId(path, chunk.startLine, chunk.endLine);
+    const chunkId = buildChunkId(buildStorageId(namespace, path), chunk.startLine, chunk.endLine);
     const setDoc: Document = {
       path,
-      source,
+      source: namespace.source,
+      ...(namespace.agentId ? { agentId: namespace.agentId } : {}),
+      ...(namespace.scope ? { scope: namespace.scope } : {}),
+      ...(namespace.scopeRef ? { scopeRef: namespace.scopeRef } : {}),
       startLine: chunk.startLine,
       endLine: chunk.endLine,
       hash: chunk.hash,
@@ -123,30 +164,35 @@ async function upsertChunks(
 async function deleteChunksForPath(
   chunks: Collection,
   path: string,
+  namespace: SyncNamespace,
   session?: ClientSession,
 ): Promise<number> {
+  const filter = { ...buildNamespaceFilter(namespace), path };
   const result = session
-    ? await chunks.deleteMany({ path }, { session })
-    : await chunks.deleteMany({ path });
+    ? await chunks.deleteMany(filter, { session })
+    : await chunks.deleteMany(filter);
   return result.deletedCount;
 }
 
 async function deleteStaleChunks(
   chunks: Collection,
+  namespace: SyncNamespace,
   validPaths: Set<string>,
   session?: ClientSession,
 ): Promise<number> {
+  const namespaceFilter = buildNamespaceFilter(namespace);
   const allPaths = session
-    ? await chunks.distinct("path", {}, { session })
-    : await chunks.distinct("path");
+    ? await chunks.distinct("path", namespaceFilter, { session })
+    : await chunks.distinct("path", namespaceFilter);
   const stalePaths = allPaths.filter((p) => !validPaths.has(p));
   if (stalePaths.length === 0) {
     return 0;
   }
 
+  const filter = { ...namespaceFilter, path: { $in: stalePaths } };
   const result = session
-    ? await chunks.deleteMany({ path: { $in: stalePaths } }, { session })
-    : await chunks.deleteMany({ path: { $in: stalePaths } });
+    ? await chunks.deleteMany(filter, { session })
+    : await chunks.deleteMany(filter);
   return result.deletedCount;
 }
 
@@ -180,27 +226,37 @@ async function syncFileAtomically(params: {
   chunksCol: Collection;
   filesCol: Collection;
   file: MemoryFileEntry;
-  source: InternalMemoryStoredSource;
+  namespace: SyncNamespace;
   chunks: MemoryChunk[];
   model: string;
   embeddings: number[][] | null;
   embeddingStatus: EmbeddingStatus;
 }): Promise<{ upserted: number; disableTransactions: boolean }> {
-  const { client, chunksCol, filesCol, file, source, chunks, model, embeddings, embeddingStatus } =
+  const {
+    client,
+    chunksCol,
+    filesCol,
+    file,
+    namespace,
+    chunks,
+    model,
+    embeddings,
+    embeddingStatus,
+  } =
     params;
 
   if (!client || !params.useTransactions) {
-    await deleteChunksForPath(chunksCol, file.path);
+    await deleteChunksForPath(chunksCol, file.path, namespace);
     const upserted = await upsertChunks(
       chunksCol,
       file.path,
-      source,
+      namespace,
       chunks,
       model,
       embeddings,
       embeddingStatus,
     );
-    await upsertFileMetadata(filesCol, file, source);
+    await upsertFileMetadata(filesCol, file, namespace);
     return { upserted, disableTransactions: false };
   }
 
@@ -209,18 +265,18 @@ async function syncFileAtomically(params: {
     let upserted = 0;
     await session.withTransaction(
       async () => {
-        await deleteChunksForPath(chunksCol, file.path, session);
+        await deleteChunksForPath(chunksCol, file.path, namespace, session);
         upserted = await upsertChunks(
           chunksCol,
           file.path,
-          source,
+          namespace,
           chunks,
           model,
           embeddings,
           embeddingStatus,
           session,
         );
-        await upsertFileMetadata(filesCol, file, source, session);
+        await upsertFileMetadata(filesCol, file, namespace, session);
       },
       { writeConcern: { w: "majority" } },
     );
@@ -228,17 +284,17 @@ async function syncFileAtomically(params: {
   } catch (err) {
     if (isTransactionNotSupported(err)) {
       log.info("transactions not supported (standalone), falling back for file sync");
-      await deleteChunksForPath(chunksCol, file.path);
+      await deleteChunksForPath(chunksCol, file.path, namespace);
       const upserted = await upsertChunks(
         chunksCol,
         file.path,
-        source,
+        namespace,
         chunks,
         model,
         embeddings,
         embeddingStatus,
       );
-      await upsertFileMetadata(filesCol, file, source);
+      await upsertFileMetadata(filesCol, file, namespace);
       return { upserted, disableTransactions: true };
     }
     throw err;
@@ -278,6 +334,16 @@ export async function syncToMongoDB(params: {
   const { db, prefix, embeddingMode, progress } = params;
   const model = params.model ?? "voyage-4-large";
   const chunking = params.chunking ?? { tokens: 400, overlap: 80 };
+  const memoryNamespace: SyncNamespace = {
+    source: "memory",
+    ...(params.agentId ? { agentId: params.agentId } : {}),
+    scope: "workspace",
+    scopeRef: resolveScopeRef({
+      scope: "workspace",
+      agentId: params.agentId ?? "__workspace__",
+      workspaceDir: params.workspaceDir,
+    }),
+  };
   // Track whether transactions are available (disabled on first standalone error)
   let useTransactions = !!params.client;
 
@@ -285,7 +351,7 @@ export async function syncToMongoDB(params: {
   const filesCol = filesCollection(db, prefix);
 
   // 2. Get stored file metadata from MongoDB
-  const storedFiles = await getStoredFiles(filesCol);
+  const storedFiles = await getStoredFiles(filesCol, memoryNamespace);
 
   // =========================================================================
   // Phase A: Memory files (source="memory")
@@ -345,7 +411,7 @@ export async function syncToMongoDB(params: {
         chunksCol,
         filesCol,
         file,
-        source: "memory",
+        namespace: memoryNamespace,
         chunks,
         model,
         embeddings,
@@ -370,6 +436,7 @@ export async function syncToMongoDB(params: {
 
   let sessionFilesProcessed = 0;
   let sessionChunksUpserted = 0;
+  let sessionStaleDeleted = 0;
 
   if (params.agentId && params.sessionMemoryEnabled !== false) {
     try {
@@ -379,7 +446,12 @@ export async function syncToMongoDB(params: {
         agentId: params.agentId,
         chunksCol,
         filesCol,
-        storedFiles,
+        storedFiles: await getStoredFiles(filesCol, {
+          source: "sessions",
+          agentId: params.agentId,
+          scope: "agent",
+          scopeRef: resolveScopeRef({ scope: "agent", agentId: params.agentId }),
+        }),
         validPaths,
         embeddingMode,
         chunking,
@@ -390,6 +462,7 @@ export async function syncToMongoDB(params: {
       });
       sessionFilesProcessed = sessionResult.filesProcessed;
       sessionChunksUpserted = sessionResult.chunksUpserted;
+      sessionStaleDeleted = sessionResult.staleDeleted;
       // Propagate standalone detection from session sync to stale cleanup
       if (!sessionResult.useTransactions) {
         useTransactions = false;
@@ -408,7 +481,7 @@ export async function syncToMongoDB(params: {
   const staleFileIds: string[] = [];
   for (const [storedPath] of storedFiles) {
     if (!validPaths.has(storedPath)) {
-      staleFileIds.push(storedPath);
+      staleFileIds.push(buildStorageId(memoryNamespace, storedPath));
     }
   }
 
@@ -419,7 +492,7 @@ export async function syncToMongoDB(params: {
       session = params.client.startSession();
       await session.withTransaction(
         async () => {
-          staleDeleted = await deleteStaleChunks(chunksCol, validPaths, session);
+          staleDeleted = await deleteStaleChunks(chunksCol, memoryNamespace, validPaths, session);
           if (staleFileIds.length > 0) {
             await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>, {
               session,
@@ -431,7 +504,7 @@ export async function syncToMongoDB(params: {
     } catch (err) {
       if (isTransactionNotSupported(err)) {
         // Fallback: non-transactional stale cleanup
-        staleDeleted = await deleteStaleChunks(chunksCol, validPaths);
+        staleDeleted = await deleteStaleChunks(chunksCol, memoryNamespace, validPaths);
         if (staleFileIds.length > 0) {
           await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>);
         }
@@ -442,7 +515,7 @@ export async function syncToMongoDB(params: {
       await session?.endSession();
     }
   } else {
-    staleDeleted = await deleteStaleChunks(chunksCol, validPaths);
+    staleDeleted = await deleteStaleChunks(chunksCol, memoryNamespace, validPaths);
     if (staleFileIds.length > 0) {
       await filesCol.deleteMany({ _id: { $in: staleFileIds } } as Record<string, unknown>);
     }
@@ -451,15 +524,18 @@ export async function syncToMongoDB(params: {
   if (staleDeleted > 0) {
     log.info(`sync: removed ${staleDeleted} stale chunks`);
   }
+  if (sessionStaleDeleted > 0) {
+    log.info(`sync: removed ${sessionStaleDeleted} stale session chunks`);
+  }
 
   log.info(
-    `sync complete: memory=${filesProcessed} conversation=${sessionFilesProcessed} chunks=${totalChunksUpserted + sessionChunksUpserted} stale=${staleDeleted}`,
+    `sync complete: memory=${filesProcessed} conversation=${sessionFilesProcessed} chunks=${totalChunksUpserted + sessionChunksUpserted} stale=${staleDeleted + sessionStaleDeleted}`,
   );
 
   return {
     filesProcessed,
     chunksUpserted: totalChunksUpserted,
-    staleDeleted,
+    staleDeleted: staleDeleted + sessionStaleDeleted,
     sessionFilesProcessed,
     sessionChunksUpserted,
   };
@@ -483,10 +559,26 @@ async function syncSessionFiles(params: {
   force?: boolean;
   maxSessionChunks?: number;
   progress?: (update: MemorySyncProgressUpdate) => void;
-}): Promise<{ filesProcessed: number; chunksUpserted: number; useTransactions: boolean }> {
+}): Promise<{
+  filesProcessed: number;
+  chunksUpserted: number;
+  staleDeleted: number;
+  useTransactions: boolean;
+}> {
+  const sessionNamespace: SyncNamespace = {
+    source: "sessions",
+    agentId: params.agentId,
+    scope: "agent",
+    scopeRef: resolveScopeRef({ scope: "agent", agentId: params.agentId }),
+  };
   const sessionPaths = await listSessionFilesForAgent(params.agentId);
   if (sessionPaths.length === 0) {
-    return { filesProcessed: 0, chunksUpserted: 0, useTransactions: params.useTransactions };
+    return {
+      filesProcessed: 0,
+      chunksUpserted: 0,
+      staleDeleted: 0,
+      useTransactions: params.useTransactions,
+    };
   }
 
   log.info(`sync: found ${sessionPaths.length} session files`);
@@ -551,6 +643,7 @@ async function syncSessionFiles(params: {
         chunksCol: params.chunksCol,
         filesCol: params.filesCol,
         entry,
+        namespace: sessionNamespace,
         chunks,
         model: params.model,
         embeddings,
@@ -577,8 +670,25 @@ async function syncSessionFiles(params: {
     }
   }
 
-  log.info(`sync: sessions processed=${filesProcessed} chunks=${chunksUpserted}`);
-  return { filesProcessed, chunksUpserted, useTransactions };
+  const staleSessionPaths = Array.from(params.storedFiles.keys()).filter(
+    (storedPath) => !params.validPaths.has(storedPath),
+  );
+  let staleDeleted = 0;
+  if (staleSessionPaths.length > 0) {
+    staleDeleted = await deleteStaleChunks(
+      params.chunksCol,
+      sessionNamespace,
+      new Set(params.validPaths),
+    );
+    await params.filesCol.deleteMany({
+      _id: { $in: staleSessionPaths.map((storedPath) => buildStorageId(sessionNamespace, storedPath)) },
+    } as Record<string, unknown>);
+  }
+
+  log.info(
+    `sync: sessions processed=${filesProcessed} chunks=${chunksUpserted} stale=${staleDeleted}`,
+  );
+  return { filesProcessed, chunksUpserted, staleDeleted, useTransactions };
 }
 
 /** Atomic session file sync — same pattern as syncFileAtomically but for SessionFileEntry. */
@@ -588,25 +698,27 @@ async function syncSessionFileAtomically(params: {
   chunksCol: Collection;
   filesCol: Collection;
   entry: SessionFileEntry;
+  namespace: SyncNamespace;
   chunks: MemoryChunk[];
   model: string;
   embeddings: number[][] | null;
   embeddingStatus: EmbeddingStatus;
 }): Promise<{ upserted: number; disableTransactions: boolean }> {
-  const { client, chunksCol, filesCol, entry, chunks, model, embeddings, embeddingStatus } = params;
+  const { client, chunksCol, filesCol, entry, namespace, chunks, model, embeddings, embeddingStatus } =
+    params;
 
   if (!client || !params.useTransactions) {
-    await deleteChunksForPath(chunksCol, entry.path);
+    await deleteChunksForPath(chunksCol, entry.path, namespace);
     const upserted = await upsertChunks(
       chunksCol,
       entry.path,
-      "sessions",
+      namespace,
       chunks,
       model,
       embeddings,
       embeddingStatus,
     );
-    await upsertSessionFileMetadata(filesCol, entry);
+    await upsertSessionFileMetadata(filesCol, entry, namespace);
     return { upserted, disableTransactions: false };
   }
 
@@ -615,18 +727,18 @@ async function syncSessionFileAtomically(params: {
     let upserted = 0;
     await session.withTransaction(
       async () => {
-        await deleteChunksForPath(chunksCol, entry.path, session);
+        await deleteChunksForPath(chunksCol, entry.path, namespace, session);
         upserted = await upsertChunks(
           chunksCol,
           entry.path,
-          "sessions",
+          namespace,
           chunks,
           model,
           embeddings,
           embeddingStatus,
           session,
         );
-        await upsertSessionFileMetadata(filesCol, entry, session);
+        await upsertSessionFileMetadata(filesCol, entry, namespace, session);
       },
       { writeConcern: { w: "majority" } },
     );
@@ -634,17 +746,17 @@ async function syncSessionFileAtomically(params: {
   } catch (err) {
     if (isTransactionNotSupported(err)) {
       log.info("transactions not supported (standalone), falling back for session sync");
-      await deleteChunksForPath(chunksCol, entry.path);
+      await deleteChunksForPath(chunksCol, entry.path, namespace);
       const upserted = await upsertChunks(
         chunksCol,
         entry.path,
-        "sessions",
+        namespace,
         chunks,
         model,
         embeddings,
         embeddingStatus,
       );
-      await upsertSessionFileMetadata(filesCol, entry);
+      await upsertSessionFileMetadata(filesCol, entry, namespace);
       return { upserted, disableTransactions: true };
     }
     throw err;
@@ -656,18 +768,23 @@ async function syncSessionFileAtomically(params: {
 async function upsertSessionFileMetadata(
   files: Collection,
   entry: SessionFileEntry,
+  namespace: SyncNamespace,
   session?: ClientSession,
 ): Promise<void> {
   const update = {
     $set: {
-      source: "sessions" as const,
+      path: entry.path,
+      source: namespace.source,
+      ...(namespace.agentId ? { agentId: namespace.agentId } : {}),
+      ...(namespace.scope ? { scope: namespace.scope } : {}),
+      ...(namespace.scopeRef ? { scopeRef: namespace.scopeRef } : {}),
       hash: entry.hash,
       mtime: entry.mtimeMs,
       size: entry.size,
       updatedAt: new Date(),
     },
   };
-  const filter = { _id: entry.path } as Record<string, unknown>;
+  const filter = { _id: buildStorageId(namespace, entry.path) } as Record<string, unknown>;
   if (session) {
     await files.updateOne(filter, update, { upsert: true, session });
   } else {

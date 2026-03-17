@@ -125,8 +125,18 @@ export async function writeStructuredMemory(params: {
 // ---------------------------------------------------------------------------
 
 function toStructuredResult(doc: Document): MemorySearchResult {
+  const params = new URLSearchParams();
+  if (typeof doc.scope === "string") {
+    params.set("scope", doc.scope);
+  }
+  if (typeof doc.scopeRef === "string") {
+    params.set("scopeRef", doc.scopeRef);
+  }
+  const locator = `structured:${doc.type ?? "unknown"}:${doc.key ?? ""}${
+    params.size > 0 ? `?${params.toString()}` : ""
+  }`;
   return {
-    path: `structured:${doc.type ?? "unknown"}:${doc.key ?? ""}`,
+    path: locator,
     startLine: 0,
     endLine: 0,
     score: typeof doc.score === "number" ? Number(doc.score.toFixed(6)) : 0,
@@ -143,7 +153,13 @@ export async function searchStructuredMemory(
   opts: {
     maxResults: number;
     minScore?: number;
-    filter?: { type?: string; tags?: string[]; agentId?: string; scope?: MemoryScope };
+    filter?: {
+      type?: string;
+      tags?: string[];
+      agentId?: string;
+      scope?: MemoryScope;
+      scopeRef?: string;
+    };
     capabilities: DetectedCapabilities;
     vectorIndexName: string;
     embeddingMode: MemoryMongoDBEmbeddingMode;
@@ -178,6 +194,9 @@ export async function searchStructuredMemory(
       if (opts.filter?.scope) {
         filter.scope = opts.filter.scope;
       }
+      if (opts.filter?.scopeRef) {
+        filter.scopeRef = opts.filter.scopeRef;
+      }
 
       const vsStage = buildVectorSearchStage({
         queryVector,
@@ -203,6 +222,8 @@ export async function searchStructuredMemory(
               context: 1,
               confidence: 1,
               tags: 1,
+              scope: 1,
+              scopeRef: 1,
               score: { $meta: "vectorSearchScore" },
             },
           },
@@ -251,6 +272,9 @@ export async function searchStructuredMemory(
     if (opts.filter?.scope) {
       matchFilter.scope = opts.filter.scope;
     }
+    if (opts.filter?.scopeRef) {
+      matchFilter.scopeRef = opts.filter.scopeRef;
+    }
 
     const docs = await collection
       .aggregate([
@@ -264,6 +288,8 @@ export async function searchStructuredMemory(
             context: 1,
             confidence: 1,
             tags: 1,
+            scope: 1,
+            scopeRef: 1,
             score: { $meta: "textScore" },
           },
         },

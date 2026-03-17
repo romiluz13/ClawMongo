@@ -652,14 +652,13 @@ describe("E2E: Chunk IDs and Deduplication", () => {
     await fs.rm(dedupWorkspace, { recursive: true, force: true }).catch(() => {});
   });
 
-  it("chunks have deterministic _id based on path:startLine:endLine", async () => {
+  it("chunks have deterministic namespaced _id based on source scope and line range", async () => {
     const col = chunksCollection(db, TEST_PREFIX);
     const chunks = await col.find({}).toArray();
 
     expect(chunks.length).toBeGreaterThan(0);
     for (const chunk of chunks) {
-      const expectedId = `${chunk.path}:${chunk.startLine}:${chunk.endLine}`;
-      expect(String(chunk._id)).toBe(expectedId);
+      expect(String(chunk._id)).toContain(`::${chunk.path}:${chunk.startLine}:${chunk.endLine}`);
     }
   });
 

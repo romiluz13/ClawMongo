@@ -125,8 +125,15 @@ export async function getMemoryStats(
   // Stale files (in DB but not on disk)
   let staleFiles: string[] = [];
   if (validPaths) {
-    const allDbPaths = await filesCol.distinct("_id");
-    staleFiles = allDbPaths.map(String).filter((p) => !validPaths.has(p));
+    const docs = await filesCol.find({}, { projection: { _id: 0, path: 1 } }).toArray();
+    staleFiles = Array.from(
+      new Set(
+        docs
+          .map((doc) => (typeof doc.path === "string" ? doc.path : null))
+          .filter((entry): entry is string => Boolean(entry))
+          .filter((entry) => !validPaths.has(entry)),
+      ),
+    );
   }
 
   // $indexStats: show which indexes are used and which are unused

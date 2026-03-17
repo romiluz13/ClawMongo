@@ -186,9 +186,11 @@ export async function findEntitiesByName(params: {
   prefix: string;
   query: string;
   agentId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<Entity[]> {
-  const { db, prefix, query, agentId, limit } = params;
+  const { db, prefix, query, agentId, scope, scopeRef, limit } = params;
   try {
     const collection = entitiesCollection(db, prefix);
 
@@ -200,6 +202,12 @@ export async function findEntitiesByName(params: {
       agentId,
       $or: [{ name: { $regex: regex } }, { aliases: { $regex: regex } }],
     };
+    if (scope) {
+      filter.scope = scope;
+    }
+    if (scopeRef) {
+      filter.scopeRef = scopeRef;
+    }
 
     const docs = await collection
       .find(filter)
@@ -224,14 +232,21 @@ export async function getEntitiesByType(params: {
   prefix: string;
   type: EntityType;
   agentId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
   limit?: number;
 }): Promise<Entity[]> {
-  const { db, prefix, type, agentId, limit } = params;
+  const { db, prefix, type, agentId, scope, scopeRef, limit } = params;
   try {
     const collection = entitiesCollection(db, prefix);
 
     const docs = await collection
-      .find({ agentId, type })
+      .find({
+        agentId,
+        type,
+        ...(scope ? { scope } : {}),
+        ...(scopeRef ? { scopeRef } : {}),
+      })
       // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       .sort({ updatedAt: -1 })
       .limit(limit ?? 50)
@@ -258,11 +273,14 @@ export async function expandGraph(params: {
   prefix: string;
   entityId: string;
   agentId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
   maxDepth?: number;
   bidirectional?: boolean;
   maxConnections?: number;
 }): Promise<GraphExpansionResult | null> {
-  const { db, prefix, entityId, agentId, maxDepth, bidirectional, maxConnections } = params;
+  const { db, prefix, entityId, agentId, scope, scopeRef, maxDepth, bidirectional, maxConnections } =
+    params;
   try {
     const entCol = entitiesCollection(db, prefix);
     const relCol = relationsCollection(db, prefix);
@@ -271,6 +289,8 @@ export async function expandGraph(params: {
     const rootEntity = (await entCol.findOne({
       entityId,
       agentId,
+      ...(scope ? { scope } : {}),
+      ...(scopeRef ? { scopeRef } : {}),
     })) as unknown as Entity | null;
     if (!rootEntity) {
       return null;
@@ -306,7 +326,14 @@ export async function expandGraph(params: {
         {
           $facet: {
             forward: [
-              { $match: { fromEntityId: entityId, agentId } },
+              {
+                $match: {
+                  fromEntityId: entityId,
+                  agentId,
+                  ...(scope ? { scope } : {}),
+                  ...(scopeRef ? { scopeRef } : {}),
+                },
+              },
               {
                 $graphLookup: {
                   from: `${prefix}relations`,
@@ -316,12 +343,23 @@ export async function expandGraph(params: {
                   as: "transitiveRelations",
                   maxDepth: graphLookupDepth,
                   depthField: "depth",
-                  restrictSearchWithMatch: { agentId },
+                  restrictSearchWithMatch: {
+                    agentId,
+                    ...(scope ? { scope } : {}),
+                    ...(scopeRef ? { scopeRef } : {}),
+                  },
                 },
               },
             ],
             reverse: [
-              { $match: { toEntityId: entityId, agentId } },
+              {
+                $match: {
+                  toEntityId: entityId,
+                  agentId,
+                  ...(scope ? { scope } : {}),
+                  ...(scopeRef ? { scopeRef } : {}),
+                },
+              },
               {
                 $graphLookup: {
                   from: `${prefix}relations`,
@@ -331,7 +369,11 @@ export async function expandGraph(params: {
                   as: "transitiveRelations",
                   maxDepth: graphLookupDepth,
                   depthField: "depth",
-                  restrictSearchWithMatch: { agentId },
+                  restrictSearchWithMatch: {
+                    agentId,
+                    ...(scope ? { scope } : {}),
+                    ...(scopeRef ? { scopeRef } : {}),
+                  },
                 },
               },
             ],
@@ -347,7 +389,14 @@ export async function expandGraph(params: {
     } else {
       // 2a. Outbound-only pipeline (original behavior)
       const relPipeline: Document[] = [
-        { $match: { fromEntityId: entityId, agentId } },
+        {
+          $match: {
+            fromEntityId: entityId,
+            agentId,
+            ...(scope ? { scope } : {}),
+            ...(scopeRef ? { scopeRef } : {}),
+          },
+        },
         {
           $graphLookup: {
             from: `${prefix}relations`,
@@ -357,7 +406,11 @@ export async function expandGraph(params: {
             as: "transitiveRelations",
             maxDepth: graphLookupDepth,
             depthField: "depth",
-            restrictSearchWithMatch: { agentId },
+            restrictSearchWithMatch: {
+              agentId,
+              ...(scope ? { scope } : {}),
+              ...(scopeRef ? { scopeRef } : {}),
+            },
           },
         },
       ];
@@ -382,7 +435,12 @@ export async function expandGraph(params: {
     const entityMap = new Map<string, Entity>();
     if (connectedEntityIds.size > 0) {
       const entityDocs = await entCol
-        .find({ entityId: { $in: Array.from(connectedEntityIds) }, agentId })
+        .find({
+          entityId: { $in: Array.from(connectedEntityIds) },
+          agentId,
+          ...(scope ? { scope } : {}),
+          ...(scopeRef ? { scopeRef } : {}),
+        })
         .toArray();
       for (const doc of entityDocs) {
         entityMap.set(doc.entityId as string, doc as unknown as Entity);
