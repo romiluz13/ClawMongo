@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { chunksCollection, eventsCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 
 const log = createSubsystemLogger("memory:mongodb:migration");
 
@@ -24,6 +25,8 @@ export async function backfillEventsFromChunks(params: {
 
   const chunks = chunksCollection(db, prefix);
   const events = eventsCollection(db, prefix);
+  const scope = "agent";
+  const scopeRef = resolveScopeRef({ scope, agentId });
 
   // Read all conversation chunks
   const allChunks = await chunks.find({ source: { $in: ["memory", "sessions"] } }).toArray();
@@ -81,7 +84,8 @@ export async function backfillEventsFromChunks(params: {
               agentId,
               role: "user",
               body: text,
-              scope: "agent",
+              scope,
+              scopeRef,
               timestamp,
             },
           },

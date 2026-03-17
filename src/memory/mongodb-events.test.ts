@@ -234,7 +234,7 @@ describe("getEventsByTimeRange", () => {
       agentId: "agent-1",
       timestamp: { $gte: start, $lte: end },
     });
-    expect(sortFn).toHaveBeenCalledWith({ timestamp: 1 });
+    expect(sortFn).toHaveBeenCalledWith({ timestamp: 1, _id: 1 });
     expect(limitFn).toHaveBeenCalledWith(1000); // default limit
   });
 
@@ -306,7 +306,7 @@ describe("getEventsBySession", () => {
     expect(result).toHaveLength(1);
     expect(result[0].sessionId).toBe("sess-1");
     expect(findFn).toHaveBeenCalledWith({ agentId: "agent-1", sessionId: "sess-1" });
-    expect(sortFn).toHaveBeenCalledWith({ timestamp: 1 });
+    expect(sortFn).toHaveBeenCalledWith({ timestamp: 1, _id: 1 });
   });
 });
 
@@ -479,11 +479,11 @@ describe("projectChunksFromEvents", () => {
     const firstUpdate = firstCall[1] as Record<string, Record<string, unknown>>;
     const firstDoc = firstUpdate.$setOnInsert;
     expect(firstDoc.source).toBe("conversation");
-    expect(firstDoc.text).toBe("Hello world");
+    expect(firstDoc.text).toBe("User: Hello world");
     expect(typeof firstDoc.hash).toBe("string");
 
-    // Verify events were marked as projected
-    expect(eventCol.updateMany).toHaveBeenCalledOnce();
+    // Verify events were marked as projected per projected event.
+    expect(eventCol.updateMany).toHaveBeenCalledTimes(2);
   });
 
   it("with zero unprojected events is a no-op", async () => {

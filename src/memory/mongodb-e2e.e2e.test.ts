@@ -1143,6 +1143,7 @@ describe("E2E v2: structured memory with scope", () => {
         value: "dark mode preferred",
         agentId,
         scope: "user",
+        userId: `user-${agentId}`,
       },
       embeddingMode: "automated",
     });
@@ -1157,6 +1158,7 @@ describe("E2E v2: structured memory with scope", () => {
         value: "TypeScript is the default",
         agentId,
         scope: "session",
+        sessionId: `session-${agentId}`,
       },
       embeddingMode: "automated",
     });

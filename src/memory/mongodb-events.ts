@@ -106,7 +106,7 @@ export async function getEventsByTimeRange(params: {
   return (await collection
     .find(filter)
     // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: 1, _id: 1 })
     .limit(limit ?? 1000)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -123,7 +123,7 @@ export async function getEventsBySession(params: {
   return (await collection
     .find({ agentId, sessionId })
     // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: 1, _id: 1 })
     .limit(limit ?? 1000)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -139,7 +139,7 @@ export async function getUnprojectedEvents(params: {
   return (await collection
     .find({ agentId, projectedAt: { $exists: false } })
     // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: 1, _id: 1 })
     .limit(limit ?? 500)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -221,7 +221,7 @@ export async function getUnconsolidatedEvents(params: {
   return (await collection
     .find(filter)
     // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1 })
+    .sort({ timestamp: 1, _id: 1 })
     .limit(limit ?? 500)
     .toArray()) as unknown as CanonicalEvent[];
 }

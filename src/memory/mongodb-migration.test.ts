@@ -103,6 +103,7 @@ describe("backfillEventsFromChunks", () => {
     expect(firstOp.updateOne.upsert).toBe(true);
     expect(firstOp.updateOne.update.$setOnInsert).toBeDefined();
     expect(firstOp.updateOne.update.$setOnInsert.body).toBe("Hello from chunk");
+    expect(firstOp.updateOne.update.$setOnInsert.scopeRef).toBe("agent:agent-1");
   });
 
   it("is idempotent - re-running does not duplicate", async () => {

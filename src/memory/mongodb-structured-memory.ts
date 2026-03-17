@@ -42,6 +42,8 @@ export type StructuredMemoryEntry = {
   scope?: MemoryScope;
   scopeRef?: string;
   workspaceDir?: string;
+  userId?: string;
+  tenantId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,8 @@ export async function writeStructuredMemory(params: {
     agentId: entry.agentId,
     sessionId: entry.sessionId,
     workspaceDir: entry.workspaceDir,
+    userId: entry.userId,
+    tenantId: entry.tenantId,
   });
   const setDoc: Document = {
     type: entry.type,
