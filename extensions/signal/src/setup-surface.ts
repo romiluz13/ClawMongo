@@ -9,6 +9,7 @@ import {
   createSignalSetupWizardBase,
   INVALID_SIGNAL_ACCOUNT_ERROR,
   normalizeSignalAccountInput,
+  parseSignalAllowFromEntries,
   promptSignalAllowFrom,
   signalSetupAdapter,
 } from "./setup-core.js";
@@ -72,6 +73,7 @@ export const signalSetupWizard: ChannelSetupWizard = createSignalSetupWizardBase
 export {
   INVALID_SIGNAL_ACCOUNT_ERROR,
   normalizeSignalAccountInput,
+  parseSignalAllowFromEntries,
   promptSignalAllowFrom,
   signalSetupAdapter,
 };
