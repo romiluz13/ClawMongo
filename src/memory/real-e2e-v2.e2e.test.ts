@@ -49,6 +49,7 @@ import { planRetrieval } from "./mongodb-retrieval-planner.js";
 import { ensureCollections, ensureStandardIndexes, ensureSearchIndexes } from "./mongodb-schema.js";
 // Search functions (direct vector search, keyword search, hybrid)
 import { vectorSearch, keywordSearch, buildVectorSearchStage } from "./mongodb-search.js";
+import type { MemorySearchResult } from "./types.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -62,6 +63,46 @@ const AUTO_EMBED_ENABLED = Boolean(
     process.env.VOYAGE_API_QUERY_KEY ||
     process.env.VOYAGE_API_INDEXING_KEY,
 );
+
+async function waitForVectorResults(
+  db: Db,
+  queryText: string,
+  {
+    maxResults = 5,
+    minScore = 0.0,
+    indexName = `${PREFIX}chunks_vector`,
+    timeoutMs = 90_000,
+    pollMs = 1_000,
+  }: {
+    maxResults?: number;
+    minScore?: number;
+    indexName?: string;
+    timeoutMs?: number;
+    pollMs?: number;
+  } = {},
+): Promise<MemorySearchResult[]> {
+  const chunks = db.collection(`${PREFIX}chunks`);
+  const deadline = Date.now() + timeoutMs;
+  let lastResults: MemorySearchResult[] = [];
+
+  // mongot auto-embedding completes in background after ingest; poll until the
+  // vector index starts returning semantic hits or the test timeout expires.
+  while (Date.now() < deadline) {
+    lastResults = await vectorSearch(chunks, null, {
+      maxResults,
+      minScore,
+      indexName,
+      queryText,
+      embeddingMode: "automated",
+    });
+    if (lastResults.length > 0) {
+      return lastResults;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  return lastResults;
+}
 
 // ─── Realistic conversation data ───────────────────────────────────────────────
 
@@ -1241,18 +1282,12 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should return semantic results for architecture queries via $vectorSearch",
       async () => {
-        // Real vector search using Voyage AI autoEmbed
-        // Queries go through: query text → mongot → Voyage API → embedding → ANN search
-        const chunks = db.collection(`${PREFIX}chunks`);
-        const chunkCount = await chunks.countDocuments({});
+        const chunkCount = await db.collection(`${PREFIX}chunks`).countDocuments({});
         expect(chunkCount).toBeGreaterThan(0);
 
-        const results = await vectorSearch(chunks, null, {
+        const results = await waitForVectorResults(db, "data pipeline architecture and system design", {
           maxResults: 5,
-          minScore: 0.0,
-          indexName: `${PREFIX}chunks_vector`,
-          queryText: "data pipeline architecture and system design",
-          embeddingMode: "automated",
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
         });
 
         // Should get results from the conversation chunks about DataVault architecture
@@ -1278,13 +1313,9 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should find deployment-related content with semantic search",
       async () => {
-        const chunks = db.collection(`${PREFIX}chunks`);
-        const results = await vectorSearch(chunks, null, {
+        const results = await waitForVectorResults(db, "Docker deployment Kubernetes production infrastructure", {
           maxResults: 5,
-          minScore: 0.0,
-          indexName: `${PREFIX}chunks_vector`,
-          queryText: "Docker deployment Kubernetes production infrastructure",
-          embeddingMode: "automated",
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
         });
 
         expect(results.length).toBeGreaterThan(0);
@@ -1305,13 +1336,9 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should find bug-fix content with semantic search",
       async () => {
-        const chunks = db.collection(`${PREFIX}chunks`);
-        const results = await vectorSearch(chunks, null, {
+        const results = await waitForVectorResults(db, "database connection error bug fix troubleshooting", {
           maxResults: 5,
-          minScore: 0.0,
-          indexName: `${PREFIX}chunks_vector`,
-          queryText: "database connection error bug fix troubleshooting",
-          embeddingMode: "automated",
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
         });
 
         expect(results.length).toBeGreaterThan(0);
@@ -1355,17 +1382,12 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should handle semantic similarity — related concepts rank higher",
       async () => {
-        const chunks = db.collection(`${PREFIX}chunks`);
-
         // Search for a concept that appears in the conversation but with different words
         // The conversations discuss "real-time data processing with WebSocket"
         // but we search with synonymous terms
-        const results = await vectorSearch(chunks, null, {
+        const results = await waitForVectorResults(db, "live streaming updates push notifications event-driven", {
           maxResults: 10,
-          minScore: 0.0,
-          indexName: `${PREFIX}chunks_vector`,
-          queryText: "live streaming updates push notifications event-driven",
-          embeddingMode: "automated",
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
         });
 
         expect(results.length).toBeGreaterThan(0);
