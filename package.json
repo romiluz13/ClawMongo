@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.16-2",
+  "version": "2026.3.17",
   "description": "MongoDB-first multi-channel agent runtime built on OpenClaw",
   "keywords": [],
   "homepage": "https://github.com/romiluz13/ClawMongo#readme",
@@ -564,7 +564,8 @@
     "ui:dev": "node scripts/ui.js dev",
     "ui:install": "node scripts/ui.js install",
     "upstream:analyze": "bash scripts/sync-upstream.sh --ref origin/main --fail-if-outside-allowlist --fail-if-excluded-present && node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
-    "upstream:report": "node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main"
+    "upstream:report": "node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
+    "upstream:steady": "bash scripts/upstream-steady-state.sh"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.16.1",

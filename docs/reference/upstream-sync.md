@@ -11,6 +11,29 @@ ClawMongo stays close to upstream OpenClaw on purpose. The fork only takes a har
 
 ## Sync Workflow
 
+### 0. Steady-state cadence
+
+When ClawMongo is already close to upstream, the default routine should be a
+steady-state check instead of starting a new merge wave blindly.
+
+```bash
+pnpm upstream:steady
+```
+
+This does three things:
+
+- fetches and validates MongoDB-first drift guardrails
+- checks whether the current branch is still at `0 behind upstream/main`
+- prints a bounded sync report only if upstream moved
+
+Interpret the result like this:
+
+- exit `0`: already at steady state, no catch-up work needed
+- exit `2`: upstream moved, start the next bounded merge wave
+
+Use this as the default daily or pre-release habit. Use the full merge-wave
+workflow below only when `pnpm upstream:steady` reports drift.
+
 ### 1. Pre-sync hygiene
 
 - Keep `main` clean before every merge wave.

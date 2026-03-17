@@ -34,6 +34,7 @@ Docs: https://docs.openclaw.ai
 - Skills/prompt budget: preserve all registered skills via a compact catalog fallback before dropping entries when the full prompt format exceeds `maxSkillsPromptChars`. (#47553) Thanks @snese.
 - Plugins/bundles: make enabled bundle MCP servers expose runnable tools in embedded Pi, and default relative bundle MCP launches to the bundle root so marketplace bundles like Context7 work through Pi instead of stopping at config import.
 - Scope message SecretRef resolution and harden doctor/status paths. (#48728) Thanks @joshavant.
+- Upstream/sync: add `pnpm upstream:steady` as a lightweight MongoDB-first cadence check that validates drift guardrails and tells maintainers when a bounded sync wave is needed.
 
 ### Breaking
 

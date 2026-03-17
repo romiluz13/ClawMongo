@@ -121,7 +121,12 @@ ClawMongo uses MongoDB Community Search (`mongot`) with Voyage AI automatic embe
 {
   type: "vectorSearch",
   fields: [
-    { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
+    {
+      type: "autoEmbed",
+      modality: "text",
+      path: "text",
+      model: "voyage-4-large",
+    },
     { type: "filter", path: "source" },
     { type: "filter", path: "path" },
   ],
@@ -225,6 +230,15 @@ Switch channels (git + npm): `clawmongo update --channel stable|beta|dev`.
 Details: [Development channels](https://docs.openclaw.ai/install/development-channels).
 
 ## Keep in sync with OpenClaw upstream
+
+Routine steady-state check for staying at `0 behind`:
+
+```bash
+pnpm upstream:steady
+```
+
+If it exits cleanly, ClawMongo is already at steady state. If it exits non-zero,
+it prints a bounded sync report for the next merge wave.
 
 Check whether ClawMongo `main` is behind `openclaw/openclaw`:
 
