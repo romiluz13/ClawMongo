@@ -33,18 +33,81 @@ function matchesProviderId(provider: ProviderPlugin, providerId: string): boolea
   return (provider.aliases ?? []).some((alias) => normalizeProviderId(alias) === normalized);
 }
 
+function hasExplicitPluginConfig(config?: OpenClawConfig): boolean {
+  const plugins = config?.plugins;
+  if (!plugins) {
+    return false;
+  }
+  if (typeof plugins.enabled === "boolean") {
+    return true;
+  }
+  if (Array.isArray(plugins.allow) && plugins.allow.length > 0) {
+    return true;
+  }
+  if (Array.isArray(plugins.deny) && plugins.deny.length > 0) {
+    return true;
+  }
+  if (Array.isArray(plugins.load?.paths) && plugins.load.paths.length > 0) {
+    return true;
+  }
+  if (plugins.entries && Object.keys(plugins.entries).length > 0) {
+    return true;
+  }
+  if (plugins.slots && Object.keys(plugins.slots).length > 0) {
+    return true;
+  }
+  return false;
+}
+
+function withVitestPinnedPluginConfig(params: {
+  config?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
+  onlyPluginIds?: string[];
+}): OpenClawConfig | undefined {
+  const onlyPluginIds = params.onlyPluginIds?.filter(Boolean) ?? [];
+  if (onlyPluginIds.length === 0) {
+    return params.config;
+  }
+  const env = params.env ?? process.env;
+  if (!env.VITEST || hasExplicitPluginConfig(params.config)) {
+    return params.config;
+  }
+
+  const existingAllow = params.config?.plugins?.allow ?? [];
+  return {
+    ...params.config,
+    plugins: {
+      ...params.config?.plugins,
+      enabled: true,
+      allow: [...new Set([...existingAllow, ...onlyPluginIds])],
+      slots: {
+        ...params.config?.plugins?.slots,
+        memory: params.config?.plugins?.slots?.memory ?? "none",
+      },
+    },
+  };
+}
+
 function resolveProviderPluginsForHooks(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
   onlyPluginIds?: string[];
 }): ProviderPlugin[] {
+  const onlyPluginIds = params.onlyPluginIds?.filter(Boolean) ?? [];
+  const config = withVitestPinnedPluginConfig({
+    config: params.config,
+    env: params.env,
+    onlyPluginIds,
+  });
   return resolvePluginProviders({
     ...params,
+    config,
+    onlyPluginIds,
     activate: false,
     cache: false,
-    bundledProviderAllowlistCompat: true,
-    bundledProviderVitestCompat: true,
+    bundledProviderAllowlistCompat: onlyPluginIds.length === 0,
+    bundledProviderVitestCompat: onlyPluginIds.length === 0,
   });
 }
 

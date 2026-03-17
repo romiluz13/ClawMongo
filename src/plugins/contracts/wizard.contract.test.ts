@@ -5,7 +5,6 @@ import {
   resolveProviderPluginChoice,
   resolveProviderWizardOptions,
 } from "../provider-wizard.js";
-import { resolvePluginProviders } from "../providers.js";
 import type { ProviderPlugin } from "../types.js";
 import { providerContractRegistry } from "./registry.js";
 
@@ -19,6 +18,12 @@ function createBundledProviderConfig() {
       },
     },
   };
+}
+
+function resolveContractProviders(): ProviderPlugin[] {
+  return providerContractRegistry
+    .map((entry) => entry.provider)
+    .toSorted((left, right) => left.id.localeCompare(right.id));
 }
 
 function resolveExpectedWizardChoiceValues(providers: ProviderPlugin[]) {
@@ -80,14 +85,12 @@ function resolveExpectedModelPickerValues(providers: ProviderPlugin[]) {
 describe("provider wizard contract", () => {
   it("exposes every registered provider setup choice through the shared wizard layer", () => {
     const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
 
     const options = resolveProviderWizardOptions({
       config,
       env: process.env,
+      providers,
     });
 
     expect(
@@ -100,12 +103,9 @@ describe("provider wizard contract", () => {
 
   it("round-trips every shared wizard choice back to its provider and auth method", () => {
     const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
 
-    for (const option of resolveProviderWizardOptions({ config, env: process.env })) {
+    for (const option of resolveProviderWizardOptions({ config, env: process.env, providers })) {
       const resolved = resolveProviderPluginChoice({
         providers,
         choice: option.value,
@@ -118,14 +118,12 @@ describe("provider wizard contract", () => {
 
   it("exposes every registered model-picker entry through the shared wizard layer", () => {
     const config = createBundledProviderConfig();
-    const providers = resolvePluginProviders({
-      config,
-      env: process.env,
-    });
+    const providers = resolveContractProviders();
 
     const entries = resolveProviderModelPickerEntries({
       config,
       env: process.env,
+      providers,
     });
 
     expect(

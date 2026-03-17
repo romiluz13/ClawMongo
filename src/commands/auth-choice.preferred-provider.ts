@@ -15,10 +15,20 @@ export async function resolvePreferredProviderForAuthChoice(params: {
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
 }): Promise<string | undefined> {
-  const choice = normalizeLegacyOnboardAuthChoice(params.choice) ?? params.choice;
+  const originalChoice = params.choice;
+  const choice = normalizeLegacyOnboardAuthChoice(originalChoice) ?? originalChoice;
   const manifestResolved = resolveManifestProviderAuthChoice(choice, params);
   if (manifestResolved) {
     return manifestResolved.providerId;
+  }
+  const preferred = PREFERRED_PROVIDER_BY_AUTH_CHOICE[choice];
+  if (preferred) {
+    return preferred;
+  }
+  // Manifest-backed auth choices are the fast path. Unknown plain-text choices
+  // should not force a full bundled provider load just to return undefined.
+  if (choice === originalChoice && !choice.startsWith("provider-plugin:")) {
+    return undefined;
   }
   const [{ resolveProviderPluginChoice }, { resolvePluginProviders }] = await Promise.all([
     import("../plugins/provider-wizard.js"),
@@ -37,11 +47,6 @@ export async function resolvePreferredProviderForAuthChoice(params: {
   });
   if (pluginResolved) {
     return pluginResolved.provider.id;
-  }
-
-  const preferred = PREFERRED_PROVIDER_BY_AUTH_CHOICE[choice];
-  if (preferred) {
-    return preferred;
   }
   return undefined;
 }
