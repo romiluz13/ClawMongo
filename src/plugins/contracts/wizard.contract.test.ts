@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderPlugin } from "../types.js";
-import { uniqueProviderContractProviders } from "./registry.js";
+import { providerContractPluginIds, uniqueProviderContractProviders } from "./registry.js";
 
 const resolvePluginProvidersMock = vi.fn();
 
@@ -19,7 +19,7 @@ function createBundledProviderConfig() {
   return {
     plugins: {
       enabled: true,
-      allow: [...new Set(providerContractRegistry.map((entry) => entry.pluginId))],
+      allow: providerContractPluginIds,
       slots: {
         memory: "none",
       },

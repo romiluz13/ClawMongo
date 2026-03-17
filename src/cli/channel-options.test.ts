@@ -18,9 +18,10 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("../channels/registry.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../channels/registry.js")>("../channels/registry.js");
+vi.mock("../channels/builtin-registry.js", async () => {
+  const actual = await vi.importActual<typeof import("../channels/builtin-registry.js")>(
+    "../channels/builtin-registry.js",
+  );
   return {
     ...actual,
     CHAT_CHANNEL_ORDER: ["telegram", "discord"],
