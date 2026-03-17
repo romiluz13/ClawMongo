@@ -8,11 +8,8 @@ vi.mock("../plugins/provider-auth-choices.js", () => ({
   resolveManifestProviderAuthChoice,
 }));
 
-vi.mock("../plugins/provider-wizard.js", () => ({
+vi.mock("../plugins/provider-auth-choice.runtime.js", () => ({
   resolveProviderPluginChoice,
-}));
-
-vi.mock("../plugins/providers.js", () => ({
   resolvePluginProviders,
 }));
 

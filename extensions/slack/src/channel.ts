@@ -25,6 +25,7 @@ import {
   type ChannelPlugin,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk/slack";
+import type { SlackActionContext } from "../../../src/agents/tools/slack-actions.js";
 import { createSlackActions } from "../../../src/channels/plugins/slack.actions.js";
 import { buildPassiveProbedChannelStatusSummary } from "../../shared/channel-status-summary.js";
 import {
@@ -486,7 +487,11 @@ export const slackPlugin: ChannelPlugin<ResolvedSlackAccount> = {
   },
   actions: createSlackActions(SLACK_CHANNEL, {
     invoke: async (action, cfg, toolContext) =>
-      await getSlackRuntime().channel.slack.handleSlackAction(action, cfg, toolContext),
+      await getSlackRuntime().channel.slack.handleSlackAction(
+        action,
+        cfg as OpenClawConfig,
+        toolContext as SlackActionContext | undefined,
+      ),
   }),
   setup: slackSetupAdapter,
   outbound: {

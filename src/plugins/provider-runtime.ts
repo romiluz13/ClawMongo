@@ -186,8 +186,8 @@ function resolveProviderPluginsForHooks(params: {
     env,
     activate: false,
     cache: false,
-    bundledProviderAllowlistCompat: onlyPluginIds.length === 0,
-    bundledProviderVitestCompat: onlyPluginIds.length === 0,
+    bundledProviderAllowlistCompat: true,
+    bundledProviderVitestCompat: true,
   });
   cacheBucket.set(cacheKey, resolved);
   return resolved;

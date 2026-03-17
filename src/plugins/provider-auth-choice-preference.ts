@@ -1,7 +1,9 @@
 import type { OpenClawConfig } from "../config/config.js";
+import {
+  resolveProviderPluginChoice,
+  resolvePluginProviders,
+} from "./provider-auth-choice.runtime.js";
 import { resolveManifestProviderAuthChoice } from "./provider-auth-choices.js";
-import { resolveProviderPluginChoice } from "./provider-wizard.js";
-import { resolvePluginProviders } from "./providers.js";
 
 const PREFERRED_PROVIDER_BY_AUTH_CHOICE: Partial<Record<string, string>> = {
   chutes: "chutes",
