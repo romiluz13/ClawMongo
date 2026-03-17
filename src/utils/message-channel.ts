@@ -1,9 +1,6 @@
+import { CHANNEL_IDS } from "../channels/builtin-registry.js";
 import type { ChannelId } from "../channels/plugins/types.js";
-import {
-  CHANNEL_IDS,
-  listChatChannelAliases,
-  normalizeChatChannelId,
-} from "../channels/registry.js";
+import { listChatChannelAliases, normalizeChatChannelId } from "../channels/registry.js";
 import {
   GATEWAY_CLIENT_MODES,
   GATEWAY_CLIENT_NAMES,

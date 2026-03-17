@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as providersModule from "./providers.js";
 import type { ProviderPlugin, ProviderRuntimeModel } from "./types.js";
 
 type ResolvePluginProviders = typeof import("./providers.js").resolvePluginProviders;
@@ -14,14 +15,6 @@ const resolveNonBundledProviderPluginIdsMock = vi.fn<ResolveNonBundledProviderPl
 const resolveOwningPluginIdsForProviderMock = vi.fn<ResolveOwningPluginIdsForProvider>(
   (_) => undefined as string[] | undefined,
 );
-
-vi.mock("./providers.js", () => ({
-  resolvePluginProviders: (params: unknown) => resolvePluginProvidersMock(params as never),
-  resolveNonBundledProviderPluginIds: (params: unknown) =>
-    resolveNonBundledProviderPluginIdsMock(params as never),
-  resolveOwningPluginIdsForProvider: (params: unknown) =>
-    resolveOwningPluginIdsForProviderMock(params as never),
-}));
 
 import {
   augmentModelCatalogWithProviderPlugins,
@@ -63,6 +56,16 @@ const MODEL: ProviderRuntimeModel = {
 
 describe("provider-runtime", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(providersModule, "resolvePluginProviders").mockImplementation((params) =>
+      resolvePluginProvidersMock(params),
+    );
+    vi.spyOn(providersModule, "resolveNonBundledProviderPluginIds").mockImplementation((params) =>
+      resolveNonBundledProviderPluginIdsMock(params),
+    );
+    vi.spyOn(providersModule, "resolveOwningPluginIdsForProvider").mockImplementation((params) =>
+      resolveOwningPluginIdsForProviderMock(params),
+    );
     resetProviderRuntimeHookCacheForTest();
     resolvePluginProvidersMock.mockReset();
     resolvePluginProvidersMock.mockReturnValue([]);

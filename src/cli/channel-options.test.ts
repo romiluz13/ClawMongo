@@ -18,9 +18,15 @@ vi.mock("node:fs", async () => {
   };
 });
 
-vi.mock("../channels/registry.js", () => ({
-  CHAT_CHANNEL_ORDER: ["telegram", "discord"],
-}));
+vi.mock("../channels/registry.js", async () => {
+  const actual =
+    await vi.importActual<typeof import("../channels/registry.js")>("../channels/registry.js");
+  return {
+    ...actual,
+    CHAT_CHANNEL_ORDER: ["telegram", "discord"],
+    CHANNEL_IDS: ["telegram", "discord"],
+  };
+});
 
 vi.mock("../channels/plugins/catalog.js", () => ({
   listChannelPluginCatalogEntries: listCatalogMock,

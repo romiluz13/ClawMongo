@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import * as memoryIndex from "../../memory/index.js";
 import { createKBSearchTool, createMemoryWriteTool } from "./memory-tool.js";
 
 describe("createKBSearchTool", () => {
@@ -43,11 +44,6 @@ describe("createMemoryWriteTool", () => {
 // kb_search direct path (searchKB on manager)
 // ---------------------------------------------------------------------------
 
-const mockGetMemorySearchManager = vi.hoisted(() => vi.fn());
-vi.mock("../../memory/index.js", () => ({
-  getMemorySearchManager: mockGetMemorySearchManager,
-}));
-
 describe("createKBSearchTool direct searchKB path", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -66,7 +62,8 @@ describe("createKBSearchTool direct searchKB path", () => {
     ];
     const searchKBMock = vi.fn().mockResolvedValue(kbResults);
     const searchMock = vi.fn();
-    mockGetMemorySearchManager.mockResolvedValue({
+    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
+    getMemorySearchManagerMock.mockResolvedValue({
       manager: {
         searchKB: searchKBMock,
         search: searchMock,
@@ -101,7 +98,8 @@ describe("createKBSearchTool direct searchKB path", () => {
 
   it("forwards tags/category/source filters to direct searchKB()", async () => {
     const searchKBMock = vi.fn().mockResolvedValue([]);
-    mockGetMemorySearchManager.mockResolvedValue({
+    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
+    getMemorySearchManagerMock.mockResolvedValue({
       manager: {
         searchKB: searchKBMock,
         search: vi.fn(),
@@ -158,7 +156,8 @@ describe("createKBSearchTool direct searchKB path", () => {
       },
     ];
     const searchMock = vi.fn().mockResolvedValue(mixedResults);
-    mockGetMemorySearchManager.mockResolvedValue({
+    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
+    getMemorySearchManagerMock.mockResolvedValue({
       manager: {
         // No searchKB method — should fall back
         search: searchMock,

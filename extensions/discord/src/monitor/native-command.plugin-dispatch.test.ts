@@ -12,10 +12,10 @@ import {
 } from "./native-command.test-helpers.js";
 import { createNoopThreadBindingManager } from "./thread-bindings.js";
 
-type ResolveConfiguredAcpBindingRecordFn =
-  typeof import("../../../../src/acp/persistent-bindings.js").resolveConfiguredAcpBindingRecord;
-type EnsureConfiguredAcpBindingSessionFn =
-  typeof import("../../../../src/acp/persistent-bindings.js").ensureConfiguredAcpBindingSession;
+type ResolveConfiguredAcpBindingRecordFn = (params: unknown) => unknown;
+type EnsureConfiguredAcpBindingSessionFn = (
+  params: unknown,
+) => Promise<{ ok: true; sessionKey: string } | { ok: false; error?: string }>;
 
 const persistentBindingMocks = vi.hoisted(() => ({
   resolveConfiguredAcpBindingRecord: vi.fn<ResolveConfiguredAcpBindingRecordFn>(() => null),
@@ -25,13 +25,38 @@ const persistentBindingMocks = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../../../../src/acp/persistent-bindings.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../../src/acp/persistent-bindings.js")>();
+vi.mock("openclaw/plugin-sdk/conversation-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/conversation-runtime")>();
   return {
     ...actual,
-    resolveConfiguredAcpBindingRecord: persistentBindingMocks.resolveConfiguredAcpBindingRecord,
-    ensureConfiguredAcpBindingSession: persistentBindingMocks.ensureConfiguredAcpBindingSession,
+    resolveConfiguredAcpRoute: (params: { route: unknown }) => {
+      const configuredBinding = persistentBindingMocks.resolveConfiguredAcpBindingRecord(params);
+      if (!configuredBinding) {
+        return {
+          configuredBinding: null,
+          route: params.route,
+        };
+      }
+      const record = configuredBinding.record as { targetSessionKey?: string };
+      const spec = configuredBinding.spec as { agentId?: string };
+      const boundSessionKey = record.targetSessionKey?.trim() || undefined;
+      return {
+        configuredBinding,
+        route: params.route,
+        ...(boundSessionKey
+          ? {
+              boundSessionKey,
+              boundAgentId: spec.agentId,
+            }
+          : {}),
+      };
+    },
+    ensureConfiguredAcpRouteReady: async (params: { configuredBinding: unknown | null }) => {
+      if (!params.configuredBinding) {
+        return { ok: true };
+      }
+      return await persistentBindingMocks.ensureConfiguredAcpBindingSession(params);
+    },
   };
 });
 

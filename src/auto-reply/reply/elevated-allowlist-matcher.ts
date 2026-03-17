@@ -1,4 +1,4 @@
-import { CHAT_CHANNEL_ORDER } from "../../channels/registry.js";
+import { CHAT_CHANNEL_ORDER } from "../../channels/builtin-registry.js";
 import { normalizeAtHashSlug } from "../../shared/string-normalization.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
 
