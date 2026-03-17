@@ -62,9 +62,8 @@ Bootstrap files are trimmed and appended under **Project Context** so the model 
 - `MEMORY.md` when present, otherwise `memory.md` as a lowercase fallback
 
 All of these files are **injected into the context window** on every turn, which
-means they consume tokens. Keep them concise — especially `MEMORY.md`, which can
-grow over time and lead to unexpectedly high context usage and more frequent
-compaction.
+means they consume tokens. Keep them concise — especially `MEMORY.md`, which is
+bootstrap bridge guidance rather than the canonical runtime memory store.
 
 > **Note:** `memory/*.md` daily files are **not** injected automatically. They
 > are accessed on demand via the Mongo memory tools (`memory_search`,

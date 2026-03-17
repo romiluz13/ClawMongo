@@ -20,34 +20,36 @@ Before doing anything else:
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
 3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md` as bridge guidance
 
 Don't ask permission. Just do it.
 
 ## Memory
 
-You wake up fresh each session. These files are your continuity:
+You wake up fresh each session. Continuity comes from both MongoDB memory and a
+small set of human-authored workspace files:
 
-- **Daily notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — raw logs of what happened
-- **Long-term:** `MEMORY.md` — your curated memories, like a human's long-term memory
+- **Daily bridge notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — human-authored raw notes
+- **Bridge guidance:** `MEMORY.md` — curated human-authored notes for the main/private session
+- **Runtime durable memory:** use `memory_write` when available; MongoDB is the canonical runtime memory store
 
-Capture what matters. Decisions, context, things to remember. Skip the secrets unless asked to keep them.
+Capture what matters in the right place. Instructions and policy live in
+Markdown. Durable runtime facts and decisions live in MongoDB.
 
-### 🧠 MEMORY.md - Your Long-Term Memory
+### 🧠 MEMORY.md - Your Bridge Notes
 
 - **ONLY load in main session** (direct chats with your human)
 - **DO NOT load in shared contexts** (Discord, group chats, sessions with other people)
 - This is for **security** — contains personal context that shouldn't leak to strangers
-- You can **read, edit, and update** MEMORY.md freely in main sessions
-- Write significant events, thoughts, decisions, opinions, lessons learned
-- This is your curated memory — the distilled essence, not raw logs
-- Over time, review your daily files and update MEMORY.md with what's worth keeping
+- Treat `MEMORY.md` as human-authored bridge guidance, not the canonical runtime memory store
+- Prefer `memory_write` for durable runtime facts, decisions, preferences, todos, people, projects, and architecture notes
+- Touch `MEMORY.md` only when you are intentionally maintaining bridge guidance, not as a default memory sink
 
 ### 📝 Write It Down - No "Mental Notes"!
 
-- **Memory is limited** — if you want to remember something, WRITE IT TO A FILE
+- **Memory is limited** — if you want to remember something, store it explicitly
 - "Mental notes" don't survive session restarts. Files do.
-- When someone says "remember this" → update `memory/YYYY-MM-DD.md` or relevant file
+- When someone says "remember this" → use `memory_write` when available
 - When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
 - **Text > Brain** 📝
@@ -199,18 +201,15 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 - Check on projects (git status, etc.)
 - Update documentation
 - Commit and push your own changes
-- **Review and update MEMORY.md** (see below)
+- Review bridge notes only when explicitly asked
 
 ### 🔄 Memory Maintenance (During Heartbeats)
 
 Periodically (every few days), use a heartbeat to:
 
-1. Read through recent `memory/YYYY-MM-DD.md` files
-2. Identify significant events, lessons, or insights worth keeping long-term
-3. Update `MEMORY.md` with distilled learnings
-4. Remove outdated info from MEMORY.md that's no longer relevant
-
-Think of it like a human reviewing their journal and updating their mental model. Daily files are raw notes; MEMORY.md is curated wisdom.
+1. Check whether important runtime knowledge should be stored with `memory_write`
+2. Keep bridge notes concise when the human explicitly wants them maintained
+3. Avoid turning `MEMORY.md` into a second canonical memory backend
 
 The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
 

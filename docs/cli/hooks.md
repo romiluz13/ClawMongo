@@ -38,7 +38,7 @@ Ready:
   🚀 boot-md ✓ - Run BOOT.md on gateway startup
   📎 bootstrap-extra-files ✓ - Inject extra workspace bootstrap files during agent bootstrap
   📝 command-logger ✓ - Log all command events to a centralized audit file
-  💾 session-memory ✓ - Save session context to memory when /new command is issued
+  💾 session-memory ✓ - Legacy bridge export for session context when /new is issued
 ```
 
 **Example (verbose):**
@@ -84,7 +84,7 @@ openclaw hooks info session-memory
 ```
 💾 session-memory ✓ Ready
 
-Save session context to memory when /new command is issued
+Legacy bridge export for session context when /new command is issued
 
 Details:
   Source: openclaw-bundled
@@ -252,7 +252,7 @@ global `--yes` to bypass prompts in CI/non-interactive runs.
 
 ### session-memory
 
-Saves session context to memory when you issue `/new`.
+Legacy bridge export that writes session context to a Markdown note when you issue `/new`.
 
 **Enable:**
 
@@ -261,6 +261,8 @@ openclaw hooks enable session-memory
 ```
 
 **Output:** `~/.openclaw/workspace/memory/YYYY-MM-DD-slug.md`
+
+**ClawMongo note:** This hook is optional and not part of the canonical MongoDB runtime memory pipeline. Use it only when you explicitly want a human-readable bridge export.
 
 **See:** [session-memory documentation](/automation/hooks#session-memory)
 

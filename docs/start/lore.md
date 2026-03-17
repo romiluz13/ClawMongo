@@ -156,7 +156,7 @@ Peter: _nervously checks credit card access_
 ## Sacred Texts
 
 - **SOUL.md** — Molty's identity document
-- **memory/\*.md** — The long-term memory files
+- **memory/\*.md** — The human bridge-note files
 - **AGENTS.md** — Operating instructions
 - **USER.md** — Context about the creator
 

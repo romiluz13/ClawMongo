@@ -34,7 +34,7 @@ ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB
 
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
 - **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot delegates to the Voyage AI API for embedding generation at index time and query time. No application-side embedding code or manual vector management.
-- **Canonical events architecture (v2)**: events serve as the canonical data model. Chunks, entities, relations, and episodes are all derived projections. The current sync pipeline still writes chunks directly; event-first ingestion is available via `writeEventAndProject()` and will become the default runtime write path in a future release.
+- **Canonical events architecture**: events serve as the canonical data model. Chunks, entities, relations, and episodes are all derived projections. Live runtime writes go directly through the MongoDB event path, and Markdown sync remains a bridge/import path only.
 - **Knowledge graph with `$graphLookup`**: entities and relations form a traversable graph. Bi-directional expansion, entity extraction from conversations, and graph-aware retrieval paths.
 - **Episode materialization**: raw event sequences are consolidated into searchable episodes (daily, topic, decision, weekly types) with summarization.
 - **Hybrid retrieval with intelligent planning**: a retrieval planner scores 6 paths (hybrid, raw-window, graph, episodic, structured, kb) and a heuristic reranker applies source diversity and episode boost before final results.
@@ -88,7 +88,7 @@ Inbound event
   -> response
 ```
 
-### Memory v2 Architecture
+### MongoDB Memory Architecture
 
 ClawMongo v2 uses a canonical-truth-first architecture where **events are the single source of truth**. Everything else is derived.
 
@@ -319,7 +319,7 @@ Run `clawmongo doctor` to surface risky/misconfigured DM policies.
 
 ## Everything we built so far
 
-### Memory v2 (MongoDB-native)
+### MongoDB memory system
 
 - **Canonical events**: append-only event stream as the single source of truth. Chunks are derived projections from events via `writeEventAndProject()`.
 - **Voyage AI autoEmbed**: `voyage-4-large` embeddings via `mongot` (which delegates to the Voyage AI API) on chunks, kb_chunks, and structured_mem. `$vectorSearch` with `query: { text: "..." }` — zero application-side embedding code.

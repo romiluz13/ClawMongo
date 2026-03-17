@@ -6,11 +6,12 @@ This directory contains hooks that ship with OpenClaw. These hooks are automatic
 
 ### 💾 session-memory
 
-Automatically saves session context to memory when you issue `/new` or `/reset`.
+Legacy bridge export for `/new` or `/reset`.
 
 **Events**: `command:new`, `command:reset`
-**What it does**: Creates a dated memory file with LLM-generated slug based on conversation content.
+**What it does**: Creates a dated Markdown bridge note with an LLM-generated slug based on conversation content.
 **Output**: `<workspace>/memory/YYYY-MM-DD-slug.md` (defaults to `~/.openclaw/workspace`)
+**ClawMongo note**: This is not part of the canonical MongoDB memory pipeline. Enable it only when you explicitly want human-readable session exports.
 
 **Enable**:
 

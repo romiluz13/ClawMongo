@@ -9,11 +9,11 @@ read_when:
 # Memory
 
 ClawMongo keeps OpenClaw's workspace model and makes MongoDB the only runtime
-memory backend.
+memory backend and canonical memory truth.
 
 The mental model is simple:
 
-- Workspace Markdown remains the human-authored memory surface.
+- Workspace Markdown remains the human-authored heart and bridge surface.
 - MongoDB is the only live retrieval and durable system-memory backend.
 - The agent uses four memory tools: `memory_search`, `memory_get`, `kb_search`,
   and `memory_write`.
@@ -26,13 +26,15 @@ The standard workspace files keep their upstream roles:
   - Prompt/bootstrap context files.
   - These are not DB-native memory records.
 - `MEMORY.md` or `memory.md`
-  - Human-authored long-term notes.
+  - Human-authored bridge notes.
   - Injected according to the normal OpenClaw bootstrap rules.
+  - Guidance only, not canonical runtime memory.
 - `memory/YYYY-MM-DD.md`
-  - Daily log (append-only).
+  - Human-authored daily bridge log.
   - Read today + yesterday at session start.
+  - Not the durable runtime memory target for agent-written facts.
 - `MEMORY.md` (optional)
-  - Curated long-term memory.
+  - Curated bridge guidance for direct/private sessions.
   - If both `MEMORY.md` and `memory.md` exist at the workspace root, OpenClaw only loads `MEMORY.md`.
   - Lowercase `memory.md` is only used as a fallback when `MEMORY.md` is absent.
   - **Only load in the main, private session** (never in group contexts).
@@ -82,6 +84,7 @@ Routing guidance:
 - exact item returned by search: `memory_get`
 - durable structured fact/decision/preference: `memory_write`
 - informal operator note: `MEMORY.md` or `memory/YYYY-MM-DD.md`
+  - keep these human-authored; do not use them as the canonical durable runtime store
 
 ## MongoDB deployment model
 
@@ -140,7 +143,7 @@ The runtime never silently switches back to SQLite or QMD.
 ## Automatic memory flush
 
 When a session is close to auto-compaction, OpenClaw can trigger a silent turn
-that reminds the model to store durable memory before compaction.
+that reminds the model to store durable memory in MongoDB before compaction.
 
 This is controlled by `agents.defaults.compaction.memoryFlush`:
 
@@ -154,7 +157,7 @@ This is controlled by `agents.defaults.compaction.memoryFlush`:
           enabled: true,
           softThresholdTokens: 4000,
           systemPrompt: "Session nearing compaction. Store durable memories now.",
-          prompt: "Write any lasting notes to memory/YYYY-MM-DD.md; reply with NO_REPLY if nothing to store.",
+          prompt: "Use memory_write for any durable fact, decision, preference, todo, person, project, or architecture note worth keeping. Reply with NO_REPLY if nothing should be stored.",
         },
       },
     },
@@ -166,8 +169,9 @@ Details:
 
 - the flush runs once per compaction cycle
 - it is skipped when the workspace is read-only
-- it is still about writing operator-facing notes, not bypassing `memory_write`
-  for structured durable memory
+- it writes durable runtime memory through `memory_write`
+- it treats `MEMORY.md` and `memory/*.md` as human-authored bridge notes, not
+  as the durable runtime store
 
 For the full compaction lifecycle, see
 [Session management + compaction](/reference/session-management-compaction).

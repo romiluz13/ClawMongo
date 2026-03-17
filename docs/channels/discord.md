@@ -236,14 +236,14 @@ Once DMs are working, you can set up your Discord server as a full workspace whe
   </Step>
 
   <Step title="Plan for memory in guild channels">
-    By default, long-term memory (MEMORY.md) only loads in DM sessions. Guild channels do not auto-load MEMORY.md.
+    By default, `MEMORY.md` bridge guidance only loads in DM sessions. Guild channels do not auto-load `MEMORY.md`, so runtime recall should come from the MongoDB memory tools.
 
     <Tabs>
       <Tab title="Ask your agent">
-        > "When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context from MEMORY.md."
+        > "When I ask questions in Discord channels, use memory_search or memory_get if you need long-term context. Treat MEMORY.md as bridge guidance only."
       </Tab>
       <Tab title="Manual">
-        If you need shared context in every channel, put the stable instructions in `AGENTS.md` or `USER.md` (they are injected for every session). Keep long-term notes in `MEMORY.md` and access them on demand with memory tools.
+        If you need shared context in every channel, put the stable instructions in `AGENTS.md` or `USER.md` (they are injected for every session). Keep `MEMORY.md` as a human-authored bridge note and use memory tools for MongoDB-backed runtime recall.
       </Tab>
     </Tabs>
 

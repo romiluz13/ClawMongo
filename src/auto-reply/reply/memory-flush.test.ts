@@ -16,7 +16,7 @@ describe("resolveMemoryFlushPromptForRun", () => {
     },
   } as OpenClawConfig;
 
-  it("replaces YYYY-MM-DD using user timezone and appends current time", () => {
+  it("replaces YYYY-MM-DD in custom prompts using user timezone and appends current time", () => {
     const prompt = resolveMemoryFlushPromptForRun({
       prompt: "Store durable notes in memory/YYYY-MM-DD.md",
       cfg,
@@ -51,14 +51,14 @@ describe("resolveMemoryFlushPromptForRun", () => {
 });
 
 describe("DEFAULT_MEMORY_FLUSH_PROMPT", () => {
-  it("includes append-only instruction to prevent overwrites (#6877)", () => {
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toMatch(/APPEND/i);
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("do not overwrite");
+  it("routes durable memory to memory_write instead of file writes", () => {
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("memory_write");
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("do not use file writes");
   });
 
-  it("includes anti-fragmentation instruction to prevent timestamped variant files (#34919)", () => {
-    // Agents must not create YYYY-MM-DD-HHMM.md variants alongside the canonical file
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("timestamped variant");
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("YYYY-MM-DD.md");
+  it("treats Markdown bridge notes as read-only during flushes", () => {
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("MEMORY.md");
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("human-authored bridge notes");
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("read-only");
   });
 });

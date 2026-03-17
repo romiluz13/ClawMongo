@@ -1267,54 +1267,55 @@ Set `agents.defaults.sandbox.docker.binds` to `["host:path:mode"]` (e.g., `"/hom
 
 ### How does memory work
 
-OpenClaw memory is just Markdown files in the agent workspace:
+ClawMongo splits memory into two layers:
 
-- Daily notes in `memory/YYYY-MM-DD.md`
-- Curated long-term notes in `MEMORY.md` (main/private sessions only)
+- MongoDB is the canonical runtime memory system
+- Workspace Markdown remains the human-authored heart/bridge surface
 
-OpenClaw also runs a **silent pre-compaction memory flush** to remind the model
-to write durable notes before auto-compaction. This only runs when the workspace
-is writable (read-only sandboxes skip it). See [Memory](/concepts/memory).
+In practice:
+
+- `memory_write` stores durable runtime facts, decisions, preferences, todos, people, projects, and architecture notes in MongoDB
+- `memory_search` and `memory_get` recall from MongoDB-backed conversation history, reference knowledge, and structured memory
+- `MEMORY.md` and `memory/*.md` remain human-authored bridge notes, not the canonical runtime memory store
+
+ClawMongo also runs a **silent pre-compaction memory flush** to remind the model
+to store durable memory in MongoDB before auto-compaction. See [Memory](/concepts/memory).
 
 ### Memory keeps forgetting things How do I make it stick
 
-Ask the bot to **write the fact to memory**. Long-term notes belong in `MEMORY.md`,
-short-term context goes into `memory/YYYY-MM-DD.md`.
+Ask the bot to **store the fact in memory**. In ClawMongo that means durable runtime
+memory should go through `memory_write` into MongoDB.
 
-This is still an area we are improving. It helps to remind the model to store memories;
-it will know what to do. If it keeps forgetting, verify the Gateway is using the same
-workspace on every run.
+Use Markdown only when you intentionally want a human-authored bridge note:
+
+- `AGENTS.md` / `USER.md` for durable instructions or behavior
+- `MEMORY.md` for curated bridge guidance in main/private sessions
+- `memory/YYYY-MM-DD.md` for human-authored daily notes
+
+If it keeps forgetting, verify the Gateway is using the same workspace and the same
+MongoDB backend on every run.
 
 Docs: [Memory](/concepts/memory), [Agent workspace](/concepts/agent-workspace).
 
 ### Does semantic memory search require an OpenAI API key
 
-Only if you use **OpenAI embeddings**. Codex OAuth covers chat/completions and
-does **not** grant embeddings access, so **signing in with Codex (OAuth or the
-Codex CLI login)** does not help for semantic memory search. OpenAI embeddings
-still need a real API key (`OPENAI_API_KEY` or `models.providers.openai.apiKey`).
+No. ClawMongo's official runtime uses MongoDB Community Search (`mongot`) with
+automated embeddings. The application does not need an OpenAI embedding client.
 
-If you don't set a provider explicitly, OpenClaw auto-selects a provider when it
-can resolve an API key (auth profiles, `models.providers.*.apiKey`, or env vars).
-It prefers OpenAI if an OpenAI key resolves, otherwise Gemini if a Gemini key
-resolves, then Voyage, then Mistral. If no remote key is available, memory
-search stays disabled until you configure it. If you have a local model path
-configured and present, OpenClaw
-prefers `local`. Ollama is supported when you explicitly set
-`memorySearch.provider = "ollama"`.
-
-If you'd rather stay local, set `memorySearch.provider = "local"` (and optionally
-`memorySearch.fallback = "none"`). If you want Gemini embeddings, set
-`memorySearch.provider = "gemini"` and provide `GEMINI_API_KEY` (or
-`memorySearch.remote.apiKey`). We support **OpenAI, Gemini, Voyage, Mistral, Ollama, or local** embedding
-models - see [Memory](/concepts/memory) for the setup details.
+What you do need is a working `mongot` setup with an embedding provider configured
+for automated embeddings. In ClawMongo, that is typically Voyage AI. If `mongot`
+is not configured with an embedding provider, lexical search may still work, but
+semantic/vector search will not.
 
 ### Does memory persist forever What are the limits
 
-Memory files live on disk and persist until you delete them. The limit is your
-storage, not the model. The **session context** is still limited by the model
-context window, so long conversations can compact or truncate. That is why
-memory search exists - it pulls only the relevant parts back into context.
+MongoDB-backed memory persists until you delete it or configure retention rules.
+Bridge Markdown files also persist until you delete them.
+
+The **session context** is still limited by the model context window, so long
+conversations can compact or truncate. That is why memory search exists — it
+pulls relevant MongoDB-backed memory back into context instead of relying on the
+full transcript window.
 
 Docs: [Memory](/concepts/memory), [Context](/concepts/context).
 
@@ -1376,8 +1377,11 @@ If the bot "forgets" after a restart, confirm the Gateway is using the same
 workspace on every launch (and remember: remote mode uses the **gateway host's**
 workspace, not your local laptop).
 
-Tip: if you want a durable behavior or preference, ask the bot to **write it into
-AGENTS.md or MEMORY.md** rather than relying on chat history.
+Tip:
+
+- durable behavior or policy -> `AGENTS.md` / `USER.md`
+- durable runtime fact or preference -> ask the bot to store it in memory so it lands in MongoDB
+- human bridge note -> `MEMORY.md`
 
 See [Agent workspace](/concepts/agent-workspace) and [Memory](/concepts/memory).
 

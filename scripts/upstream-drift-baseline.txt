@@ -27,7 +27,6 @@ packages/moltbot/package.json
 packages/moltbot/scripts/postinstall.js
 pnpm-lock.yaml
 scripts/sync-upstream.sh
-skills/clawmongo-memory-routing/SKILL.md
 src/agents/cli-runner/helpers.ts
 src/agents/memory-search.ts
 src/agents/pi-embedded-runner/compact.ts

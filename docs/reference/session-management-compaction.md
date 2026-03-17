@@ -283,14 +283,14 @@ As of `2026.1.10`, OpenClaw also suppresses **draft/typing streaming** when a pa
 ## Pre-compaction “memory flush” (implemented)
 
 Goal: before auto-compaction happens, run a silent agentic turn that writes durable
-state to disk (e.g. `memory/YYYY-MM-DD.md` in the agent workspace) so compaction can’t
+state to MongoDB so compaction can’t
 erase critical context.
 
 OpenClaw uses the **pre-threshold flush** approach:
 
 1. Monitor session context usage.
 2. When it crosses a “soft threshold” (below Pi’s compaction threshold), run a silent
-   “write memory now” directive to the agent.
+   “store durable memory now” directive to the agent.
 3. Use `NO_REPLY` so the user sees nothing.
 
 Config (`agents.defaults.compaction.memoryFlush`):
@@ -306,7 +306,8 @@ Notes:
 - The flush runs once per compaction cycle (tracked in `sessions.json`).
 - The flush runs only for embedded Pi sessions (CLI backends skip it).
 - The flush is skipped when the session workspace is read-only (`workspaceAccess: "ro"` or `"none"`).
-- See [Memory](/concepts/memory) for the workspace file layout and write patterns.
+- Durable runtime memory should go through `memory_write`; `MEMORY.md` and `memory/*.md` remain human-authored bridge notes only.
+- See [Memory](/concepts/memory) for the workspace file layout and MongoDB-backed write patterns.
 
 Pi also exposes a `session_before_compact` hook in the extension API, but OpenClaw’s
 flush logic lives on the Gateway side today.

@@ -293,7 +293,7 @@ Most plugin changes require a gateway restart. See [/plugin](/tools/plugin).
 
 ## Memory
 
-Vector search over `MEMORY.md` + `memory/*.md`:
+Vector search over imported `MEMORY.md` + `memory/*.md` bridge notes:
 
 - `openclaw memory status` — show index stats.
 - `openclaw memory index` — reindex memory files.

@@ -1,8 +1,8 @@
 /**
  * Session memory hook handler
  *
- * Saves session context to memory when /new or /reset command is triggered
- * Creates a new dated memory file with LLM-generated slug
+ * Exports session context to a dated bridge note when /new or /reset is triggered.
+ * This is a legacy Markdown export, not the canonical ClawMongo memory path.
  */
 
 import fs from "node:fs/promises";
@@ -194,7 +194,7 @@ async function findPreviousSessionFile(params: {
 }
 
 /**
- * Save session context to memory when /new or /reset command is triggered
+ * Export session context to a bridge note when /new or /reset command is triggered.
  */
 const saveSessionToMemory: HookHandler = async (event) => {
   // Only trigger on reset/new commands
@@ -314,7 +314,7 @@ const saveSessionToMemory: HookHandler = async (event) => {
     // Create filename with date and slug
     const filename = `${dateStr}-${slug}.md`;
     const memoryFilePath = path.join(memoryDir, filename);
-    log.debug("Memory file path resolved", {
+    log.debug("Session bridge note path resolved", {
       filename,
       path: memoryFilePath.replace(os.homedir(), "~"),
     });
@@ -350,20 +350,20 @@ const saveSessionToMemory: HookHandler = async (event) => {
       data: entry,
       encoding: "utf-8",
     });
-    log.debug("Memory file written successfully");
+    log.debug("Session bridge note written successfully");
 
     // Log completion (but don't send user-visible confirmation - it's internal housekeeping)
     const relPath = memoryFilePath.replace(os.homedir(), "~");
-    log.info(`Session context saved to ${relPath}`);
+    log.info(`Session bridge note saved to ${relPath}`);
   } catch (err) {
     if (err instanceof Error) {
-      log.error("Failed to save session memory", {
+      log.error("Failed to save session bridge note", {
         errorName: err.name,
         errorMessage: err.message,
         stack: err.stack,
       });
     } else {
-      log.error("Failed to save session memory", { error: String(err) });
+      log.error("Failed to save session bridge note", { error: String(err) });
     }
   }
 };

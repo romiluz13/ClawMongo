@@ -1,6 +1,6 @@
 ---
 name: session-memory
-description: "Save session context to memory when /new or /reset command is issued"
+description: "Legacy bridge export: save recent session context to a workspace Markdown note when /new or /reset is issued"
 homepage: https://docs.openclaw.ai/automation/hooks#session-memory
 metadata:
   {
@@ -16,7 +16,12 @@ metadata:
 
 # Session Memory Hook
 
-Automatically saves session context to your workspace memory when you issue `/new` or `/reset`.
+This bundled hook is a legacy bridge export. In ClawMongo, MongoDB is the
+canonical runtime memory system. Enable this hook only if you explicitly want a
+human-readable Markdown export in `memory/` when a session rotates.
+
+It does not participate in MongoDB-backed runtime recall, structured memory,
+graph, or episodic retrieval.
 
 ## What It Does
 
@@ -25,12 +30,11 @@ When you run `/new` or `/reset` to start a fresh session:
 1. **Finds the previous session** - Uses the pre-reset session entry to locate the correct transcript
 2. **Extracts conversation** - Reads the last N user/assistant messages from the session (default: 15, configurable)
 3. **Generates descriptive slug** - Uses LLM to create a meaningful filename slug based on conversation content
-4. **Saves to memory** - Creates a new file at `<workspace>/memory/YYYY-MM-DD-slug.md`
-5. **Sends confirmation** - Notifies you with the file path
+4. **Exports a bridge note** - Creates a new file at `<workspace>/memory/YYYY-MM-DD-slug.md`
 
 ## Output Format
 
-Memory files are created with the following format:
+Bridge-note exports are created with the following format:
 
 ```markdown
 # Session: 2026-01-16 14:30:00 UTC
@@ -54,6 +58,12 @@ The LLM generates descriptive slugs based on your conversation:
 - **Config**: `workspace.dir` must be set (automatically configured during setup)
 
 The hook uses your configured LLM provider to generate slugs, so it works with any provider (Anthropic, OpenAI, etc.).
+
+## Important ClawMongo note
+
+- MongoDB remains the canonical runtime memory system.
+- Durable runtime facts, decisions, preferences, todos, people, projects, and architecture notes should go through `memory_write`, not this hook.
+- `MEMORY.md` and `memory/*.md` remain human-authored bridge notes or optional exports only.
 
 ## Configuration
 

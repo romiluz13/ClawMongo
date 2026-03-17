@@ -21,7 +21,7 @@ Hooks can also be bundled inside plugins; see [Plugins](/tools/plugin#plugin-hoo
 
 Common uses:
 
-- Save a memory snapshot when you reset a session
+- Export a human-readable bridge note when you reset a session
 - Keep an audit trail of commands for troubleshooting or compliance
 - Trigger follow-up automation when a session starts or ends
 - Write files into the agent workspace or call external APIs when events fire
@@ -32,7 +32,7 @@ If you can write a small TypeScript function, you can write a hook. Hooks are di
 
 The hooks system allows you to:
 
-- Save session context to memory when `/new` is issued
+- Export session context to a Markdown bridge note when `/new` is issued
 - Log all commands for auditing
 - Trigger custom automations on agent lifecycle events
 - Extend OpenClaw's behavior without modifying core code
@@ -43,7 +43,7 @@ The hooks system allows you to:
 
 OpenClaw ships with four bundled hooks that are automatically discovered:
 
-- **💾 session-memory**: Saves session context to your agent workspace (default `~/.openclaw/workspace/memory/`) when you issue `/new`
+- **💾 session-memory**: Legacy bridge export that writes a session note into your agent workspace (default `~/.openclaw/workspace/memory/`) when you issue `/new`
 - **📎 bootstrap-extra-files**: Injects additional workspace bootstrap files from configured glob/path patterns during `agent:bootstrap`
 - **📝 command-logger**: Logs all command events to `~/.openclaw/logs/commands.log`
 - **🚀 boot-md**: Runs `BOOT.md` when the gateway starts (requires internal hooks enabled)
@@ -571,7 +571,7 @@ openclaw hooks disable command-logger
 
 ### session-memory
 
-Saves session context to memory when you issue `/new`.
+Legacy bridge export that writes session context to a Markdown note when you issue `/new`.
 
 **Events**: `command:new`
 
@@ -584,7 +584,7 @@ Saves session context to memory when you issue `/new`.
 1. Uses the pre-reset session entry to locate the correct transcript
 2. Extracts the last 15 lines of conversation
 3. Uses LLM to generate a descriptive filename slug
-4. Saves session metadata to a dated memory file
+4. Writes session metadata to a dated Markdown bridge note
 
 **Example output**:
 
@@ -607,6 +607,12 @@ Saves session context to memory when you issue `/new`.
 ```bash
 openclaw hooks enable session-memory
 ```
+
+**ClawMongo note**:
+
+- This hook is optional and legacy.
+- It is not part of the canonical MongoDB runtime memory pipeline.
+- Use `memory_write` for durable runtime memory; use this hook only if you want a human-readable bridge export.
 
 ### bootstrap-extra-files
 

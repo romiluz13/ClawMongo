@@ -232,7 +232,7 @@ describe("resolveOpenClawMetadata", () => {
     // This is the actual format used in the bundled hooks
     const content = `---
 name: session-memory
-description: "Save session context to memory when /new or /reset command is issued"
+description: "Legacy bridge export: save recent session context to a workspace Markdown note when /new or /reset is issued"
 homepage: https://docs.openclaw.ai/automation/hooks#session-memory
 metadata:
   {

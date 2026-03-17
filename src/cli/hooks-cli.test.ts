@@ -9,7 +9,7 @@ const report: HookStatusReport = {
   hooks: [
     {
       name: "session-memory",
-      description: "Save session context to memory",
+      description: "Legacy bridge export for session context",
       source: "openclaw-bundled",
       pluginId: undefined,
       filePath: "/tmp/hooks/session-memory/HOOK.md",

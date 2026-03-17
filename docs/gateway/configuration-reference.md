@@ -1021,8 +1021,8 @@ Periodic heartbeat runs.
         memoryFlush: {
           enabled: true,
           softThresholdTokens: 6000,
-          systemPrompt: "Session nearing compaction. Store durable memories now.",
-          prompt: "Write any lasting notes to memory/YYYY-MM-DD.md; reply with NO_REPLY if nothing to store.",
+          systemPrompt: "Session nearing compaction. Capture durable memories in MongoDB now.",
+          prompt: "Use memory_write for any durable fact, decision, preference, todo, person, project, or architecture note worth keeping. Reply with NO_REPLY if nothing should be stored.",
         },
       },
     },
@@ -1036,7 +1036,7 @@ Periodic heartbeat runs.
 - `identifierInstructions`: optional custom identifier-preservation text used when `identifierPolicy=custom`.
 - `postCompactionSections`: optional AGENTS.md H2/H3 section names to re-inject after compaction. Defaults to `["Session Startup", "Red Lines"]`; set `[]` to disable reinjection. When unset or explicitly set to that default pair, older `Every Session`/`Safety` headings are also accepted as a legacy fallback.
 - `model`: optional `provider/model-id` override for compaction summarization only. Use this when the main session should keep one model but compaction summaries should run on another; when unset, compaction uses the session's primary model.
-- `memoryFlush`: silent agentic turn before auto-compaction to store durable memories. Skipped when workspace is read-only.
+- `memoryFlush`: silent agentic turn before auto-compaction to store durable memories in MongoDB. Skipped when workspace is read-only.
 
 ### `agents.defaults.contextPruning`
 

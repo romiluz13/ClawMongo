@@ -86,7 +86,8 @@ describe("onboard-hooks", () => {
       createMockHook(
         {
           name: "session-memory",
-          description: "Save session context to memory when /new or /reset command is issued",
+          description:
+            "Legacy bridge export: save recent session context to a workspace Markdown note when /new or /reset is issued",
           filePath: "/mock/workspace/hooks/session-memory/HOOK.md",
           baseDir: "/mock/workspace/hooks/session-memory",
           handlerPath: "/mock/workspace/hooks/session-memory/handler.js",
@@ -132,23 +133,18 @@ describe("onboard-hooks", () => {
   describe("setupInternalHooks", () => {
     it("should enable hooks when user selects them", async () => {
       const { result, prompter } = await runSetupInternalHooks({
-        selected: ["session-memory"],
+        selected: ["command-logger"],
       });
 
       expect(result.hooks?.internal?.enabled).toBe(true);
       expect(result.hooks?.internal?.entries).toEqual({
-        "session-memory": { enabled: true },
+        "command-logger": { enabled: true },
       });
       expect(prompter.note).toHaveBeenCalledTimes(2);
       expect(prompter.multiselect).toHaveBeenCalledWith({
         message: "Enable hooks?",
         options: [
           { value: "__skip__", label: "Skip for now" },
-          {
-            value: "session-memory",
-            label: "💾 session-memory",
-            hint: "Save session context to memory when /new or /reset command is issued",
-          },
           {
             value: "command-logger",
             label: "📝 command-logger",
@@ -176,8 +172,8 @@ describe("onboard-hooks", () => {
       expect(result).toEqual(cfg);
       expect(prompter.multiselect).not.toHaveBeenCalled();
       expect(prompter.note).toHaveBeenCalledWith(
-        "No eligible hooks found. You can configure hooks later in your config.",
-        "No Hooks Available",
+        "No recommended hooks found. You can configure hooks later in your config, including any legacy bridge-export hooks you want to enable manually.",
+        "No Recommended Hooks",
       );
     });
 
@@ -190,7 +186,7 @@ describe("onboard-hooks", () => {
         },
       };
       const { result } = await runSetupInternalHooks({
-        selected: ["session-memory"],
+        selected: ["command-logger"],
         cfg,
       });
 
@@ -199,7 +195,7 @@ describe("onboard-hooks", () => {
       expect(result.hooks?.token).toBe("existing-token");
       expect(result.hooks?.internal?.enabled).toBe(true);
       expect(result.hooks?.internal?.entries).toEqual({
-        "session-memory": { enabled: true },
+        "command-logger": { enabled: true },
       });
     });
 
@@ -218,7 +214,7 @@ describe("onboard-hooks", () => {
 
     it("should show informative notes to user", async () => {
       const { prompter } = await runSetupInternalHooks({
-        selected: ["session-memory"],
+        selected: ["command-logger"],
       });
 
       const noteCalls = (prompter.note as ReturnType<typeof vi.fn>).mock.calls;
@@ -226,10 +222,10 @@ describe("onboard-hooks", () => {
 
       // First note should explain what hooks are
       expect(noteCalls[0][0]).toContain("Hooks let you automate actions");
-      expect(noteCalls[0][0]).toContain("automate actions");
+      expect(noteCalls[0][0]).toContain("inject extra bootstrap files");
 
       // Second note should confirm configuration
-      expect(noteCalls[1][0]).toContain("Enabled 1 hook: session-memory");
+      expect(noteCalls[1][0]).toContain("Enabled 1 hook: command-logger");
       expect(noteCalls[1][0]).toMatch(/(?:openclaw|openclaw)( --profile isolated)? hooks list/);
     });
   });

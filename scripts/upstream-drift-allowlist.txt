@@ -38,8 +38,6 @@ scripts/upstream-drift-baseline.txt
 scripts/upstream-excluded-paths.txt
 scripts/upstream-protected-paths.txt
 scripts/write-plugin-sdk-entry-dts.ts
-skills/clawmongo-heart-brain-audit/
-skills/clawmongo-memory-routing/
 src/agents/
 src/auto-reply/reply/elevated-allowlist-matcher.ts
 src/auto-reply/reply/commands-system-prompt.ts

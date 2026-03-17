@@ -17,8 +17,8 @@ This folder is the assistant's working directory.
 
 ## Backup tip (recommended)
 
-If you treat this workspace as the agent's "memory", make it a git repo (ideally private) so identity
-and notes are backed up.
+If you treat this workspace as the agent's heart and bridge guidance, make it a
+git repo (ideally private) so identity and notes are backed up.
 
 ```bash
 git init
@@ -32,11 +32,11 @@ git commit -m "Add agent workspace"
 - Don't run destructive commands unless explicitly asked.
 - Be concise in chat; write longer output to files in this workspace.
 
-## Daily memory (recommended)
+## Daily bridge notes (optional)
 
-- Keep a short daily log at memory/YYYY-MM-DD.md (create memory/ if needed).
+- Keep a short daily bridge note at memory/YYYY-MM-DD.md if you want human-authored notes (create memory/ if needed).
 - On session start, read today + yesterday if present.
-- Capture durable facts, preferences, and decisions; avoid secrets.
+- Keep durable runtime facts, preferences, and decisions in MongoDB via memory tools; avoid secrets in bridge notes.
 
 ## Heartbeats (optional)
 
@@ -44,7 +44,7 @@ git commit -m "Add agent workspace"
 
 ## Customize
 
-- Add your preferred style, rules, and "memory" here.
+- Add your preferred style, rules, and bridge guidance here.
 
 ---
 

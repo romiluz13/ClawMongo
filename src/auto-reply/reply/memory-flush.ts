@@ -28,7 +28,6 @@ export const DEFAULT_MEMORY_FLUSH_PROMPT = [
   MEMORY_FLUSH_READ_ONLY_HINT,
   MEMORY_FLUSH_APPEND_ONLY_HINT,
   "do not overwrite or replace bridge note files.",
-  "Do NOT create timestamped variant files (e.g., YYYY-MM-DD-HHMM.md); if a bridge note is needed for a human, always use the canonical YYYY-MM-DD.md filename.",
   "Write only durable facts, decisions, preferences, todos, people, projects, or architecture notes worth keeping.",
   `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
 ].join(" ");
