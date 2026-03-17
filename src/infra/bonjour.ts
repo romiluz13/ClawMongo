@@ -1,3 +1,4 @@
+import type { CiaoService, Responder } from "@homebridge/ciao";
 import { logDebug, logWarn } from "../logger.js";
 import { getLogger } from "../logging.js";
 import { ignoreCiaoCancellationRejection } from "./bonjour-ciao.js";
@@ -48,35 +49,18 @@ function prettifyInstanceName(name: string) {
   return normalized.replace(/\s+\(OpenClaw\)\s*$/i, "").trim() || normalized;
 }
 
-type BonjourService = {
-  advertise: () => Promise<void>;
-  destroy: () => Promise<void>;
-  getFQDN: () => string;
-  getHostname: () => string;
-  getPort: () => number;
-  on: (event: string, listener: (...args: unknown[]) => void) => unknown;
-  serviceState: string;
-};
+type BonjourService = import("@homebridge/ciao").CiaoService;
+type BonjourResponder = import("@homebridge/ciao").Responder;
+type BonjourServiceState = BonjourService["serviceState"];
 
 type BonjourCycle = {
-  responder: {
-    createService: (options: {
-      name: string;
-      type: string;
-      protocol: unknown;
-      port: number;
-      domain: string;
-      hostname: string;
-      txt: Record<string, string>;
-    }) => unknown;
-    shutdown: () => Promise<void>;
-  };
+  responder: BonjourResponder;
   services: Array<{ label: string; svc: BonjourService }>;
   cleanupUnhandledRejection?: () => void;
 };
 
 type ServiceStateTracker = {
-  state: string;
+  state: BonjourServiceState | "unknown";
   sinceMs: number;
 };
 
@@ -271,7 +255,8 @@ export async function startGatewayBonjourAdvertiser(
   const updateStateTrackers = (services: Array<{ label: string; svc: BonjourService }>) => {
     const now = Date.now();
     for (const { label, svc } of services) {
-      const nextState = typeof svc.serviceState === "string" ? svc.serviceState : "unknown";
+      const nextState: BonjourServiceState | "unknown" =
+        typeof svc.serviceState === "string" ? svc.serviceState : "unknown";
       const current = stateTracker.get(label);
       if (!current || current.state !== nextState) {
         stateTracker.set(label, { state: nextState, sinceMs: now });

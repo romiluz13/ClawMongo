@@ -1,4 +1,6 @@
+import { buildAgentSessionKey, type RoutePeer } from "openclaw/plugin-sdk";
 import {
+  buildAccountScopedAllowlistConfigEditor,
   buildAccountScopedDmSecurityPolicy,
   collectAllowlistProviderRestrictSendersWarnings,
 } from "openclaw/plugin-sdk/compat";
@@ -29,6 +31,7 @@ import { resolveOutboundSendDep } from "../../../src/infra/outbound/send-deps.js
 import { buildPassiveProbedChannelStatusSummary } from "../../shared/channel-status-summary.js";
 import { getIMessageRuntime } from "./runtime.js";
 import { createIMessageSetupWizardProxy, imessageSetupAdapter } from "./setup-core.js";
+import { normalizeIMessageHandle, parseIMessageTarget } from "./targets.js";
 
 const meta = getChatChannelMeta("imessage");
 
@@ -72,6 +75,83 @@ async function sendIMessageOutbound(params: {
     accountId: params.accountId ?? undefined,
     replyToId: params.replyToId ?? undefined,
   });
+}
+
+function buildIMessageBaseSessionKey(params: {
+  cfg: Parameters<typeof resolveIMessageAccount>[0]["cfg"];
+  agentId: string;
+  accountId?: string | null;
+  peer: RoutePeer;
+}) {
+  return buildAgentSessionKey({
+    agentId: params.agentId,
+    channel: "imessage",
+    accountId: params.accountId,
+    peer: params.peer,
+    dmScope: params.cfg.session?.dmScope ?? "main",
+    identityLinks: params.cfg.session?.identityLinks,
+  });
+}
+
+function resolveIMessageOutboundSessionRoute(params: {
+  cfg: Parameters<typeof resolveIMessageAccount>[0]["cfg"];
+  agentId: string;
+  accountId?: string | null;
+  target: string;
+}) {
+  const parsed = parseIMessageTarget(params.target);
+  if (parsed.kind === "handle") {
+    const handle = normalizeIMessageHandle(parsed.to);
+    if (!handle) {
+      return null;
+    }
+    const peer: RoutePeer = { kind: "direct", id: handle };
+    const baseSessionKey = buildIMessageBaseSessionKey({
+      cfg: params.cfg,
+      agentId: params.agentId,
+      accountId: params.accountId,
+      peer,
+    });
+    return {
+      sessionKey: baseSessionKey,
+      baseSessionKey,
+      peer,
+      chatType: "direct" as const,
+      from: `imessage:${handle}`,
+      to: `imessage:${handle}`,
+    };
+  }
+
+  const peerId =
+    parsed.kind === "chat_id"
+      ? String(parsed.chatId)
+      : parsed.kind === "chat_guid"
+        ? parsed.chatGuid
+        : parsed.chatIdentifier;
+  if (!peerId) {
+    return null;
+  }
+  const peer: RoutePeer = { kind: "group", id: peerId };
+  const baseSessionKey = buildIMessageBaseSessionKey({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    accountId: params.accountId,
+    peer,
+  });
+  const toPrefix =
+    parsed.kind === "chat_id"
+      ? "chat_id"
+      : parsed.kind === "chat_guid"
+        ? "chat_guid"
+        : "chat_identifier";
+  return {
+    sessionKey: baseSessionKey,
+    baseSessionKey,
+    peer,
+    chatType: "group" as const,
+    from: `imessage:group:${peerId}`,
+    to: `${toPrefix}:${peerId}`,
+  };
 }
 
 export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount> = {
@@ -135,11 +215,13 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount> = {
         groupPolicy: account.config.groupPolicy,
       };
     },
-    resolveConfigEdit: ({ scope, pathPrefix, writeTarget }) => ({
-      pathPrefix,
-      writeTarget,
-      readPaths: [[scope === "dm" ? "allowFrom" : "groupAllowFrom"]],
-      writePath: [scope === "dm" ? "allowFrom" : "groupAllowFrom"],
+    applyConfigEdit: buildAccountScopedAllowlistConfigEditor({
+      channelId: "imessage",
+      normalize: ({ values }) => formatTrimmedAllowFromEntries(values),
+      resolvePaths: (scope) => ({
+        readPaths: [[scope === "dm" ? "allowFrom" : "groupAllowFrom"]],
+        writePath: [scope === "dm" ? "allowFrom" : "groupAllowFrom"],
+      }),
     }),
   },
   security: {
@@ -173,6 +255,7 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount> = {
   },
   messaging: {
     normalizeTarget: normalizeIMessageMessagingTarget,
+    resolveOutboundSessionRoute: (params) => resolveIMessageOutboundSessionRoute(params),
     targetResolver: {
       looksLikeId: looksLikeIMessageTargetId,
       hint: "<handle|chat_id:ID>",
