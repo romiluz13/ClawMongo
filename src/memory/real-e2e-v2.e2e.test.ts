@@ -57,6 +57,11 @@ const TEST_URI =
   "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const PREFIX = "clawtest_";
 const AGENT_ID = `agent-e2e-${randomUUID().slice(0, 8)}`;
+const AUTO_EMBED_ENABLED = Boolean(
+  process.env.VOYAGE_API_KEY ||
+    process.env.VOYAGE_API_QUERY_KEY ||
+    process.env.VOYAGE_API_INDEXING_KEY,
+);
 
 // ─── Realistic conversation data ───────────────────────────────────────────────
 
@@ -1178,8 +1183,9 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
   describe("Phase 11: Voyage AI AutoEmbed Vector Search", () => {
     // Allow up to 90s for mongot to finish embedding documents
     const VECTOR_SEARCH_TIMEOUT = 90_000;
+    const autoEmbedIt = AUTO_EMBED_ENABLED ? it : it.skip;
 
-    it(
+    autoEmbedIt(
       "should have autoEmbed search indexes on chunks",
       async () => {
         // ensureSearchIndexes creates text + vector indexes using autoEmbed
@@ -1232,7 +1238,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       expect(stage!.queryVector).toBeUndefined();
     });
 
-    it(
+    autoEmbedIt(
       "should return semantic results for architecture queries via $vectorSearch",
       async () => {
         // Real vector search using Voyage AI autoEmbed
@@ -1269,7 +1275,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       VECTOR_SEARCH_TIMEOUT,
     );
 
-    it(
+    autoEmbedIt(
       "should find deployment-related content with semantic search",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
@@ -1296,7 +1302,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       VECTOR_SEARCH_TIMEOUT,
     );
 
-    it(
+    autoEmbedIt(
       "should find bug-fix content with semantic search",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
@@ -1323,7 +1329,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       VECTOR_SEARCH_TIMEOUT,
     );
 
-    it(
+    autoEmbedIt(
       "should return keyword search results with text index",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
@@ -1346,7 +1352,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       VECTOR_SEARCH_TIMEOUT,
     );
 
-    it(
+    autoEmbedIt(
       "should handle semantic similarity — related concepts rank higher",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
@@ -1373,7 +1379,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       VECTOR_SEARCH_TIMEOUT,
     );
 
-    it(
+    autoEmbedIt(
       "should respect minScore filter on vector results",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
