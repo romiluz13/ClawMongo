@@ -1,9 +1,4 @@
 import { Separator, TextDisplay } from "@buape/carbon";
-import {
-  buildAgentSessionKey,
-  resolveThreadSessionKeys,
-  type RoutePeer,
-} from "openclaw/plugin-sdk";
 import { createScopedChannelConfigBase } from "openclaw/plugin-sdk/compat";
 import {
   buildAccountScopedAllowlistConfigEditor,
@@ -13,6 +8,11 @@ import {
   createScopedAccountConfigAccessors,
   formatAllowFromLowercase,
 } from "openclaw/plugin-sdk/compat";
+import {
+  buildAgentSessionKey,
+  resolveThreadSessionKeys,
+  type RoutePeer,
+} from "openclaw/plugin-sdk/core";
 import {
   buildComputedAccountStatusSnapshot,
   buildChannelConfigSchema,
@@ -41,9 +41,17 @@ import {
   type OpenClawConfig,
   type ResolvedDiscordAccount,
 } from "openclaw/plugin-sdk/discord";
+import {
+  buildAgentSessionKey,
+  resolveThreadSessionKeys,
+  type RoutePeer,
+} from "openclaw/plugin-sdk/routing";
 import { resolveOutboundSendDep } from "../../../src/infra/outbound/send-deps.js";
 import { normalizeMessageChannel } from "../../../src/utils/message-channel.js";
-import { isDiscordExecApprovalClientEnabled } from "./exec-approvals.js";
+import {
+  isDiscordExecApprovalClientEnabled,
+  shouldSuppressLocalDiscordExecApprovalPrompt,
+} from "./exec-approvals.js";
 import type { DiscordProbe } from "./probe.js";
 import { resolveDiscordUserAllowlist } from "./resolve-users.js";
 import { getDiscordRuntime } from "./runtime.js";
@@ -453,6 +461,12 @@ export const discordPlugin: ChannelPlugin<ResolvedDiscordAccount> = {
       isDiscordExecApprovalClientEnabled({ cfg, accountId })
         ? { kind: "enabled" }
         : { kind: "disabled" },
+    shouldSuppressLocalPrompt: ({ cfg, accountId, payload }) =>
+      shouldSuppressLocalDiscordExecApprovalPrompt({
+        cfg,
+        accountId,
+        payload,
+      }),
     hasConfiguredDmRoute: ({ cfg }) => hasDiscordExecApprovalDmRoute(cfg),
     shouldSuppressForwardingFallback: ({ cfg, target }) =>
       (normalizeMessageChannel(target.channel) ?? target.channel) === "discord" &&

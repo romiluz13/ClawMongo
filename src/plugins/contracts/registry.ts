@@ -33,7 +33,6 @@ import xaiPlugin from "../../../extensions/xai/index.js";
 import xiaomiPlugin from "../../../extensions/xiaomi/index.js";
 import zaiPlugin from "../../../extensions/zai/index.js";
 import { createCapturedPluginRegistration } from "../../test-utils/plugin-registration.js";
-import type { OpenClawPluginApi } from "../types.js";
 import type { ProviderPlugin, WebSearchProviderPlugin } from "../types.js";
 
 type RegistrablePlugin = {
@@ -50,6 +49,13 @@ type WebSearchProviderContractEntry = {
   pluginId: string;
   provider: WebSearchProviderPlugin;
   credentialValue: unknown;
+};
+
+type PluginRegistrationContractEntry = {
+  pluginId: string;
+  providerIds: string[];
+  webSearchProviderIds: string[];
+  toolNames: string[];
 };
 
 const bundledProviderPlugins: RegistrablePlugin[] = [
@@ -97,11 +103,7 @@ const bundledWebSearchPlugins: Array<RegistrablePlugin & { credentialValue: unkn
 
 function captureRegistrations(plugin: RegistrablePlugin) {
   const captured = createCapturedPluginRegistration();
-  const api = {
-    ...captured.api,
-    registerTool() {},
-  } satisfies Partial<OpenClawPluginApi>;
-  plugin.register(api as OpenClawPluginApi);
+  plugin.register(captured.api);
   return captured;
 }
 
@@ -123,4 +125,21 @@ export const webSearchProviderContractRegistry: WebSearchProviderContractEntry[]
       provider,
       credentialValue: plugin.credentialValue,
     }));
+  });
+
+const bundledPluginRegistrationList = [
+  ...new Map(
+    [...bundledProviderPlugins, ...bundledWebSearchPlugins].map((plugin) => [plugin.id, plugin]),
+  ).values(),
+];
+
+export const pluginRegistrationContractRegistry: PluginRegistrationContractEntry[] =
+  bundledPluginRegistrationList.map((plugin) => {
+    const captured = captureRegistrations(plugin);
+    return {
+      pluginId: plugin.id,
+      providerIds: captured.providers.map((provider) => provider.id),
+      webSearchProviderIds: captured.webSearchProviders.map((provider) => provider.id),
+      toolNames: captured.tools.map((tool) => tool.name),
+    };
   });
