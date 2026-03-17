@@ -13,19 +13,10 @@ import {
   setCompactionSafeguardRuntime,
 } from "./compaction-safeguard-runtime.js";
 
-vi.mock("../compaction.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof compactionModule>();
-  return {
-    ...actual,
-    summarizeInStages: vi.fn(actual.summarizeInStages),
-  };
-});
+const { default: compactionSafeguardExtension, __testing } =
+  await import("./compaction-safeguard.js");
 
-const { default: compactionSafeguardExtension, __testing } = await import(
-  "./compaction-safeguard.js"
-);
-
-const mockSummarizeInStages = vi.mocked(compactionModule.summarizeInStages);
+const mockSummarizeInStages = vi.spyOn(compactionModule, "summarizeInStages");
 
 const {
   collectToolFailures,
