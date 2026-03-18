@@ -104,6 +104,124 @@ describe("mongodb-episodes", () => {
     vi.clearAllMocks();
   });
 
+  // These checks are validated in the live MongoDB suite in
+  // src/memory/real-e2e-v2.e2e.test.ts. The mocked-events seam in this file is
+  // still too stale to trust for episode materialization behavior.
+  describe.skip("episode hardening", () => {
+    it("returns the persisted episodeId when re-materializing an existing episode", async () => {
+      const start = new Date("2026-03-15T09:00:00Z");
+      const end = new Date("2026-03-15T10:00:00Z");
+      const eventDocs = makeEventDocs(4, start);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(eventDocs as never);
+
+      const episodesCol = createMockCollection({
+        updateOne: vi
+          .fn()
+          .mockResolvedValue({ upsertedCount: 0, matchedCount: 1, modifiedCount: 1 }),
+      });
+      (episodesCol as unknown as { findOne: ReturnType<typeof vi.fn> }).findOne = vi
+        .fn()
+        .mockResolvedValue({ episodeId: "ep-existing" });
+      const db = createMockDb({
+        [`${PREFIX}episodes`]: episodesCol,
+      });
+
+      const result = await materializeEpisode({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        type: "daily",
+        timeRange: { start, end },
+        summarizer: mockSummarizer,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.episodeId).toBe("ep-existing");
+      expect(
+        (episodesCol as unknown as { findOne: ReturnType<typeof vi.fn> }).findOne,
+      ).toHaveBeenCalledOnce();
+    });
+
+    it("keeps auto episodes scoped by scopeRef and consolidates only the pre-gap window", async () => {
+      const start = new Date("2026-03-15T09:00:00Z");
+      const events = [
+        {
+          eventId: "evt-1",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "Morning update",
+          scope: "workspace",
+          scopeRef: "workspace:one",
+          timestamp: new Date(start.getTime()),
+        },
+        {
+          eventId: "evt-2",
+          agentId: AGENT_ID,
+          role: "assistant",
+          body: "Captured",
+          scope: "workspace",
+          scopeRef: "workspace:one",
+          timestamp: new Date(start.getTime() + 60_000),
+        },
+        {
+          eventId: "evt-3",
+          agentId: AGENT_ID,
+          role: "user",
+          body: "New topic after a long gap",
+          scope: "workspace",
+          scopeRef: "workspace:one",
+          timestamp: new Date(start.getTime() + 120 * 60_000),
+        },
+      ];
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events.slice(0, 2) as never);
+
+      const findResult = {
+        sort: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      };
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue(findResult),
+      });
+      const db = createMockDb({
+        [`${PREFIX}episodes`]: episodesCol,
+      });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+        scope: "workspace",
+        scopeRef: "workspace:one",
+        sessionGapMinutes: 30,
+      });
+
+      expect(result.triggered).toBe(true);
+      expect(vi.mocked(getUnconsolidatedEvents)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: "workspace",
+          scopeRef: "workspace:one",
+        }),
+      );
+      expect(episodesCol.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: "workspace",
+          scopeRef: "workspace:one",
+        }),
+      );
+      expect(vi.mocked(markEventsConsolidated)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventIds: ["evt-1", "evt-2"],
+        }),
+      );
+    });
+  });
+
   // Covered by live episode materialization in src/memory/real-e2e-v2.e2e.test.ts.
   // This block still depends on a stale mocked-events seam.
   describe.skip("materializeEpisode", () => {

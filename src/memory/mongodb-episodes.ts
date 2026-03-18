@@ -46,6 +46,46 @@ export type EpisodeSummarizer = (
   tags?: string[];
 }>;
 
+function buildEpisodeSummarizerInput(events: Array<{ role: string; body: string; timestamp: Date }>) {
+  const conversational = events.filter((event) => {
+    const body = event.body.trim();
+    return body.length > 0 && (event.role === "user" || event.role === "assistant");
+  });
+  if (conversational.length >= 2) {
+    return conversational;
+  }
+  return events.filter((event) => {
+    const body = event.body.trim();
+    return body.length > 0 && event.role !== "system";
+  });
+}
+
+function resolveTriggeredEpisodeWindow(params: {
+  events: Array<{ eventId: string; role: string; body: string; timestamp: Date }>;
+  triggerReason: "session_gap" | "event_count" | "explicit";
+  sessionGapMinutes: number;
+  maxEventsWithoutEpisode: number;
+}) {
+  const { events, triggerReason, sessionGapMinutes, maxEventsWithoutEpisode } = params;
+  if (events.length <= 1) {
+    return events;
+  }
+  if (triggerReason === "session_gap") {
+    const gapMs = sessionGapMinutes * 60 * 1000;
+    for (let i = 1; i < events.length; i++) {
+      const gap = events[i].timestamp.getTime() - events[i - 1].timestamp.getTime();
+      if (gap > gapMs) {
+        return events.slice(0, i);
+      }
+    }
+    return events;
+  }
+  if (triggerReason === "event_count" && events.length > maxEventsWithoutEpisode) {
+    return events.slice(0, maxEventsWithoutEpisode);
+  }
+  return events;
+}
+
 // ---------------------------------------------------------------------------
 // Materialize episode from raw events
 // ---------------------------------------------------------------------------
@@ -88,11 +128,19 @@ export async function materializeEpisode(params: {
     }
 
     // 3. Call summarizer with ordered events
-    const summarizerInput = events.map((e) => ({
-      role: e.role,
-      body: e.body,
-      timestamp: e.timestamp,
-    }));
+    const summarizerInput = buildEpisodeSummarizerInput(
+      events.map((e) => ({
+        role: e.role,
+        body: e.body,
+        timestamp: e.timestamp,
+      })),
+    );
+    if (summarizerInput.length < 2) {
+      log.info(
+        `skipping episode materialization: only ${summarizerInput.length} conversational events in range for agent=${agentId}`,
+      );
+      return null;
+    }
     const { title, summary, tags } = await summarizer(summarizerInput);
 
     // 3b. Validate summarizer output
@@ -127,21 +175,30 @@ export async function materializeEpisode(params: {
     // 5. Idempotent upsert: filter on {agentId, type, timeRange.start, timeRange.end}
     //    episodeId goes in $setOnInsert so it is stable across re-materializations
     const col = episodesCollection(db, prefix);
-    await col.updateOne(
-      {
-        agentId,
-        type,
-        scope: resolvedScope,
-        scopeRef,
-        "timeRange.start": timeRange.start,
-        "timeRange.end": timeRange.end,
-      },
+    const identityFilter = {
+      agentId,
+      type,
+      scope: resolvedScope,
+      scopeRef,
+      "timeRange.start": timeRange.start,
+      "timeRange.end": timeRange.end,
+    };
+    const updateResult = await col.updateOne(
+      identityFilter,
       { $set: setDoc, $setOnInsert: { episodeId, createdAt: now } },
       { upsert: true },
     );
 
+    let persistedEpisodeId: string = episodeId;
+    if (updateResult.upsertedCount === 0) {
+      const existing = await col.findOne(identityFilter, { projection: { episodeId: 1 } });
+      if (typeof existing?.episodeId === "string" && existing.episodeId.trim()) {
+        persistedEpisodeId = existing.episodeId;
+      }
+    }
+
     const episode: Episode = {
-      episodeId,
+      episodeId: persistedEpisodeId,
       type,
       title,
       summary,
@@ -329,6 +386,7 @@ export async function checkAutoEpisodeTriggers(params: {
   agentId: string;
   summarizer: EpisodeSummarizer;
   scope?: MemoryScope;
+  scopeRef?: string;
   sessionGapMinutes?: number;
   maxEventsWithoutEpisode?: number;
   rateLimitMinutes?: number;
@@ -340,6 +398,7 @@ export async function checkAutoEpisodeTriggers(params: {
     agentId,
     summarizer,
     scope,
+    scopeRef,
     sessionGapMinutes = 30,
     maxEventsWithoutEpisode = 50,
     rateLimitMinutes = 60,
@@ -348,7 +407,14 @@ export async function checkAutoEpisodeTriggers(params: {
 
   try {
     // 1. Get unconsolidated events
-    const events = await getUnconsolidatedEvents({ db, prefix, agentId, scope, limit: 500 });
+    const events = await getUnconsolidatedEvents({
+      db,
+      prefix,
+      agentId,
+      scope,
+      scopeRef,
+      limit: 500,
+    });
 
     // Need at least 2 events for any episode
     if (events.length < 2) {
@@ -365,6 +431,8 @@ export async function checkAutoEpisodeTriggers(params: {
         agentId,
         start: rateLimitWindow,
         end: now,
+        ...(scope ? { scope } : {}),
+        ...(scopeRef ? { scopeRef } : {}),
       });
       if (recentEpisodes.length > 0) {
         return { triggered: false, reason: "rate_limited" };
@@ -398,9 +466,18 @@ export async function checkAutoEpisodeTriggers(params: {
     }
 
     // 4. Determine time range from unconsolidated events
+    const episodeEvents = resolveTriggeredEpisodeWindow({
+      events,
+      triggerReason,
+      sessionGapMinutes,
+      maxEventsWithoutEpisode,
+    });
+    if (episodeEvents.length < 2) {
+      return { triggered: false, reason: "insufficient_events" };
+    }
     const timeRange = {
-      start: events[0].timestamp,
-      end: events[events.length - 1].timestamp,
+      start: episodeEvents[0].timestamp,
+      end: episodeEvents[episodeEvents.length - 1].timestamp,
     };
 
     // 5. Materialize episode
@@ -411,6 +488,7 @@ export async function checkAutoEpisodeTriggers(params: {
       type: "thread", // auto-triggered episodes are "thread" type
       timeRange,
       scope,
+      scopeRef,
       summarizer,
     });
 
@@ -419,7 +497,7 @@ export async function checkAutoEpisodeTriggers(params: {
     }
 
     // 6. Mark events as consolidated
-    const eventIds = events.map((e) => e.eventId);
+    const eventIds = episodeEvents.map((e) => e.eventId);
     await markEventsConsolidated({ db, prefix, eventIds, episodeId: episode.episodeId });
 
     log.info(

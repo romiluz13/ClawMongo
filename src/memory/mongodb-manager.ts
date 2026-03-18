@@ -13,7 +13,7 @@ import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
 import { writeEvent, projectEventChunk, getEventsByTimeRange } from "./mongodb-events.js";
-import { findEntitiesByName, expandGraph } from "./mongodb-graph.js";
+import { findEntitiesByName, expandGraph, type Entity, type RelationType } from "./mongodb-graph.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
 import { recordIngestRun, getProjectionLag } from "./mongodb-ops.js";
@@ -1868,6 +1868,67 @@ export type V2SearchMetadata = {
   resultsByPath: Record<string, number>;
 };
 
+function graphRelationPriority(type: RelationType): number {
+  switch (type) {
+    case "works_on":
+    case "owns":
+    case "depends_on":
+    case "blocked_by":
+    case "decided":
+    case "reported_by":
+      return 4;
+    case "related_to":
+      return 3;
+    case "mentioned_with":
+    default:
+      return 1;
+  }
+}
+
+function entityMatchScore(entity: Entity, query: string): number {
+  const normalizedQuery = query.trim().toLowerCase();
+  const normalizedName = entity.name.trim().toLowerCase();
+  if (!normalizedQuery || !normalizedName) {
+    return 0;
+  }
+  if (normalizedQuery === normalizedName) {
+    return 10;
+  }
+  if (normalizedQuery.includes(normalizedName)) {
+    return 8;
+  }
+  if (normalizedName.includes(normalizedQuery)) {
+    return 6;
+  }
+  const aliasMatch = entity.aliases?.some((alias) => {
+    const normalizedAlias = alias.trim().toLowerCase();
+    return normalizedAlias === normalizedQuery || normalizedQuery.includes(normalizedAlias);
+  });
+  if (aliasMatch) {
+    return 7;
+  }
+  return 1;
+}
+
+function pickBestEntityMatch(candidates: Entity[], query: string): Entity | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+  return [...candidates].sort((a, b) => {
+    const scoreDiff = entityMatchScore(b, query) - entityMatchScore(a, query);
+    if (scoreDiff !== 0) {
+      return scoreDiff;
+    }
+    const recencyDiff =
+      (b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0) -
+      (a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0);
+    if (recencyDiff !== 0) {
+      return recencyDiff;
+    }
+    return a.name.localeCompare(b.name);
+  })[0] ?? null;
+}
+
 /**
  * Execute a v2 retrieval plan: call planRetrieval, execute top 3 paths, deduplicate results.
  * Each path has its own try/catch so one failure doesn't kill the whole search.
@@ -1962,19 +2023,27 @@ export async function searchV2(
           }
           case "graph": {
             if (context.knownEntityNames?.length) {
-              const entities = await findEntitiesByName({
-                db,
-                prefix,
-                query: context.knownEntityNames[0],
-                agentId,
-                scope: "agent",
-                scopeRef: agentScopeRef,
-              });
-              if (entities.length > 0) {
+              const candidateEntities = (
+                await Promise.all(
+                  context.knownEntityNames.slice(0, 3).map((name) =>
+                    findEntitiesByName({
+                      db,
+                      prefix,
+                      query: name,
+                      agentId,
+                      scope: "agent",
+                      scopeRef: agentScopeRef,
+                      limit: 5,
+                    }),
+                  ),
+                )
+              ).flat();
+              const entity = pickBestEntityMatch(candidateEntities, query);
+              if (entity) {
                 const graph = await expandGraph({
                   db,
                   prefix,
-                  entityId: entities[0].entityId,
+                  entityId: entity.entityId,
                   agentId,
                   scope: "agent",
                   scopeRef: agentScopeRef,
@@ -1985,8 +2054,15 @@ export async function searchV2(
                     filePath: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
                     startLine: 0,
                     endLine: 0,
-                    snippet: `${c.relation.type}: ${c.entity.name}`,
-                    score: 0.8 - i * 0.01,
+                    snippet: `${graph.rootEntity.name} ${c.relation.type} ${c.entity.name}`,
+                    score:
+                      Math.max(
+                        0.25,
+                        0.9 -
+                          c.depth * 0.08 -
+                          i * 0.02 -
+                          (4 - graphRelationPriority(c.relation.type)) * 0.05,
+                      ) + Math.min(c.relation.weight ?? 0, 0.15),
                     source: "conversation" as MemorySource,
                   }));
                 }

@@ -35,7 +35,7 @@ git commit -m "Add agent workspace"
 ## Daily bridge notes (optional)
 
 - Keep a short daily bridge note at memory/YYYY-MM-DD.md if you want human-authored notes (create memory/ if needed).
-- On session start, read today + yesterday if present.
+- Do not treat daily bridge notes as canonical runtime memory; use memory tools first for recall.
 - Keep durable runtime facts, preferences, and decisions in MongoDB via memory tools; avoid secrets in bridge notes.
 
 ## Heartbeats (optional)

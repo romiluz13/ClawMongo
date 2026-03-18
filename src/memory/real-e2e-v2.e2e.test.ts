@@ -49,6 +49,7 @@ import { planRetrieval } from "./mongodb-retrieval-planner.js";
 import { ensureCollections, ensureStandardIndexes, ensureSearchIndexes } from "./mongodb-schema.js";
 // Search functions (direct vector search, keyword search, hybrid)
 import { vectorSearch, keywordSearch, buildVectorSearchStage } from "./mongodb-search.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -829,6 +830,54 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       expect(episode).not.toBeNull();
     });
 
+    it("should keep the same episodeId when re-materializing the same scoped episode", async () => {
+      const sessionId = `episode-stable-${randomUUID().slice(0, 8)}`;
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "user",
+        body: "We decided to use a scoped episode stability test.",
+        scope: "session",
+        sessionId,
+      });
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "assistant",
+        body: "Captured the scoped episode stability decision.",
+        scope: "session",
+        sessionId,
+      });
+
+      const timeRange = {
+        start: new Date("2026-03-01"),
+        end: new Date("2026-03-31"),
+      };
+      const scopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId });
+      const first = await materializeEpisode({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        type: "thread",
+        timeRange,
+        scope: "session",
+        scopeRef,
+        summarizer: testSummarizer,
+      });
+      const second = await materializeEpisode({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        type: "thread",
+        timeRange,
+        scope: "session",
+        scopeRef,
+        summarizer: testSummarizer,
+      });
+
+      expect(first).not.toBeNull();
+      expect(second).not.toBeNull();
+      expect(second?.episodeId).toBe(first?.episodeId);
+    });
+
     it("should retrieve episodes by time range", async () => {
       const episodes = await getEpisodesByTimeRange({
         db,
@@ -966,6 +1015,74 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       console.log(`  Rate limit test: triggered=${result.triggered}, reason=${result.reason}`);
       // Either rate-limited or no events to consolidate — both are valid
       expect(result).toBeDefined();
+    });
+
+    it("should keep auto episode consolidation scoped to the requested session scopeRef", async () => {
+      const sessionA = `scope-a-${randomUUID().slice(0, 8)}`;
+      const sessionB = `scope-b-${randomUUID().slice(0, 8)}`;
+      const sessionAScopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId: sessionA });
+      const sessionBScopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId: sessionB });
+
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "user",
+        body: "Session A kickoff",
+        scope: "session",
+        sessionId: sessionA,
+      });
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "assistant",
+        body: "Session A response",
+        scope: "session",
+        sessionId: sessionA,
+      });
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "user",
+        body: "Session B kickoff",
+        scope: "session",
+        sessionId: sessionB,
+      });
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "assistant",
+        body: "Session B response",
+        scope: "session",
+        sessionId: sessionB,
+      });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: async (events) => ({
+          title: `Scoped auto episode ${events.length}`,
+          summary: "Scoped auto episode",
+          tags: ["scoped-auto"],
+        }),
+        scope: "session",
+        scopeRef: sessionAScopeRef,
+        force: true,
+      });
+
+      expect(result.triggered).toBe(true);
+      const remainingA = await getUnconsolidatedEvents({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        scope: "session",
+        scopeRef: sessionAScopeRef,
+      });
+      const remainingB = await getUnconsolidatedEvents({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        scope: "session",
+        scopeRef: sessionBScopeRef,
+      });
+      expect(remainingA).toHaveLength(0);
+      expect(remainingB.length).toBeGreaterThanOrEqual(2);
     });
   });
 

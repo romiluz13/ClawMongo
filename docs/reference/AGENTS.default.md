@@ -48,8 +48,9 @@ cp docs/reference/AGENTS.default.md ~/.openclaw/workspace/AGENTS.md
 
 ## Session start (required)
 
-- Read `SOUL.md`, `USER.md`, and today+yesterday in `memory/`.
-- Read `MEMORY.md` when present as bridge guidance; only fall back to lowercase `memory.md` when `MEMORY.md` is absent.
+- Read `SOUL.md` and `USER.md`.
+- Use `memory_search` for runtime recall before answering questions about prior work, decisions, dates, people, preferences, or todos.
+- Read `MEMORY.md` only as bridge guidance when it is directly relevant; only fall back to lowercase `memory.md` when `MEMORY.md` is absent.
 - Do it before responding.
 
 ## Soul (required)
@@ -65,11 +66,10 @@ cp docs/reference/AGENTS.default.md ~/.openclaw/workspace/AGENTS.md
 
 ## Memory system (recommended)
 
-- Daily bridge log: `memory/YYYY-MM-DD.md` (create `memory/` if needed).
+- Daily bridge log: `memory/YYYY-MM-DD.md` (create `memory/` if needed) only when you intentionally want human-authored bridge notes.
 - Bridge guidance: `MEMORY.md` for curated human-authored notes in main/private sessions.
 - Durable runtime memory: use MongoDB-backed memory tools such as `memory_write` when available.
 - Lowercase `memory.md` is legacy fallback only; do not keep both root files on purpose.
-- On session start, read today + yesterday + `MEMORY.md` when present, otherwise `memory.md`.
 - Capture: decisions, preferences, constraints, open loops.
 - Avoid secrets unless explicitly requested.
 

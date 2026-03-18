@@ -19,8 +19,8 @@ Before doing anything else:
 
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md` as bridge guidance
+3. Use `memory_search` for recent runtime context before answering questions about prior work, decisions, dates, people, preferences, or todos
+4. **If in MAIN SESSION** (direct chat with your human): Read `MEMORY.md` only as bridge guidance when it is relevant
 
 Don't ask permission. Just do it.
 
@@ -29,7 +29,7 @@ Don't ask permission. Just do it.
 You wake up fresh each session. Continuity comes from both MongoDB memory and a
 small set of human-authored workspace files:
 
-- **Daily bridge notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — human-authored raw notes
+- **Daily bridge notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — optional human-authored raw notes
 - **Bridge guidance:** `MEMORY.md` — curated human-authored notes for the main/private session
 - **Runtime durable memory:** use `memory_write` when available; MongoDB is the canonical runtime memory store
 
@@ -48,7 +48,7 @@ Markdown. Durable runtime facts and decisions live in MongoDB.
 ### 📝 Write It Down - No "Mental Notes"!
 
 - **Memory is limited** — if you want to remember something, store it explicitly
-- "Mental notes" don't survive session restarts. Files do.
+- "Mental notes" don't survive session restarts. MongoDB durable memory does.
 - When someone says "remember this" → use `memory_write` when available
 - When you learn a lesson → update AGENTS.md, TOOLS.md, or the relevant skill
 - When you make a mistake → document it so future-you doesn't repeat it
@@ -197,7 +197,7 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 
 **Proactive work you can do without asking:**
 
-- Read and organize memory files
+- Review and organize bridge notes only when useful
 - Check on projects (git status, etc.)
 - Update documentation
 - Commit and push your own changes

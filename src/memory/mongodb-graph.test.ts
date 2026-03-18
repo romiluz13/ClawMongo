@@ -462,6 +462,79 @@ describe("mongodb-graph", () => {
       expect(result!.connections.length).toBeLessThanOrEqual(5);
     });
 
+    it("orders connections by depth and relation quality before truncation", async () => {
+      const rootEntity = makeEntity();
+      const entities = [
+        makeEntity({ entityId: "ent-2", name: "RelatedDoc", type: "document" }),
+        makeEntity({ entityId: "ent-3", name: "ProjectX", type: "project" }),
+        makeEntity({ entityId: "ent-4", name: "DependencyY", type: "project" }),
+      ];
+
+      const entitiesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue(entities),
+        }),
+      });
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              fromEntityId: "ent-1",
+              toEntityId: "ent-2",
+              type: "mentioned_with",
+              weight: 0.2,
+              agentId: "agent-1",
+              scope: "agent",
+              updatedAt: new Date("2026-01-03"),
+              transitiveRelations: [],
+            },
+            {
+              fromEntityId: "ent-1",
+              toEntityId: "ent-3",
+              type: "works_on",
+              weight: 0.1,
+              agentId: "agent-1",
+              scope: "agent",
+              updatedAt: new Date("2026-01-02"),
+              transitiveRelations: [],
+            },
+            {
+              fromEntityId: "ent-1",
+              toEntityId: "ent-4",
+              type: "depends_on",
+              weight: 0.1,
+              agentId: "agent-1",
+              scope: "agent",
+              updatedAt: new Date("2026-01-01"),
+              transitiveRelations: [{ fromEntityId: "ent-3", toEntityId: "ent-4", type: "depends_on", depth: 0 }],
+            },
+          ]),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+        maxConnections: 2,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.connections).toHaveLength(2);
+      expect(result!.connections[0]?.entity.name).toBe("ProjectX");
+      expect(result!.connections[1]?.entity.name).toBe("DependencyY");
+    });
+
     it("deduplicates connections from forward and reverse traversal", async () => {
       const rootEntity = makeEntity();
       const connectedEntity = makeEntity({ entityId: "ent-2", name: "ProjectX", type: "project" });

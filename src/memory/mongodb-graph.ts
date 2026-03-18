@@ -65,6 +65,27 @@ export type GraphExpansionResult = {
   }>;
 };
 
+function relationPriority(type: RelationType): number {
+  switch (type) {
+    case "works_on":
+    case "owns":
+    case "depends_on":
+    case "blocked_by":
+    case "decided":
+    case "reported_by":
+      return 3;
+    case "related_to":
+      return 2;
+    case "mentioned_with":
+    default:
+      return 1;
+  }
+}
+
+function relationRecency(value: unknown): number {
+  return value instanceof Date ? value.getTime() : 0;
+}
+
 // ---------------------------------------------------------------------------
 // Upsert entity
 // ---------------------------------------------------------------------------
@@ -464,6 +485,25 @@ export async function expandGraph(params: {
       }
     }
 
+    connections.sort((a, b) => {
+      if (a.depth !== b.depth) {
+        return a.depth - b.depth;
+      }
+      const priorityDiff = relationPriority(b.relation.type) - relationPriority(a.relation.type);
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      const weightDiff = (b.relation.weight ?? 0) - (a.relation.weight ?? 0);
+      if (weightDiff !== 0) {
+        return weightDiff;
+      }
+      const recencyDiff = relationRecency(b.relation.updatedAt) - relationRecency(a.relation.updatedAt);
+      if (recencyDiff !== 0) {
+        return recencyDiff;
+      }
+      return a.entity.name.localeCompare(b.entity.name);
+    });
+
     // 7. Apply maxConnections limit
     const connectionLimit = maxConnections ?? 100;
     const limitedConnections = connections.slice(0, connectionLimit);
@@ -713,6 +753,7 @@ export async function extractAndUpsertEntities(params: {
               fromEntityId: extracted[i].entityId,
               toEntityId: extracted[j].entityId,
               type: "mentioned_with",
+              weight: 0.2,
               agentId,
               scope,
               scopeRef,
