@@ -71,6 +71,7 @@ export function guardSessionManager(
   const memoryWriteAgentId = opts?.agentId;
 
   const guard = installSessionToolResultGuard(sessionManager, {
+    sessionKey: opts?.sessionKey,
     transformMessageForPersistence: (message) =>
       applyInputProvenanceToUserMessage(message, opts?.inputProvenance),
     transformToolResultForPersistence: transform,

@@ -1,6 +1,10 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
+import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 
@@ -139,6 +143,40 @@ describe("installSessionToolResultGuard", () => {
     release();
     await flush;
     expect(flushed).toBe(true);
+  });
+
+  it("emits transcript updates with the session key when a session file exists", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-guard-events-"));
+    const sessionFile = path.join(dir, "session.jsonl");
+    const updates: Array<{ sessionFile: string; sessionKey?: string; message?: AgentMessage }> = [];
+    const cleanup = onSessionTranscriptUpdate((update) => {
+      updates.push(update);
+    });
+
+    try {
+      const sm = SessionManager.open(sessionFile);
+      installSessionToolResultGuard(sm, {
+        sessionKey: "agent:main:test",
+      });
+
+      sm.appendMessage(
+        asAppendMessage({
+          role: "assistant",
+          content: [{ type: "text", text: "hello" }],
+          stopReason: "stop",
+        }),
+      );
+
+      expect(updates).toHaveLength(1);
+      expect(updates[0]).toMatchObject({
+        sessionFile,
+        sessionKey: "agent:main:test",
+      });
+      expect(updates[0]?.message?.role).toBe("assistant");
+    } finally {
+      cleanup();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("clears pending tool calls without inserting synthetic tool results", () => {
