@@ -1,6 +1,11 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { OpenClawConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import {
+  extractLeadingHttpStatus,
+  formatRawAssistantErrorForUi,
+  isCloudflareOrHtmlErrorPage,
+} from "../../shared/assistant-error-format.js";
 import { formatSandboxToolPolicyBlockedMessage } from "../sandbox.js";
 import { stableStringify } from "../stable-stringify.js";
 import {
@@ -23,6 +28,12 @@ export {
   isRateLimitErrorMessage,
   isTimeoutErrorMessage,
 } from "./failover-matches.js";
+export {
+  extractLeadingHttpStatus,
+  formatRawAssistantErrorForUi,
+  isCloudflareOrHtmlErrorPage,
+  parseApiErrorInfo,
+} from "../../shared/assistant-error-format.js";
 
 const log = createSubsystemLogger("errors");
 
@@ -221,9 +232,6 @@ const ERROR_PREFIX_RE =
 const CONTEXT_OVERFLOW_ERROR_HEAD_RE =
   /^(?:context overflow:|request_too_large\b|request size exceeds\b|request exceeds the maximum size\b|context length exceeded\b|maximum context length\b|prompt is too long\b|exceeds model context window\b)/i;
 const HTTP_STATUS_PREFIX_RE = /^(?:http\s*)?(\d{3})\s+(.+)$/i;
-const HTTP_STATUS_CODE_PREFIX_RE = /^(?:http\s*)?(\d{3})(?:\s+([\s\S]+))?$/i;
-const HTML_ERROR_PREFIX_RE = /^\s*(?:<!doctype\s+html\b|<html\b)/i;
-const CLOUDFLARE_HTML_ERROR_CODES = new Set([521, 522, 523, 524, 525, 526, 530]);
 const TRANSIENT_HTTP_ERROR_CODES = new Set([499, 500, 502, 503, 504, 521, 522, 523, 524, 529]);
 const HTTP_ERROR_HINTS = [
   "error",
@@ -346,38 +354,6 @@ function classifyFailoverReasonFrom402Text(raw: string): PaymentRequiredFailover
     return null;
   }
   return classify402Message(raw);
-}
-
-function extractLeadingHttpStatus(raw: string): { code: number; rest: string } | null {
-  const match = raw.match(HTTP_STATUS_CODE_PREFIX_RE);
-  if (!match) {
-    return null;
-  }
-  const code = Number(match[1]);
-  if (!Number.isFinite(code)) {
-    return null;
-  }
-  return { code, rest: (match[2] ?? "").trim() };
-}
-
-export function isCloudflareOrHtmlErrorPage(raw: string): boolean {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return false;
-  }
-
-  const status = extractLeadingHttpStatus(trimmed);
-  if (!status || status.code < 500) {
-    return false;
-  }
-
-  if (CLOUDFLARE_HTML_ERROR_CODES.has(status.code)) {
-    return true;
-  }
-
-  return (
-    status.code < 600 && HTML_ERROR_PREFIX_RE.test(status.rest) && /<\/html>/i.test(status.rest)
-  );
 }
 
 export function isTransientHttpError(raw: string): boolean {
@@ -578,99 +554,6 @@ export function getApiErrorPayloadFingerprint(raw?: string): string | null {
 
 export function isRawApiErrorPayload(raw?: string): boolean {
   return getApiErrorPayloadFingerprint(raw) !== null;
-}
-
-export type ApiErrorInfo = {
-  httpCode?: string;
-  type?: string;
-  message?: string;
-  requestId?: string;
-};
-
-export function parseApiErrorInfo(raw?: string): ApiErrorInfo | null {
-  if (!raw) {
-    return null;
-  }
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  let httpCode: string | undefined;
-  let candidate = trimmed;
-
-  const httpPrefixMatch = candidate.match(/^(\d{3})\s+(.+)$/s);
-  if (httpPrefixMatch) {
-    httpCode = httpPrefixMatch[1];
-    candidate = httpPrefixMatch[2].trim();
-  }
-
-  const payload = parseApiErrorPayload(candidate);
-  if (!payload) {
-    return null;
-  }
-
-  const requestId =
-    typeof payload.request_id === "string"
-      ? payload.request_id
-      : typeof payload.requestId === "string"
-        ? payload.requestId
-        : undefined;
-
-  const topType = typeof payload.type === "string" ? payload.type : undefined;
-  const topMessage = typeof payload.message === "string" ? payload.message : undefined;
-
-  let errType: string | undefined;
-  let errMessage: string | undefined;
-  if (payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)) {
-    const err = payload.error as Record<string, unknown>;
-    if (typeof err.type === "string") {
-      errType = err.type;
-    }
-    if (typeof err.code === "string" && !errType) {
-      errType = err.code;
-    }
-    if (typeof err.message === "string") {
-      errMessage = err.message;
-    }
-  }
-
-  return {
-    httpCode,
-    type: errType ?? topType,
-    message: errMessage ?? topMessage,
-    requestId,
-  };
-}
-
-export function formatRawAssistantErrorForUi(raw?: string): string {
-  const trimmed = (raw ?? "").trim();
-  if (!trimmed) {
-    return "LLM request failed with an unknown error.";
-  }
-
-  const leadingStatus = extractLeadingHttpStatus(trimmed);
-  if (leadingStatus && isCloudflareOrHtmlErrorPage(trimmed)) {
-    return `The AI service is temporarily unavailable (HTTP ${leadingStatus.code}). Please try again in a moment.`;
-  }
-
-  const httpMatch = trimmed.match(HTTP_STATUS_PREFIX_RE);
-  if (httpMatch) {
-    const rest = httpMatch[2].trim();
-    if (!rest.startsWith("{")) {
-      return `HTTP ${httpMatch[1]}: ${rest}`;
-    }
-  }
-
-  const info = parseApiErrorInfo(trimmed);
-  if (info?.message) {
-    const prefix = info.httpCode ? `HTTP ${info.httpCode}` : "LLM error";
-    const type = info.type ? ` ${info.type}` : "";
-    const requestId = info.requestId ? ` (request_id: ${info.requestId})` : "";
-    return `${prefix}${type}: ${info.message}${requestId}`;
-  }
-
-  return trimmed.length > 600 ? `${trimmed.slice(0, 600)}…` : trimmed;
 }
 
 export function formatAssistantErrorText(
