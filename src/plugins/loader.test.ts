@@ -1619,6 +1619,35 @@ module.exports = { id: "skipped-scoped-only", register() { throw new Error("skip
     ).toBe(true);
   });
 
+  it("throws when strict plugin loading sees plugin errors", () => {
+    useNoBundledPlugins();
+    const plugin = writePlugin({
+      id: "configurable",
+      filename: "configurable.cjs",
+      body: `module.exports = { id: "configurable", register() {} };`,
+    });
+
+    expect(() =>
+      loadOpenClawPlugins({
+        cache: false,
+        throwOnLoadError: true,
+        config: {
+          plugins: {
+            enabled: true,
+            load: { paths: [plugin.file] },
+            allow: ["configurable"],
+            entries: {
+              configurable: {
+                enabled: true,
+                config: "nope" as unknown as Record<string, unknown>,
+              },
+            },
+          },
+        },
+      }),
+    ).toThrow("plugin load failed: configurable: invalid config: <root>: must be object");
+  });
+
   it("handles single-plugin channel, context engine, and cli validation", () => {
     useNoBundledPlugins();
     const scenarios = [
