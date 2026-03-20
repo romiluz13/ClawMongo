@@ -1,5 +1,10 @@
-type SessionTranscriptUpdate = {
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+
+export type SessionTranscriptUpdate = {
   sessionFile: string;
+  sessionKey?: string;
+  message?: AgentMessage;
+  messageId?: string;
 };
 
 type SessionTranscriptListener = (update: SessionTranscriptUpdate) => void;
@@ -13,15 +18,24 @@ export function onSessionTranscriptUpdate(listener: SessionTranscriptListener): 
   };
 }
 
-export function emitSessionTranscriptUpdate(sessionFile: string): void {
-  const trimmed = sessionFile.trim();
+export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUpdate): void {
+  const normalized =
+    typeof update === "string"
+      ? { sessionFile: update }
+      : {
+          sessionFile: update.sessionFile,
+          sessionKey: update.sessionKey,
+          message: update.message,
+          messageId: update.messageId,
+        };
+  const trimmed = normalized.sessionFile.trim();
   if (!trimmed) {
     return;
   }
-  const update = { sessionFile: trimmed };
+  const nextUpdate = { ...normalized, sessionFile: trimmed };
   for (const listener of SESSION_TRANSCRIPT_LISTENERS) {
     try {
-      listener(update);
+      listener(nextUpdate);
     } catch {
       /* ignore */
     }

@@ -1,6 +1,7 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { guardSessionManager } from "../../agents/session-tool-result-guard-wrapper.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 
 type AppendMessageArg = Parameters<SessionManager["appendMessage"]>[0];
 
@@ -80,6 +81,12 @@ export function appendInjectedAssistantMessageToTranscript(params: {
     });
     const messageId = sessionManager.appendMessage(messageBody);
     void sessionManager.flushPendingPersistedWrites?.();
+    emitSessionTranscriptUpdate({
+      sessionFile: params.transcriptPath,
+      sessionKey: params.sessionKey,
+      message: messageBody,
+      messageId,
+    });
     return { ok: true, messageId, message: messageBody };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

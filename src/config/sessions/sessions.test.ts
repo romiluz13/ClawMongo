@@ -379,6 +379,7 @@ describe("appendAssistantMessageToSessionTranscript", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
+      expect(result.messageId).toBeTruthy();
       expect(fs.existsSync(result.sessionFile)).toBe(true);
       const sessionFileMode = fs.statSync(result.sessionFile).mode & 0o777;
       if (process.platform !== "win32") {
@@ -403,18 +404,24 @@ describe("appendAssistantMessageToSessionTranscript", () => {
   it("does not append a duplicate delivery mirror for the same idempotency key", async () => {
     writeTranscriptStore();
 
-    await appendAssistantMessageToSessionTranscript({
+    const first = await appendAssistantMessageToSessionTranscript({
       sessionKey,
       text: "Hello from delivery mirror!",
       idempotencyKey: "mirror:test-source-message",
       storePath: fixture.storePath(),
     });
-    await appendAssistantMessageToSessionTranscript({
+    const second = await appendAssistantMessageToSessionTranscript({
       sessionKey,
       text: "Hello from delivery mirror!",
       idempotencyKey: "mirror:test-source-message",
       storePath: fixture.storePath(),
     });
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      expect(second.messageId).toBe(first.messageId);
+    }
 
     const sessionFile = resolveSessionTranscriptPathInDir(sessionId, fixture.sessionsDir());
     const lines = fs.readFileSync(sessionFile, "utf-8").trim().split("\n");

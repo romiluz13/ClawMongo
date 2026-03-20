@@ -20,6 +20,25 @@ describe("transcript events", () => {
     expect(listener).toHaveBeenCalledWith({ sessionFile: "/tmp/session.jsonl" });
   });
 
+  it("preserves optional metadata on richer transcript updates", () => {
+    const listener = vi.fn();
+    cleanup.push(onSessionTranscriptUpdate(listener));
+
+    emitSessionTranscriptUpdate({
+      sessionFile: "  /tmp/session.jsonl  ",
+      sessionKey: "agent:main:test",
+      messageId: "msg-1",
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith({
+      sessionFile: "/tmp/session.jsonl",
+      sessionKey: "agent:main:test",
+      messageId: "msg-1",
+      message: undefined,
+    });
+  });
+
   it("continues notifying other listeners when one throws", () => {
     const first = vi.fn(() => {
       throw new Error("boom");
