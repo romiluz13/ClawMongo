@@ -346,10 +346,12 @@ function createDefaultEmbeddedSession(params?: {
 function createContextEngineBootstrapAndAssemble() {
   return {
     bootstrap: vi.fn(async (_params: { sessionKey?: string }) => ({ bootstrapped: true })),
-    assemble: vi.fn(async ({ messages }: { messages: AgentMessage[]; sessionKey?: string }) => ({
-      messages,
-      estimatedTokens: 1,
-    })),
+    assemble: vi.fn(
+      async ({ messages }: { messages: AgentMessage[]; sessionKey?: string; model?: string }) => ({
+        messages,
+        estimatedTokens: 1,
+      }),
+    ),
   };
 }
 
@@ -376,6 +378,14 @@ const cacheTtlEligibleModel = {
   contextWindow: 8192,
   input: ["text"],
 } as unknown as Model<Api>;
+
+const testAuthStorage = {
+  getApiKey: vi.fn(async () => "test-api-key"),
+} as unknown as AuthStorage;
+
+const testModelRegistry = {
+  getApiKey: vi.fn(() => "test-api-key"),
+} as unknown as ModelRegistry;
 
 describe("runEmbeddedAttempt sessions_spawn workspace inheritance", () => {
   const tempPaths: string[] = [];
@@ -446,8 +456,8 @@ describe("runEmbeddedAttempt sessions_spawn workspace inheritance", () => {
       provider: "openai",
       modelId: "gpt-test",
       model: testModel,
-      authStorage: {} as AuthStorage,
-      modelRegistry: {} as ModelRegistry,
+      authStorage: testAuthStorage,
+      modelRegistry: testModelRegistry,
       thinkLevel: "off",
       senderIsOwner: true,
       disableMessageTool: true,
@@ -541,8 +551,8 @@ describe("runEmbeddedAttempt bootstrap warning prompt assembly", () => {
       provider: "openai",
       modelId: "gpt-test",
       model: testModel,
-      authStorage: {} as AuthStorage,
-      modelRegistry: {} as ModelRegistry,
+      authStorage: testAuthStorage,
+      modelRegistry: testModelRegistry,
       thinkLevel: "off",
       senderIsOwner: true,
       disableMessageTool: true,
@@ -604,8 +614,8 @@ describe("runEmbeddedAttempt cache-ttl tracking after compaction", () => {
       provider: "anthropic",
       modelId: "claude-sonnet-4-20250514",
       model: cacheTtlEligibleModel,
-      authStorage: {} as AuthStorage,
-      modelRegistry: {} as ModelRegistry,
+      authStorage: testAuthStorage,
+      modelRegistry: testModelRegistry,
       thinkLevel: "off",
       senderIsOwner: true,
       disableMessageTool: true,
@@ -677,6 +687,7 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
       sessionKey?: string;
       messages: AgentMessage[];
       tokenBudget?: number;
+      model?: string;
     }) => Promise<AssembleResult>;
     afterTurn?: (params: {
       sessionId: string;
@@ -738,8 +749,8 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
       provider: "openai",
       modelId: "gpt-test",
       model: testModel,
-      authStorage: {} as AuthStorage,
-      modelRegistry: {} as ModelRegistry,
+      authStorage: testAuthStorage,
+      modelRegistry: testModelRegistry,
       thinkLevel: "off",
       senderIsOwner: true,
       disableMessageTool: true,
@@ -781,6 +792,11 @@ describe("runEmbeddedAttempt context engine sessionKey forwarding", () => {
     expectCalledWithSessionKey(bootstrap, sessionKey);
     expectCalledWithSessionKey(assemble, sessionKey);
     expectCalledWithSessionKey(afterTurn, sessionKey);
+    expect(assemble).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-test",
+      }),
+    );
   });
 
   it("forwards sessionKey to ingestBatch when afterTurn is absent", async () => {

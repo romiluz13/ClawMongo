@@ -75,6 +75,7 @@ class MockContextEngine implements ContextEngine {
     sessionKey?: string;
     messages: AgentMessage[];
     tokenBudget?: number;
+    model?: string;
   }): Promise<AssembleResult> {
     return {
       messages: params.messages,
@@ -142,6 +143,7 @@ class LegacySessionKeyStrictEngine implements ContextEngine {
     sessionKey?: string;
     messages: AgentMessage[];
     tokenBudget?: number;
+    model?: string;
   }): Promise<AssembleResult> {
     this.assembleCalls.push({ ...params });
     this.rejectSessionKey(params);
@@ -195,6 +197,7 @@ class SessionKeyRuntimeErrorEngine implements ContextEngine {
     sessionKey?: string;
     messages: AgentMessage[];
     tokenBudget?: number;
+    model?: string;
   }): Promise<AssembleResult> {
     this.assembleCalls += 1;
     throw new Error(this.errorMessage);

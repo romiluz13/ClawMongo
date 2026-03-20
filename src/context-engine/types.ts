@@ -131,6 +131,8 @@ export interface ContextEngine {
     sessionKey?: string;
     messages: AgentMessage[];
     tokenBudget?: number;
+    /** Current model identifier so context engines can adapt per-model formatting. */
+    model?: string;
   }): Promise<AssembleResult>;
 
   /**
