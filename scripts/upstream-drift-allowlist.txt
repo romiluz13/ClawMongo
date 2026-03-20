@@ -73,6 +73,9 @@ src/channels/plugins/setup-registry.ts
 src/cli/
 src/commands/
 src/config/
+src/context-engine/context-engine.test.ts
+src/context-engine/legacy.ts
+src/context-engine/types.ts
 src/docker/
 src/gateway/
 src/infra/openclaw-root.ts
@@ -94,8 +97,10 @@ src/plugins/provider-wizard.ts
 src/plugins/runtime/
 src/sessions/transcript-events.test.ts
 src/sessions/transcript-events.ts
+src/shared/assistant-error-format.ts
 src/utils/message-channel.ts
 src/wizard/setup.test.ts
+src/tui/tui-formatters.ts
 tsdown.config.ts
 src/version.ts
 src/version.test.ts
