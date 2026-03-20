@@ -19,6 +19,7 @@ import {
   relevanceRegressionsCollection,
   eventsCollection,
   entitiesCollection,
+  entityLinksCollection,
   relationsCollection,
   episodesCollection,
   ingestRunsCollection,
@@ -148,6 +149,12 @@ describe("collection helpers", () => {
     expect(db.collection).toHaveBeenCalledWith("oc_relations");
   });
 
+  it("entityLinksCollection returns prefixed collection", () => {
+    const db = mockDb();
+    entityLinksCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_entity_links");
+  });
+
   it("episodesCollection returns prefixed collection", () => {
     const db = mockDb();
     episodesCollection(db, "oc_");
@@ -206,15 +213,16 @@ describe("schema constants", () => {
     expect(sourceTypeEnum).not.toContain("text");
   });
 
-  it("VALIDATED_COLLECTIONS includes all 6 new v2 collection schemas", async () => {
+  it("VALIDATED_COLLECTIONS includes all 7 new v2 collection schemas", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
     const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
-    // All 6 v2 collections should be created with validators
+    // All v2 collections should be created with validators.
     for (const name of [
       "events",
       "entities",
       "relations",
+      "entity_links",
       "episodes",
       "ingest_runs",
       "projection_runs",
@@ -262,10 +270,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 16 collections when none exist", async () => {
+  it("creates all 18 collections when none exist", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(16);
+    expect(db.createCollection).toHaveBeenCalledTimes(18);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -304,7 +312,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(14);
+    expect(db.createCollection).toHaveBeenCalledTimes(16);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -339,12 +347,14 @@ describe("ensureCollections", () => {
       "oc_knowledge_base",
       "oc_kb_chunks",
       "oc_structured_mem",
+      "oc_structured_mem_revisions",
       "oc_relevance_runs",
       "oc_relevance_artifacts",
       "oc_relevance_regressions",
       "oc_events",
       "oc_entities",
       "oc_relations",
+      "oc_entity_links",
       "oc_episodes",
       "oc_ingest_runs",
       "oc_projection_runs",
@@ -378,6 +388,9 @@ describe("ensureStandardIndexes", () => {
     const structured = db.collection("test_structured_mem") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
+    const structuredRevisions = db.collection("test_structured_mem_revisions") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
     const relevanceRuns = db.collection("test_relevance_runs") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
@@ -388,15 +401,16 @@ describe("ensureStandardIndexes", () => {
       createIndex: ReturnType<typeof vi.fn>;
     };
 
-    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 6 structured (5+1 v2 scope) + 3 relevance_runs +
-    // 2 relevance_artifacts + 2 relevance_regressions + 6 events (5+1 consolidated) + 3 entities + 3 relations +
-    // 3 episodes + 1 ingest_runs + 1 projection_runs = 44
-    expect(count).toBe(44);
+    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 6 structured + 1 structured revisions +
+    // 3 relevance_runs + 2 relevance_artifacts + 2 relevance_regressions + 6 events + 3 entities +
+    // 3 relations + 2 entity links + 3 episodes + 1 ingest_runs + 1 projection_runs = 47
+    expect(count).toBe(47);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
     expect(kbChunks.createIndex).toHaveBeenCalledTimes(3);
     expect(structured.createIndex).toHaveBeenCalledTimes(6);
+    expect(structuredRevisions.createIndex).toHaveBeenCalledTimes(1);
     expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
     expect(relevanceArtifacts.createIndex).toHaveBeenCalledTimes(2);
     expect(relevanceRegressions.createIndex).toHaveBeenCalledTimes(2);
@@ -411,6 +425,9 @@ describe("ensureStandardIndexes", () => {
     const relations = db.collection("test_relations") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
+    const entityLinks = db.collection("test_entity_links") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
     const episodes = db.collection("test_episodes") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
@@ -423,6 +440,7 @@ describe("ensureStandardIndexes", () => {
     expect(events.createIndex).toHaveBeenCalledTimes(6);
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
     expect(relations.createIndex).toHaveBeenCalledTimes(3);
+    expect(entityLinks.createIndex).toHaveBeenCalledTimes(2);
     expect(episodes.createIndex).toHaveBeenCalledTimes(3);
     expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1);
     expect(projectionRuns.createIndex).toHaveBeenCalledTimes(1);
@@ -564,8 +582,9 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 26 (v1) + 6 events (5+1 consolidated) + 3 entities + 3 relations + 3 episodes + 1 ingest_runs + 1 projection_runs + 1 structured scope = 44
-    expect(count).toBe(44);
+    // 26 (v1) + 6 events + 3 entities + 3 relations + 2 entity links + 3 episodes +
+    // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions = 47
+    expect(count).toBe(47);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -692,8 +711,9 @@ describe("ensureSearchIndexes", () => {
     );
     const vectorFields = (vectorCall![0] as Document).definition.fields;
     const filterFields = vectorFields.filter((f: Document) => f.type === "filter");
-    expect(filterFields).toHaveLength(2);
-    expect(filterFields.map((f: Document) => f.path).toSorted()).toEqual(["path", "source"]);
+    const filterPaths = filterFields.map((f: Document) => f.path);
+    expect(filterPaths).toContain("path");
+    expect(filterPaths).toContain("source");
   });
 
   it("handles 'already exists' errors gracefully", async () => {
@@ -706,6 +726,29 @@ describe("ensureSearchIndexes", () => {
     const result = await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
     // Both should be true because "already exists" means the index is there
     expect(result).toEqual({ text: true, vector: true });
+  });
+
+  it("fails fast when Search Index Management is unavailable", async () => {
+    const db = mockDb();
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const kbChunks = db.collection("test_kb_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const structured = db.collection("test_structured_mem") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    chunks.createSearchIndex.mockRejectedValue(
+      new Error("Error connecting to Search Index Management service."),
+    );
+
+    const result = await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    expect(result).toEqual({ text: false, vector: false });
+    expect(chunks.createSearchIndex).toHaveBeenCalledTimes(1);
+    expect(kbChunks.createSearchIndex).not.toHaveBeenCalled();
+    expect(structured.createSearchIndex).not.toHaveBeenCalled();
   });
 });
 
@@ -822,6 +865,25 @@ describe("EPISODES_SCHEMA enum completeness", () => {
 });
 
 describe("detectCapabilities", () => {
+  it("detects fusion stages from buildInfo version when available", async () => {
+    const db = {
+      admin: vi.fn(() => ({
+        command: vi.fn(async () => ({ versionArray: [8, 2, 0, 0] })),
+      })),
+      collection: vi.fn(() => ({
+        listSearchIndexes: vi.fn(() => ({
+          toArray: vi.fn(async () => []),
+        })),
+      })),
+    } as unknown as Db;
+
+    const caps = await detectCapabilities(db, "test_chunks");
+    expect(caps.rankFusion).toBe(true);
+    expect(caps.scoreFusion).toBe(true);
+    expect(caps.vectorSearch).toBe(true);
+    expect(caps.textSearch).toBe(true);
+  });
+
   it("detects no capabilities when everything fails", async () => {
     const db = {
       collection: vi.fn(() => ({

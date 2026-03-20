@@ -15,6 +15,8 @@ The mental model is simple:
 
 - Workspace Markdown remains the human-authored heart and bridge surface.
 - MongoDB is the only live retrieval and durable system-memory backend.
+- Canonical runtime truth is event-first.
+- Chunks, graph entities, relations, episodes, summaries, and embeddings are derived products.
 - The agent uses four memory tools: `memory_search`, `memory_get`, `kb_search`,
   and `memory_write`.
 
@@ -52,10 +54,12 @@ ClawMongo keeps one source of truth per kind of data:
   - workspace identity/policy files
   - informal scratch notes and daily logs
 - MongoDB owns:
-  - synchronized Markdown chunks used for recall
-  - synchronized session chunks
+  - canonical conversation and runtime events
+  - derived synchronized Markdown chunks used for recall
+  - derived synchronized session chunks
   - imported KB documents and KB chunks
   - structured memory records written by `memory_write`
+  - derived graph entities, relations, episodes, and future summary references
   - retrieval diagnostics and relevance telemetry
 
 Do not treat MongoDB exports back to Markdown as canonical records. They are
@@ -66,13 +70,15 @@ projections for readability only.
 ClawMongo exposes four memory tools:
 
 - `memory_search`
-  - Primary recall tool.
-  - Searches across memory chunks, session chunks, KB chunks, and structured memory.
+  - Primary runtime recall entrypoint.
+  - Searches across active MongoDB-backed recall sources.
+  - May include KB-backed snippets when those sources are enabled, but it should be treated as memory-first recall.
 - `kb_search`
-  - Scoped search for imported docs and reference material.
+  - Dedicated search for imported docs and reference material.
+  - Use when the target is documentation, FAQs, architecture specs, or other explicit reference content.
 - `memory_get`
   - Exact read by locator.
-  - Supports Markdown memory files, KB documents, and structured memory records.
+  - Supports MongoDB-backed locators returned by recall tools.
 - `memory_write`
   - Durable structured writes for facts, decisions, preferences, todos, people,
     projects, and architecture notes.
@@ -131,6 +137,13 @@ in your `mongot` deployment.
 ## Search behavior
 
 ClawMongo searches only from MongoDB at runtime.
+
+The runtime contract is:
+
+1. `memory_search` is the main runtime recall entrypoint.
+2. `kb_search` is the dedicated reference retrieval path.
+3. `memory_get` reopens the exact MongoDB-backed locator you already found.
+4. `memory_write` stores durable structured runtime knowledge.
 
 The backend tries the best available path for the supported deployment:
 

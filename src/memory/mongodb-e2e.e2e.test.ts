@@ -20,7 +20,15 @@ import { getMemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { materializeEpisode, searchEpisodes } from "./mongodb-episodes.js";
 import { writeEvent, projectChunksFromEvents } from "./mongodb-events.js";
-import { upsertEntity, upsertRelation, expandGraph } from "./mongodb-graph.js";
+import {
+  upsertEntity,
+  upsertRelation,
+  upsertEntityLink,
+  setEntityLinkStatus,
+  getEntityLinks,
+  expandGraph,
+} from "./mongodb-graph.js";
+import { getV2Status } from "./mongodb-manager.js";
 import { backfillEventsFromChunks } from "./mongodb-migration.js";
 import { planRetrieval, type RetrievalPath } from "./mongodb-retrieval-planner.js";
 import {
@@ -30,9 +38,11 @@ import {
   metaCollection,
   eventsCollection,
   entitiesCollection,
+  entityLinksCollection,
   relationsCollection,
   episodesCollection,
   structuredMemCollection,
+  structuredMemRevisionsCollection,
   ensureCollections,
   ensureStandardIndexes,
   ensureSearchIndexes,
@@ -58,17 +68,19 @@ const EXPECTED_COLLECTION_SUFFIXES = [
   "knowledge_base",
   "kb_chunks",
   "structured_mem",
+  "structured_mem_revisions",
   "relevance_runs",
   "relevance_artifacts",
   "relevance_regressions",
   "events",
   "entities",
   "relations",
+  "entity_links",
   "episodes",
   "ingest_runs",
   "projection_runs",
 ] as const;
-const EXPECTED_STANDARD_INDEX_COUNT = 44;
+const EXPECTED_STANDARD_INDEX_COUNT = 47;
 
 let client: MongoClient;
 let db: Db;
@@ -149,6 +161,51 @@ describe("E2E: MongoDB Collections and Indexes", () => {
     expect(count).toBe(EXPECTED_COLLECTION_SUFFIXES.length);
   });
 
+  it("refreshes validators on existing collections when the schema changes", async () => {
+    const legacyPrefix = `legacy_${randomUUID().slice(0, 8)}_`;
+    await db.createCollection(`${legacyPrefix}projection_runs`, {
+      validator: {
+        $jsonSchema: {
+          bsonType: "object",
+          required: [
+            "runId",
+            "agentId",
+            "projectionType",
+            "status",
+            "itemsProjected",
+            "durationMs",
+            "ts",
+          ],
+          properties: {
+            runId: { bsonType: "string" },
+            agentId: { bsonType: "string" },
+            projectionType: { enum: ["chunk", "graph", "episode"] },
+            status: { enum: ["ok", "partial", "failed"] },
+            itemsProjected: { bsonType: "number" },
+            durationMs: { bsonType: "number" },
+            ts: { bsonType: "date" },
+          },
+        },
+      },
+      validationLevel: "moderate",
+      validationAction: "error",
+    });
+
+    await ensureCollections(db, legacyPrefix);
+
+    await expect(
+      db.collection(`${legacyPrefix}projection_runs`).insertOne({
+        runId: "new-shape",
+        agentId: "agent-test",
+        projectionType: "chunks",
+        status: "ok",
+        itemsProjected: 1,
+        durationMs: 1,
+        ts: new Date(),
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it("creates standard indexes", async () => {
     await ensureCollections(db, TEST_PREFIX);
     const applied = await ensureStandardIndexes(db, TEST_PREFIX);
@@ -204,7 +261,7 @@ describe("E2E: MongoDB Collections and Indexes", () => {
 
 describe("E2E: Capability Detection", () => {
   it("matches the live deployment's actual search capabilities", async () => {
-    const caps = await detectCapabilities(db);
+    const caps = await detectCapabilities(db, `${TEST_PREFIX}chunks`);
 
     // MongoDB 8.2 recognizes $rankFusion and $scoreFusion as valid stages
     expect(caps.rankFusion).toBe(true);
@@ -581,7 +638,7 @@ describe("E2E: mongoSearch dispatcher fallback", () => {
 
   it("returns empty for queries with no matches", async () => {
     const col = chunksCollection(db, TEST_PREFIX);
-    const caps = await detectCapabilities(db);
+    const caps = await detectCapabilities(db, `${TEST_PREFIX}chunks`);
 
     const results = await mongoSearchFn(col, "xyznonexistent12345", null, {
       maxResults: 5,
@@ -600,7 +657,7 @@ describe("E2E: mongoSearch dispatcher fallback", () => {
 
   it("respects maxResults limit", async () => {
     const col = chunksCollection(db, TEST_PREFIX);
-    const caps = await detectCapabilities(db);
+    const caps = await detectCapabilities(db, `${TEST_PREFIX}chunks`);
 
     const results = await mongoSearchFn(col, "data", null, {
       maxResults: 1,
@@ -1129,6 +1186,7 @@ describe("E2E v2: structured memory with scope", () => {
 
   beforeAll(async () => {
     await structuredMemCollection(db, TEST_PREFIX).deleteMany({});
+    await structuredMemRevisionsCollection(db, TEST_PREFIX).deleteMany({});
   });
 
   it("writes structured entries with different scopes", async () => {
@@ -1172,6 +1230,60 @@ describe("E2E v2: structured memory with scope", () => {
     const allScoped = await col.find({ agentId }).toArray();
     expect(allScoped.length).toBe(2);
   });
+
+  it("preserves superseded structured values in the revisions collection", async () => {
+    await writeStructuredMemory({
+      db,
+      prefix: TEST_PREFIX,
+      entry: {
+        type: "decision",
+        key: "database",
+        value: "Use Postgres",
+        agentId,
+        scope: "agent",
+      },
+      embeddingMode: "automated",
+      client,
+    });
+
+    await writeStructuredMemory({
+      db,
+      prefix: TEST_PREFIX,
+      entry: {
+        type: "decision",
+        key: "database",
+        value: "Use MongoDB",
+        agentId,
+        scope: "agent",
+      },
+      embeddingMode: "automated",
+      client,
+    });
+
+    const current = await structuredMemCollection(db, TEST_PREFIX).findOne({
+      agentId,
+      scope: "agent",
+      scopeRef: `agent:${agentId}`,
+      type: "decision",
+      key: "database",
+    });
+    const revisions = await structuredMemRevisionsCollection(db, TEST_PREFIX)
+      .find({
+        agentId,
+        scope: "agent",
+        scopeRef: `agent:${agentId}`,
+        type: "decision",
+        key: "database",
+      })
+      .toArray();
+
+    expect(current?.value).toBe("Use MongoDB");
+    expect(current?.revision).toBe(2);
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]?.value).toBe("Use Postgres");
+    expect(revisions[0]?.revision).toBe(1);
+    expect(revisions[0]?.supersededAt).toBeInstanceOf(Date);
+  });
 });
 
 // ===========================================================================
@@ -1185,6 +1297,7 @@ describe("E2E v2: graph expansion", () => {
 
   beforeAll(async () => {
     await entitiesCollection(db, TEST_PREFIX).deleteMany({});
+    await entityLinksCollection(db, TEST_PREFIX).deleteMany({});
     await relationsCollection(db, TEST_PREFIX).deleteMany({});
   });
 
@@ -1249,6 +1362,96 @@ describe("E2E v2: graph expansion", () => {
     expect(expansion!.connections[0].entity.name).toBe("ClawMongo");
     expect(expansion!.connections[0].relation.type).toBe("works_on");
     expect(expansion!.connections[0].depth).toBe(0);
+  });
+
+  it("stores candidate links as reversible records and keeps same-name entities isolated by scope", async () => {
+    const agentSessionA = `session-a-${randomUUID().slice(0, 8)}`;
+    const agentSessionB = `session-b-${randomUUID().slice(0, 8)}`;
+    const alexA = randomUUID();
+    const alexB = randomUUID();
+
+    await upsertEntity({
+      db,
+      prefix: TEST_PREFIX,
+      entity: {
+        entityId: alexA,
+        name: "Alex",
+        type: "person",
+        agentId,
+        scope: "session",
+        scopeRef: `session:${agentSessionA}`,
+        updatedAt: new Date(),
+      },
+    });
+    await upsertEntity({
+      db,
+      prefix: TEST_PREFIX,
+      entity: {
+        entityId: alexB,
+        name: "Alex",
+        type: "person",
+        agentId,
+        scope: "session",
+        scopeRef: `session:${agentSessionB}`,
+        updatedAt: new Date(),
+      },
+    });
+
+    const link = await upsertEntityLink({
+      db,
+      prefix: TEST_PREFIX,
+      link: {
+        fromEntityId: romEntityId,
+        toEntityId: projectEntityId,
+        linkType: "candidate_same",
+        status: "active",
+        confidence: 0.55,
+        agentId,
+        scope: "agent",
+        provenance: { heuristic: "manual-test" },
+      },
+    });
+    expect(link.linkId).toBeTruthy();
+
+    const links = await getEntityLinks({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+      entityId: romEntityId,
+      status: "active",
+    });
+    expect(links.some((entry) => entry.linkType === "candidate_same")).toBe(true);
+
+    const changed = await setEntityLinkStatus({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+      scope: "agent",
+      fromEntityId: romEntityId,
+      toEntityId: projectEntityId,
+      linkType: "candidate_same",
+      status: "rejected",
+    });
+    expect(changed).toBe(true);
+
+    const activeLinks = await getEntityLinks({
+      db,
+      prefix: TEST_PREFIX,
+      agentId,
+      entityId: romEntityId,
+      status: "active",
+    });
+    expect(activeLinks.some((entry) => entry.linkType === "candidate_same")).toBe(false);
+
+    const sessionAEntities = await entitiesCollection(db, TEST_PREFIX)
+      .find({ agentId, scope: "session", scopeRef: `session:${agentSessionA}`, name: "Alex" })
+      .toArray();
+    const sessionBEntities = await entitiesCollection(db, TEST_PREFIX)
+      .find({ agentId, scope: "session", scopeRef: `session:${agentSessionB}`, name: "Alex" })
+      .toArray();
+    expect(sessionAEntities).toHaveLength(1);
+    expect(sessionBEntities).toHaveLength(1);
+    expect(sessionAEntities[0]?.entityId).not.toBe(sessionBEntities[0]?.entityId);
   });
 });
 
@@ -1432,5 +1635,117 @@ describe("E2E v2: retrieval planner", () => {
     // 3. Verify confidence is high (multiple strong signals)
     expect(plan.confidence).toBe("high");
     expect(plan.reasoning.length).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// v2: Health Semantics
+// ===========================================================================
+
+describe("E2E v2: health semantics", () => {
+  const agentId = `e2e-health-${randomUUID()}`;
+
+  beforeAll(async () => {
+    for (const suffix of [
+      "events",
+      "episodes",
+      "entities",
+      "relations",
+      "ingest_runs",
+      "projection_runs",
+      "relevance_runs",
+    ]) {
+      await db.collection(`${TEST_PREFIX}${suffix}`).deleteMany({ agentId });
+    }
+  });
+
+  it("distinguishes healthy, degraded, and unavailable states in v2 status", async () => {
+    await eventsCollection(db, TEST_PREFIX).insertOne({
+      eventId: `evt-${randomUUID()}`,
+      agentId,
+      role: "user",
+      body: "Health status probe",
+      scope: "agent",
+      scopeRef: `agent:${agentId}`,
+      timestamp: new Date(),
+    });
+
+    await db.collection(`${TEST_PREFIX}ingest_runs`).insertOne({
+      runId: `ingest-${randomUUID()}`,
+      agentId,
+      source: "event-write",
+      status: "failed",
+      itemsProcessed: 0,
+      itemsFailed: 1,
+      durationMs: 12,
+      ts: new Date(),
+    });
+
+    await db.collection(`${TEST_PREFIX}projection_runs`).insertMany([
+      {
+        runId: `proj-${randomUUID()}`,
+        agentId,
+        projectionType: "chunks",
+        status: "ok",
+        itemsProjected: 1,
+        durationMs: 10,
+        ts: new Date(Date.now() - 10 * 60 * 1000),
+      },
+      {
+        runId: `proj-${randomUUID()}`,
+        agentId,
+        projectionType: "entities",
+        status: "failed",
+        itemsProjected: 0,
+        durationMs: 10,
+        ts: new Date(),
+      },
+      {
+        runId: `proj-${randomUUID()}`,
+        agentId,
+        projectionType: "relations",
+        status: "ok",
+        itemsProjected: 0,
+        durationMs: 10,
+        ts: new Date(),
+      },
+    ]);
+
+    await db.collection(`${TEST_PREFIX}relevance_runs`).insertOne({
+      runId: `relevance-${randomUUID()}`,
+      agentId,
+      ts: new Date(),
+      sourceScope: "memory",
+      latencyMs: 22,
+      status: "degraded",
+      queryHash: "hash",
+      queryRedacted: "xxxx",
+      profile: "test",
+      capabilities: {},
+      topK: 5,
+      hitSources: [],
+      sampleRate: 0.5,
+      sampled: true,
+    });
+
+    const status = await getV2Status(db, TEST_PREFIX, agentId);
+
+    expect(status.health.canonicalIngest).toBe("canonical-ingest-failed");
+    expect(status.health.retrieval).toBe("retrieval-degraded");
+    expect(status.health.recentNoRelevantResults).toBe(true);
+    expect(status.health.derivedProducts.chunks).toBe("projection-behind");
+    expect(status.health.derivedProducts.entities).toBe("derived-product-unavailable");
+    expect(status.health.derivedProducts.episodes).toBe("health-uncertain");
+    expect(status.health.overall).toBe("degraded");
+    expect(status.health.diagnostics).toEqual(
+      expect.arrayContaining([
+        "retrieval-degraded",
+        "no-relevant-results",
+        "canonical-ingest-failed",
+        "projection-behind:chunks",
+        "derived-product-unavailable:entities",
+        "health-uncertain:episodes",
+      ]),
+    );
   });
 });

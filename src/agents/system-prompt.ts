@@ -83,17 +83,18 @@ function buildMemorySection(params: {
   const isMongoDBBackend = params.memoryBackend === "mongodb";
   const lines = ["## Memory Recall"];
   if (isMongoDBBackend) {
-    lines.push(
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed conversation history, reference knowledge, and structured memory. Results come from all active sources, ranked by relevance.",
-    );
+    const intro = params.availableTools.has("kb_search")
+      ? "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory. If the target is imported documentation or explicit reference material, use kb_search."
+      : "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory.";
+    lines.push(intro);
     lines.push("");
     lines.push("### When to use each tool");
     lines.push(
-      "- **memory_search** — Your primary recall tool. Searches across all MongoDB runtime sources (conversation history, reference knowledge, structured memory). Use for any question about what you know.",
+      "- **memory_search** — Your primary runtime recall tool. Searches across active MongoDB-backed recall sources for prior work, decisions, people, preferences, and recent history. It may include active KB-backed snippets, but you should treat it as memory-first recall.",
     );
     if (params.availableTools.has("kb_search")) {
       lines.push(
-        "- **kb_search** — Dedicated knowledge base search. Use when looking for reference material, documentation, FAQs, or architecture specs that were imported into the knowledge base.",
+        "- **kb_search** — Dedicated knowledge base search. Use when looking for imported reference material, documentation, FAQs, or architecture specs.",
       );
     }
     if (params.availableTools.has("memory_write")) {
@@ -126,7 +127,7 @@ function buildMemorySection(params: {
       lines.push("- Reference docs, imported files, architecture specs -> kb_search");
     }
     lines.push("- Conversation/history recall -> memory_search");
-    lines.push('- Broad "what do I know about X?" -> memory_search (searches all sources)');
+    lines.push('- Broad "what do I know about X?" -> memory_search');
   } else {
     lines.push(
       "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search against the configured runtime memory backend; then use memory_get only for the specific Mongo-backed locator you need. If low confidence after search, say you checked.",

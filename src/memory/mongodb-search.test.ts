@@ -8,6 +8,7 @@ import {
   keywordSearch,
   hybridSearchJSFallback,
   mongoSearch,
+  splitAtlasSearchFilter,
 } from "./mongodb-search.js";
 
 // ---------------------------------------------------------------------------
@@ -298,6 +299,55 @@ describe("keywordSearch", () => {
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const projectStage = pipeline[2].$project;
     expect(projectStage.score).toEqual({ $meta: "searchScore" });
+  });
+
+  it("pushes supported hard filters into compound.filter", async () => {
+    const col = mockCollectionWithResults(SAMPLE_DOCS);
+    await keywordSearch(col, "test", {
+      maxResults: 5,
+      minScore: 0,
+      indexName: "idx",
+      filter: {
+        agentId: "agent-1",
+        scope: "agent",
+        source: { $in: ["conversation", "sessions"] },
+      },
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(pipeline[0].$search.compound.filter).toEqual([
+      { equals: { path: "agentId", value: "agent-1" } },
+      { equals: { path: "scope", value: "agent" } },
+      { in: { path: "source", value: ["conversation", "sessions"] } },
+    ]);
+    expect(pipeline[1]?.$match).toBeUndefined();
+  });
+});
+
+describe("splitAtlasSearchFilter", () => {
+  it("splits supported $and filters into Atlas Search clauses", () => {
+    const split = splitAtlasSearchFilter({
+      $and: [{ agentId: "agent-1" }, { scopeRef: "agent:main" }, { source: { $in: ["memory"] } }],
+    });
+
+    expect(split.compoundFilter).toEqual([
+      { equals: { path: "agentId", value: "agent-1" } },
+      { equals: { path: "scopeRef", value: "agent:main" } },
+      { in: { path: "source", value: ["memory"] } },
+    ]);
+    expect(split.postMatch).toBeUndefined();
+  });
+
+  it("keeps unsupported operators in postMatch", () => {
+    const split = splitAtlasSearchFilter({
+      updatedAt: { $gte: new Date("2026-03-01T00:00:00.000Z") },
+      agentId: "agent-1",
+    });
+
+    expect(split.compoundFilter).toEqual([{ equals: { path: "agentId", value: "agent-1" } }]);
+    expect(split.postMatch).toEqual({
+      updatedAt: { $gte: new Date("2026-03-01T00:00:00.000Z") },
+    });
   });
 });
 

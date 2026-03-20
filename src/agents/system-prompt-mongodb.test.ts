@@ -18,6 +18,8 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     expect(prompt).toContain("When searching:");
     expect(prompt).toContain("kb_search");
     expect(prompt).toContain("memory_search");
+    expect(prompt).toContain("primary runtime recall tool");
+    expect(prompt).toContain("imported documentation or explicit reference material");
   });
 
   it("includes decision tree header section", () => {

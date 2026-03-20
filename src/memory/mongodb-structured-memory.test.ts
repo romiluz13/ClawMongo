@@ -2,14 +2,7 @@
 
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
-
-// Mock the schema module before imports
-vi.mock("./mongodb-schema.js", () => ({
-  structuredMemCollection: vi.fn(),
-}));
-
 import type { DetectedCapabilities } from "./mongodb-schema.js";
-import { structuredMemCollection } from "./mongodb-schema.js";
 import {
   writeStructuredMemory,
   searchStructuredMemory,
@@ -23,11 +16,13 @@ import {
 
 function createMockStructuredCol(): Collection {
   return {
+    findOne: vi.fn(async () => null),
     updateOne: vi.fn(async () => ({
       upsertedCount: 1,
       upsertedId: "new-id",
       modifiedCount: 0,
     })),
+    insertOne: vi.fn(async () => ({ acknowledged: true, insertedId: "rev-1" })),
     aggregate: vi.fn(() => ({
       toArray: vi.fn(async () => []),
     })),
@@ -37,8 +32,10 @@ function createMockStructuredCol(): Collection {
   } as unknown as Collection;
 }
 
-function mockDb(): Db {
-  return {} as unknown as Db;
+function mockDb(collections: Record<string, Collection> = {}): Db {
+  return {
+    collection: vi.fn((name: string) => collections[name] ?? createMockStructuredCol()),
+  } as unknown as Db;
 }
 
 const baseCapabilities: DetectedCapabilities = {
@@ -62,7 +59,7 @@ const noSearchCapabilities: DetectedCapabilities = {
 describe("writeStructuredMemory", () => {
   it("creates a new structured memory entry", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
+    const revisionsCol = createMockStructuredCol();
 
     const entry: StructuredMemoryEntry = {
       type: "decision",
@@ -76,7 +73,10 @@ describe("writeStructuredMemory", () => {
     };
 
     const result = await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -100,16 +100,19 @@ describe("writeStructuredMemory", () => {
 
   it("updates existing entry with same type+key", async () => {
     const col = createMockStructuredCol();
-    // Make updateOne return modifiedCount instead of upsertedCount
-    vi.mocked(col.updateOne).mockResolvedValueOnce({
-      upsertedCount: 0,
-      upsertedId: null,
-      modifiedCount: 1,
-      matchedCount: 1,
-      acknowledged: true,
+    const revisionsCol = createMockStructuredCol();
+    vi.mocked(col.findOne).mockResolvedValueOnce({
+      type: "preference",
+      key: "editor",
+      value: "VSCode with Vim bindings",
+      agentId: "main",
+      scope: "agent",
+      scopeRef: "agent:main",
+      revision: 1,
+      validFrom: new Date("2026-03-01T00:00:00.000Z"),
+      createdAt: new Date("2026-03-01T00:00:00.000Z"),
+      updatedAt: new Date("2026-03-01T00:00:00.000Z"),
     });
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
-
     const entry: StructuredMemoryEntry = {
       type: "preference",
       key: "editor",
@@ -118,7 +121,10 @@ describe("writeStructuredMemory", () => {
     };
 
     const result = await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -126,11 +132,12 @@ describe("writeStructuredMemory", () => {
 
     expect(result.upserted).toBe(false);
     expect(result.id).toBe("editor");
+    expect(revisionsCol.insertOne).not.toHaveBeenCalled();
   });
 
   it("stores pending embedding status for combined value + context text", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
+    const revisionsCol = createMockStructuredCol();
 
     const entry: StructuredMemoryEntry = {
       type: "decision",
@@ -141,7 +148,10 @@ describe("writeStructuredMemory", () => {
     };
 
     await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -154,7 +164,7 @@ describe("writeStructuredMemory", () => {
 
   it("writes explicit scope to structured memory entry", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
+    const revisionsCol = createMockStructuredCol();
 
     const entry: StructuredMemoryEntry = {
       type: "decision",
@@ -165,7 +175,10 @@ describe("writeStructuredMemory", () => {
     };
 
     await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -178,7 +191,7 @@ describe("writeStructuredMemory", () => {
 
   it("defaults scope to agent when not specified", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
+    const revisionsCol = createMockStructuredCol();
 
     const entry: StructuredMemoryEntry = {
       type: "fact",
@@ -188,7 +201,10 @@ describe("writeStructuredMemory", () => {
     };
 
     await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -200,7 +216,7 @@ describe("writeStructuredMemory", () => {
 
   it("does not include embedding vectors in ClawMongo write path", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
+    const revisionsCol = createMockStructuredCol();
 
     const entry: StructuredMemoryEntry = {
       type: "fact",
@@ -210,7 +226,10 @@ describe("writeStructuredMemory", () => {
     };
 
     await writeStructuredMemory({
-      db: mockDb(),
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
       prefix: "test_",
       entry,
       embeddingMode: "automated",
@@ -220,6 +239,57 @@ describe("writeStructuredMemory", () => {
     const setDoc = updateCall[1].$set;
     expect(setDoc.embeddingStatus).toBe("pending");
     expect(setDoc.embedding).toBeUndefined();
+  });
+
+  it("writes a revision snapshot before updating current truth", async () => {
+    const currentCol = createMockStructuredCol();
+    const revisionsCol = createMockStructuredCol();
+    const createdAt = new Date("2026-03-01T00:00:00.000Z");
+    vi.mocked(currentCol.findOne).mockResolvedValueOnce({
+      type: "decision",
+      key: "db-choice",
+      value: "Use Postgres",
+      context: "Original decision",
+      confidence: 0.7,
+      source: "agent",
+      agentId: "main",
+      scope: "agent",
+      scopeRef: "agent:main",
+      revision: 2,
+      validFrom: createdAt,
+      createdAt,
+      updatedAt: new Date("2026-03-10T00:00:00.000Z"),
+      tags: ["database"],
+    });
+    await writeStructuredMemory({
+      db: mockDb({
+        test_structured_mem: currentCol,
+        test_structured_mem_revisions: revisionsCol,
+      }),
+      prefix: "test_",
+      entry: {
+        type: "decision",
+        key: "db-choice",
+        value: "Use MongoDB",
+        context: "Updated after memory redesign",
+        confidence: 0.9,
+        source: "agent",
+        agentId: "main",
+        tags: ["database"],
+      },
+      embeddingMode: "automated",
+    });
+
+    expect(revisionsCol.insertOne).toHaveBeenCalledTimes(1);
+    const revisionDoc = (revisionsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(revisionDoc.value).toBe("Use Postgres");
+    expect(revisionDoc.revision).toBe(2);
+    expect(revisionDoc.validFrom).toEqual(createdAt);
+    expect(revisionDoc.validTo).toBeInstanceOf(Date);
+
+    const updateCall = (currentCol.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[1].$set.value).toBe("Use MongoDB");
+    expect(updateCall[1].$set.revision).toBe(3);
   });
 });
 
@@ -381,7 +451,6 @@ describe("searchStructuredMemory", () => {
 describe("getStructuredMemoryByType", () => {
   it("queries structured memory by type", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
 
     vi.mocked(col.find).mockReturnValueOnce({
       toArray: vi.fn(async () => [
@@ -395,7 +464,11 @@ describe("getStructuredMemoryByType", () => {
       ]),
     } as unknown as ReturnType<Collection["find"]>);
 
-    const entries = await getStructuredMemoryByType(mockDb(), "test_", "decision");
+    const entries = await getStructuredMemoryByType(
+      mockDb({ test_structured_mem: col }),
+      "test_",
+      "decision",
+    );
 
     expect(entries).toHaveLength(1);
     expect(entries[0].type).toBe("decision");
@@ -406,13 +479,18 @@ describe("getStructuredMemoryByType", () => {
 
   it("respects limit parameter", async () => {
     const col = createMockStructuredCol();
-    vi.mocked(structuredMemCollection).mockReturnValue(col);
 
     vi.mocked(col.find).mockReturnValueOnce({
       toArray: vi.fn(async () => []),
     } as unknown as ReturnType<Collection["find"]>);
 
-    await getStructuredMemoryByType(mockDb(), "test_", "fact", "main", 10);
+    await getStructuredMemoryByType(
+      mockDb({ test_structured_mem: col }),
+      "test_",
+      "fact",
+      "main",
+      10,
+    );
 
     const findCall = (col.find as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(findCall[0]).toEqual({ type: "fact", agentId: "main" });

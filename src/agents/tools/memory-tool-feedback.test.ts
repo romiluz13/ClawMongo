@@ -22,6 +22,8 @@ describe("memory tool descriptions with MongoDB backend", () => {
     const tool = createMemorySearchTool({ config: cfg });
     expect(tool).not.toBeNull();
     expect(tool!.description).toContain("Example:");
+    expect(tool!.description).toContain("runtime recall");
+    expect(tool!.description).toContain("kb_search");
   });
 
   it("kb_search description includes usage example", () => {
@@ -33,6 +35,7 @@ describe("memory tool descriptions with MongoDB backend", () => {
     const tool = createKBSearchTool({ config: cfg });
     expect(tool).not.toBeNull();
     expect(tool!.description).toContain("Example:");
+    expect(tool!.description).toContain("reference material");
   });
 
   it("memory_write description includes usage example", () => {
@@ -58,7 +61,7 @@ describe("computeFeedbackHint", () => {
     score,
     startLine: 1,
     endLine: 5,
-    source: "memory",
+    source: "conversation",
   });
 
   it("returns hint when < 2 results and all scores < 0.3", () => {

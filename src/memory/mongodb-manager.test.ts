@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  classifyCanonicalIngestHealth,
+  classifyProjectionHealth,
+  classifyRetrievalHealth,
+  computeOverallV2Health,
   deduplicateSearchResults,
   getActiveSources,
   getActiveSourcesForStatus,
@@ -26,6 +30,8 @@ vi.mock("./mongodb-events.js", () => ({
 vi.mock("./mongodb-ops.js", () => ({
   recordIngestRun: vi.fn(),
   getProjectionLag: vi.fn(),
+  getLatestIngestRun: vi.fn(),
+  getLatestProjectionRun: vi.fn(),
 }));
 
 vi.mock("./mongodb-retrieval-planner.js", () => ({
@@ -51,6 +57,7 @@ vi.mock("./mongodb-schema.js", () => ({
   metaCollection: vi.fn(),
   kbCollection: vi.fn(),
   kbChunksCollection: vi.fn(),
+  relevanceRunsCollection: vi.fn(),
   structuredMemCollection: vi.fn(),
   embeddingCacheCollection: vi.fn(),
   detectCapabilities: vi.fn(),
@@ -534,6 +541,66 @@ describe.skip("searchV2", () => {
 // ---------------------------------------------------------------------------
 // 8.3: getV2Status
 // ---------------------------------------------------------------------------
+
+describe("v2 health classification helpers", () => {
+  it("classifies ingest health from the latest ingest run", () => {
+    expect(classifyCanonicalIngestHealth(null)).toBe("health-uncertain");
+    expect(classifyCanonicalIngestHealth({ status: "ok" })).toBe("ok");
+    expect(classifyCanonicalIngestHealth({ status: "failed" })).toBe("canonical-ingest-failed");
+  });
+
+  it("classifies projection health from latest run and lag", () => {
+    expect(classifyProjectionHealth({ latestRun: null, lagSeconds: null })).toBe(
+      "health-uncertain",
+    );
+    expect(classifyProjectionHealth({ latestRun: { status: "failed" }, lagSeconds: null })).toBe(
+      "derived-product-unavailable",
+    );
+    expect(classifyProjectionHealth({ latestRun: { status: "ok" }, lagSeconds: 601 })).toBe(
+      "projection-behind",
+    );
+    expect(classifyProjectionHealth({ latestRun: { status: "ok" }, lagSeconds: 12 })).toBe("ok");
+  });
+
+  it("distinguishes degraded retrieval from no relevant results", () => {
+    expect(classifyRetrievalHealth({ status: null, hitSources: null })).toEqual({
+      state: "health-uncertain",
+      recentNoRelevantResults: false,
+    });
+    expect(classifyRetrievalHealth({ status: "ok", hitSources: ["conversation"] })).toEqual({
+      state: "ok",
+      recentNoRelevantResults: false,
+    });
+    expect(classifyRetrievalHealth({ status: "degraded", hitSources: [] })).toEqual({
+      state: "retrieval-degraded",
+      recentNoRelevantResults: true,
+    });
+  });
+
+  it("computes the overall status from retrieval, ingest, and derived-product states", () => {
+    expect(
+      computeOverallV2Health({
+        retrieval: "ok",
+        canonicalIngest: "ok",
+        derivedProducts: ["ok", "ok"],
+      }),
+    ).toBe("ok");
+    expect(
+      computeOverallV2Health({
+        retrieval: "retrieval-degraded",
+        canonicalIngest: "ok",
+        derivedProducts: ["ok", "ok"],
+      }),
+    ).toBe("degraded");
+    expect(
+      computeOverallV2Health({
+        retrieval: "ok",
+        canonicalIngest: "health-uncertain",
+        derivedProducts: ["ok", "ok"],
+      }),
+    ).toBe("health-uncertain");
+  });
+});
 
 // Covered by real v2 status checks in the live MongoDB gate. This unit block
 // still assumes a stale module-mock seam.

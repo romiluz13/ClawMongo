@@ -61,6 +61,10 @@ export function structuredMemCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "structured_mem");
 }
 
+export function structuredMemRevisionsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "structured_mem_revisions");
+}
+
 export function relevanceRunsCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "relevance_runs");
 }
@@ -85,6 +89,10 @@ export function entitiesCollection(db: Db, prefix: string): Collection {
 
 export function relationsCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "relations");
+}
+
+export function entityLinksCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "entity_links");
 }
 
 export function episodesCollection(db: Db, prefix: string): Collection {
@@ -172,7 +180,51 @@ const STRUCTURED_MEM_SCHEMA: Document = {
         description: "Memory scope (v2)",
       },
       scopeRef: { bsonType: "string", description: "Resolved concrete namespace for the scope" },
+      revision: { bsonType: "number", minimum: 1 },
+      validFrom: { bsonType: "date" },
+      createdAt: { bsonType: "date" },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const STRUCTURED_MEM_REVISIONS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "type",
+      "key",
+      "value",
+      "agentId",
+      "scope",
+      "scopeRef",
+      "revision",
+      "validFrom",
+      "validTo",
+      "supersededAt",
+      "updatedAt",
+    ],
+    properties: {
+      type: { bsonType: "string" },
+      key: { bsonType: "string" },
+      value: { bsonType: "string" },
+      context: { bsonType: "string" },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
+      tags: { bsonType: "array", items: { bsonType: "string" } },
+      source: { bsonType: "string" },
+      sessionId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      scope: {
+        enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+        description: "Memory scope (v2)",
+      },
+      scopeRef: { bsonType: "string" },
+      revision: { bsonType: "number", minimum: 1 },
+      validFrom: { bsonType: "date" },
+      validTo: { bsonType: "date" },
+      supersededAt: { bsonType: "date" },
+      createdAt: { bsonType: "date" },
       updatedAt: { bsonType: "date" },
     },
   },
@@ -331,6 +383,41 @@ const RELATIONS_SCHEMA: Document = {
   },
 };
 
+const ENTITY_LINKS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "linkId",
+      "fromEntityId",
+      "toEntityId",
+      "linkType",
+      "status",
+      "agentId",
+      "scope",
+      "scopeRef",
+      "confidence",
+      "updatedAt",
+    ],
+    properties: {
+      linkId: { bsonType: "string" },
+      fromEntityId: { bsonType: "string" },
+      toEntityId: { bsonType: "string" },
+      linkType: {
+        enum: ["confirmed_same", "candidate_same", "related_mention"],
+      },
+      status: { enum: ["active", "rejected"] },
+      agentId: { bsonType: "string" },
+      scope: { enum: SCOPE_ENUM },
+      scopeRef: { bsonType: "string" },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
+      sourceEventIds: { bsonType: "array", items: { bsonType: "string" } },
+      provenance: { bsonType: "object" },
+      updatedAt: { bsonType: "date" },
+      createdAt: { bsonType: "date" },
+    },
+  },
+};
+
 const EPISODES_SCHEMA: Document = {
   $jsonSchema: {
     bsonType: "object",
@@ -414,7 +501,7 @@ const PROJECTION_RUNS_SCHEMA: Document = {
     properties: {
       runId: { bsonType: "string" },
       agentId: { bsonType: "string" },
-      projectionType: { enum: ["chunk", "graph", "episode"] },
+      projectionType: { enum: ["chunks", "entities", "relations", "episodes"] },
       status: { enum: ["ok", "partial", "failed"] },
       itemsProjected: { bsonType: "number" },
       durationMs: { bsonType: "number" },
@@ -428,12 +515,14 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   knowledge_base: KB_SCHEMA,
   kb_chunks: KB_CHUNKS_SCHEMA,
   structured_mem: STRUCTURED_MEM_SCHEMA,
+  structured_mem_revisions: STRUCTURED_MEM_REVISIONS_SCHEMA,
   relevance_runs: RELEVANCE_RUNS_SCHEMA,
   relevance_artifacts: RELEVANCE_ARTIFACTS_SCHEMA,
   relevance_regressions: RELEVANCE_REGRESSIONS_SCHEMA,
   events: EVENTS_SCHEMA,
   entities: ENTITIES_SCHEMA,
   relations: RELATIONS_SCHEMA,
+  entity_links: ENTITY_LINKS_SCHEMA,
   episodes: EPISODES_SCHEMA,
   ingest_runs: INGEST_RUNS_SCHEMA,
   projection_runs: PROJECTION_RUNS_SCHEMA,
@@ -454,12 +543,14 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "knowledge_base",
     "kb_chunks",
     "structured_mem",
+    "structured_mem_revisions",
     "relevance_runs",
     "relevance_artifacts",
     "relevance_regressions",
     "events",
     "entities",
     "relations",
+    "entity_links",
     "episodes",
     "ingest_runs",
     "projection_runs",
@@ -481,6 +572,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
       log.info(`created collection ${name}`);
     }
   }
+  await ensureSchemaValidation(db, prefix);
 }
 
 /**
@@ -790,6 +882,18 @@ export async function ensureStandardIndexes(
   );
   applied++;
 
+  const entityLinks = entityLinksCollection(db, prefix);
+  await entityLinks.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, fromEntityId: 1, toEntityId: 1, linkType: 1 },
+    { name: "uq_entity_links_pair_type", unique: true },
+  );
+  applied++;
+  await entityLinks.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, status: 1, fromEntityId: 1, toEntityId: 1 },
+    { name: "idx_entity_links_status_pair" },
+  );
+  applied++;
+
   // Episodes indexes
   const episodes = episodesCollection(db, prefix);
   await episodes.createIndex({ episodeId: 1 }, { name: "uq_episodes_episodeid", unique: true });
@@ -822,6 +926,13 @@ export async function ensureStandardIndexes(
   );
   applied++;
 
+  const structuredRevisions = structuredMemRevisionsCollection(db, prefix);
+  await structuredRevisions.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, type: 1, key: 1, revision: -1 },
+    { name: "idx_structured_revisions_identity_revision" },
+  );
+  applied++;
+
   log.info(`ensured ${applied} standard indexes`);
   return applied;
 }
@@ -829,6 +940,29 @@ export async function ensureStandardIndexes(
 // ---------------------------------------------------------------------------
 // Search / Vector Search index creation
 // ---------------------------------------------------------------------------
+
+function isSearchIndexManagementUnavailable(message: string): boolean {
+  return (
+    message.includes("Search Index Management service") ||
+    message.includes("Error connecting to Search Index Management service")
+  );
+}
+
+function hasServerVersionAtLeast(
+  versionArray: unknown,
+  minimumMajor: number,
+  minimumMinor: number,
+): boolean {
+  if (!Array.isArray(versionArray) || versionArray.length < 2) {
+    return false;
+  }
+  const major = Number(versionArray[0]);
+  const minor = Number(versionArray[1]);
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) {
+    return false;
+  }
+  return major > minimumMajor || (major === minimumMajor && minor >= minimumMinor);
+}
 
 export async function ensureSearchIndexes(
   db: Db,
@@ -891,6 +1025,9 @@ export async function ensureSearchIndexes(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("already exists") || msg.includes("duplicate")) {
       textCreated = true;
+    } else if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: false, vector: false };
     } else {
       log.warn(`text search index creation failed: ${msg}`);
     }
@@ -929,6 +1066,9 @@ export async function ensureSearchIndexes(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("already exists") || msg.includes("duplicate")) {
       vectorCreated = true;
+    } else if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: false };
     } else {
       log.warn(`vector search index creation failed: ${msg}`);
     }
@@ -958,6 +1098,10 @@ export async function ensureSearchIndexes(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`kb_chunks text search index creation failed: ${msg}`);
     }
@@ -983,6 +1127,10 @@ export async function ensureSearchIndexes(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`kb_chunks vector search index creation failed: ${msg}`);
     }
@@ -1014,6 +1162,10 @@ export async function ensureSearchIndexes(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`structured_mem text search index creation failed: ${msg}`);
     }
@@ -1042,6 +1194,10 @@ export async function ensureSearchIndexes(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`structured_mem vector search index creation failed: ${msg}`);
     }
@@ -1145,7 +1301,10 @@ function isStageUnsupported(message: string): boolean {
   );
 }
 
-export async function detectCapabilities(db: Db): Promise<DetectedCapabilities> {
+export async function detectCapabilities(
+  db: Db,
+  probeCollectionName?: string,
+): Promise<DetectedCapabilities> {
   const result: DetectedCapabilities = {
     vectorSearch: false,
     textSearch: false,
@@ -1153,57 +1312,66 @@ export async function detectCapabilities(db: Db): Promise<DetectedCapabilities> 
     rankFusion: false,
   };
 
-  // Probe $rankFusion (implies 8.0+)
+  // Prefer server-version gating for fusion stages because the MongoDB docs
+  // define availability by server version. Fall back to stage probes only when
+  // buildInfo is unavailable.
   try {
-    await db
-      .collection("__probe__")
-      .aggregate([
-        {
-          $rankFusion: {
-            input: {
-              pipelines: { a: [{ $match: { _id: null } }], b: [{ $match: { _id: null } }] },
+    const buildInfo = await db.admin().command({ buildInfo: 1 });
+    const versionArray = (buildInfo as { versionArray?: unknown }).versionArray;
+    result.rankFusion = hasServerVersionAtLeast(versionArray, 8, 0);
+    result.scoreFusion = hasServerVersionAtLeast(versionArray, 8, 2);
+  } catch {
+    try {
+      await db
+        .collection("__probe__")
+        .aggregate([
+          {
+            $rankFusion: {
+              input: {
+                pipelines: { a: [{ $match: { _id: null } }], b: [{ $match: { _id: null } }] },
+              },
             },
           },
-        },
-        { $limit: 1 },
-      ])
-      .toArray();
-    result.rankFusion = true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!isStageUnsupported(msg)) {
-      // Stage is recognized even if execution fails on empty collection
+          { $limit: 1 },
+        ])
+        .toArray();
       result.rankFusion = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!isStageUnsupported(msg)) {
+        result.rankFusion = true;
+      }
     }
-  }
 
-  // Probe $scoreFusion (implies 8.2+)
-  try {
-    await db
-      .collection("__probe__")
-      .aggregate([
-        {
-          $scoreFusion: {
-            input: { pipelines: { a: [{ $match: { _id: null } }] }, normalization: "none" },
+    try {
+      await db
+        .collection("__probe__")
+        .aggregate([
+          {
+            $scoreFusion: {
+              input: { pipelines: { a: [{ $match: { _id: null } }] }, normalization: "none" },
+            },
           },
-        },
-        { $limit: 1 },
-      ])
-      .toArray();
-    result.scoreFusion = true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!isStageUnsupported(msg)) {
+          { $limit: 1 },
+        ])
+        .toArray();
       result.scoreFusion = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!isStageUnsupported(msg)) {
+        result.scoreFusion = true;
+      }
     }
   }
 
-  // Check for search indexes on any collection (indicates mongot is running)
+  // Probe mongot against the current search collection first so capability
+  // detection does not depend on arbitrary legacy collections in a dirty DB.
   try {
-    const collections = await db.listCollections().toArray();
-    for (const collectionInfo of collections.slice(0, 5)) {
+    const probeNames = [probeCollectionName ?? "__probe__"];
+
+    for (const name of probeNames) {
       try {
-        await db.collection(collectionInfo.name).listSearchIndexes().toArray();
+        await db.collection(name).listSearchIndexes().toArray();
         // listSearchIndexes succeeded → mongot is available
         result.textSearch = true;
         result.vectorSearch = true;

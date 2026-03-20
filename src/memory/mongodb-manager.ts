@@ -13,10 +13,23 @@ import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
 import { writeEvent, projectEventChunk, getEventsByTimeRange } from "./mongodb-events.js";
-import { findEntitiesByName, expandGraph, type Entity, type RelationType } from "./mongodb-graph.js";
+import {
+  extractAndUpsertEntities,
+  findEntitiesByName,
+  expandGraph,
+  type Entity,
+  type RelationType,
+} from "./mongodb-graph.js";
 import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
-import { recordIngestRun, getProjectionLag } from "./mongodb-ops.js";
+import {
+  recordIngestRun,
+  getLatestIngestRun,
+  getLatestProjectionRun,
+  getProjectionLag,
+  type IngestRun,
+  type ProjectionRun,
+} from "./mongodb-ops.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -30,6 +43,7 @@ import {
   planRetrieval,
   type RetrievalPath,
   type RetrievalPlan,
+  resolveTimeRangePreset,
 } from "./mongodb-retrieval-planner.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
@@ -37,7 +51,6 @@ import {
   chunksCollection,
   detectCapabilities,
   ensureCollections,
-  ensureSchemaValidation,
   ensureSearchIndexes,
   ensureStandardIndexes,
   eventsCollection,
@@ -47,8 +60,10 @@ import {
   filesCollection,
   kbChunksCollection,
   metaCollection,
+  relevanceRunsCollection,
   structuredMemCollection,
 } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import { mongoSearch } from "./mongodb-search.js";
 import type {
   SearchExplainOptions,
@@ -57,7 +72,6 @@ import type {
 } from "./mongodb-search.js";
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
-import { resolveScopeRef } from "./mongodb-scope.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
 import type {
   MemoryEmbeddingProbeResult,
@@ -304,6 +318,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private fileCount = 0;
   private chunkCount = 0;
   private writeQueue: Promise<void> = Promise.resolve();
+  private lastSearchMode = "legacy";
+  private lastSearchDetails: Record<string, unknown> | undefined;
 
   private constructor(params: {
     client: MongoClient;
@@ -378,7 +394,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
     // Ensure collections + schema validation + standard indexes
     await ensureCollections(db, prefix);
-    await ensureSchemaValidation(db, prefix);
     await ensureStandardIndexes(db, prefix, {
       embeddingCacheTtlDays: mongoCfg.embeddingCacheTtlDays,
       memoryTtlDays: mongoCfg.memoryTtlDays,
@@ -386,18 +401,24 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     });
 
     // Detect what the connected MongoDB supports
-    const capabilities = await detectCapabilities(db);
+    const capabilities = await detectCapabilities(db, chunksCollection(db, prefix).collectionName);
     log.info(`capabilities: ${JSON.stringify(capabilities)}`);
 
-    // Create search indexes (text + vector) if applicable
-    await ensureSearchIndexes(
-      db,
-      prefix,
-      mongoCfg.deploymentProfile,
-      mongoCfg.embeddingMode,
-      mongoCfg.quantization,
-      mongoCfg.numDimensions,
-    );
+    // Only bootstrap Search indexes when the deployment can talk to Search
+    // Index Management at all. This keeps runtime startup responsive on
+    // clusters that support fusion stages but do not expose mongot.
+    if (capabilities.textSearch || capabilities.vectorSearch) {
+      await ensureSearchIndexes(
+        db,
+        prefix,
+        mongoCfg.deploymentProfile,
+        mongoCfg.embeddingMode,
+        mongoCfg.quantization,
+        mongoCfg.numDimensions,
+      );
+    } else {
+      log.info("search index management unavailable; skipping search index bootstrap");
+    }
 
     let relevance: MongoDBRelevanceRuntime | null = null;
     try {
@@ -493,7 +514,36 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     return Math.max(2, Math.ceil(maxResults / 3));
   }
 
-  async search(
+  private buildV2AvailablePaths(activeSources: ActiveSources): Set<RetrievalPath> {
+    const mongoCfg = this.config.mongodb!;
+    const paths = new Set<RetrievalPath>();
+
+    if (activeSources.structured) {
+      paths.add("structured");
+    }
+    if (activeSources.reference) {
+      paths.add("kb");
+    }
+    if (activeSources.conversation) {
+      paths.add("raw-window");
+      paths.add("hybrid");
+      if (mongoCfg.graph.enabled) {
+        paths.add("graph");
+      }
+      if (mongoCfg.episodes.enabled) {
+        paths.add("episodic");
+      }
+    }
+
+    return paths;
+  }
+
+  private setLastSearchMode(mode: string, details?: Record<string, unknown>) {
+    this.lastSearchMode = mode;
+    this.lastSearchDetails = details;
+  }
+
+  private async legacySearch(
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
   ): Promise<MemorySearchResult[]> {
@@ -525,20 +575,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         }
       : undefined;
 
-    // Query embeddings are generated by MongoDB from raw text in automated mode.
     const queryVector: number[] | null = null;
-
-    // Source policy enforcement: only search sources that are enabled in config.
     const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
     const bridgeMaxResults = this.getBridgeChunkBudget(maxResults);
-
-    // Search all sources in parallel with Promise.all for performance.
-    // Legacy search does NOT have .catch() — it's the primary search,
-    // so total failure propagates. KB and structured keep their .catch(() => []).
     const emptyResults: MemorySearchResult[] = [];
     const [runtimeConversationResults, bridgeConversationResults, kbResults, structuredResults] =
       await Promise.all([
-        // Runtime conversation chunks — skip if conversation source is disabled
         !activeSources.conversation
           ? emptyResults
           : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
@@ -559,76 +601,65 @@ export class MongoDBMemoryManager implements MemorySearchManager {
                 traceEvents.push(event);
               },
             }),
-        // Bridge-note chunks live in MongoDB but must stay workspace-scoped.
-      !activeSources.conversation
-        ? emptyResults
-        : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
-            maxResults: bridgeMaxResults,
-            minScore,
-            numCandidates: mongoCfg.numCandidates,
-            sessionKey: opts?.sessionKey,
-            filter: this.buildBridgeChunkFilter(),
-            fusionMethod: mongoCfg.fusionMethod,
-            capabilities: this.capabilities,
-            vectorIndexName: `${this.prefix}chunks_vector`,
-            textIndexName: `${this.prefix}chunks_text`,
-            vectorWeight: 0.7,
-            textWeight: 0.3,
-            embeddingMode: mongoCfg.embeddingMode,
-            explain: explainOpts,
-            onTrace: (event) => {
-              traceEvents.push(event);
-            },
-          }),
-      // KB chunks — skip if reference source is disabled
-      !activeSources.reference
-        ? emptyResults
-        : searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
-            maxResults: Math.max(3, Math.floor(maxResults / 3)),
-            minScore,
-            numCandidates: mongoCfg.numCandidates,
-            vectorIndexName: `${this.prefix}kb_chunks_vector`,
-            textIndexName: `${this.prefix}kb_chunks_text`,
-            capabilities: this.capabilities,
-            embeddingMode: mongoCfg.embeddingMode,
-            kbDocs: kbCollection(this.db, this.prefix),
-            explain: explainOpts,
-          }).catch((err) => {
-            log.warn(`KB search failed: ${String(err)}`);
-            return [] as MemorySearchResult[];
-          }),
-      // Structured memory — skip if structured source is disabled
-      !activeSources.structured
-        ? emptyResults
-        : searchStructuredMemory(
-            structuredMemCollection(this.db, this.prefix),
-            cleaned,
-            queryVector,
-            {
-              maxResults: Math.max(3, Math.floor(maxResults / 3)),
+        !activeSources.conversation
+          ? emptyResults
+          : mongoSearch(chunksCollection(this.db, this.prefix), cleaned, queryVector, {
+              maxResults: bridgeMaxResults,
               minScore,
-              filter: { agentId: this.agentId },
               numCandidates: mongoCfg.numCandidates,
+              sessionKey: opts?.sessionKey,
+              filter: this.buildBridgeChunkFilter(),
+              fusionMethod: mongoCfg.fusionMethod,
               capabilities: this.capabilities,
-              vectorIndexName: `${this.prefix}structured_mem_vector`,
+              vectorIndexName: `${this.prefix}chunks_vector`,
+              textIndexName: `${this.prefix}chunks_text`,
+              vectorWeight: 0.7,
+              textWeight: 0.3,
               embeddingMode: mongoCfg.embeddingMode,
               explain: explainOpts,
-            },
-          ).catch((err) => {
-            log.warn(`structured memory search failed: ${String(err)}`);
-            return [] as MemorySearchResult[];
-          }),
+              onTrace: (event) => {
+                traceEvents.push(event);
+              },
+            }),
+        !activeSources.reference
+          ? emptyResults
+          : searchKB(kbChunksCollection(this.db, this.prefix), cleaned, queryVector, {
+              maxResults: Math.max(3, Math.floor(maxResults / 3)),
+              minScore,
+              numCandidates: mongoCfg.numCandidates,
+              vectorIndexName: `${this.prefix}kb_chunks_vector`,
+              textIndexName: `${this.prefix}kb_chunks_text`,
+              capabilities: this.capabilities,
+              embeddingMode: mongoCfg.embeddingMode,
+              kbDocs: kbCollection(this.db, this.prefix),
+              explain: explainOpts,
+            }).catch((err) => {
+              log.warn(`KB search failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            }),
+        !activeSources.structured
+          ? emptyResults
+          : searchStructuredMemory(
+              structuredMemCollection(this.db, this.prefix),
+              cleaned,
+              queryVector,
+              {
+                maxResults: Math.max(3, Math.floor(maxResults / 3)),
+                minScore,
+                filter: { agentId: this.agentId },
+                numCandidates: mongoCfg.numCandidates,
+                capabilities: this.capabilities,
+                vectorIndexName: `${this.prefix}structured_mem_vector`,
+                embeddingMode: mongoCfg.embeddingMode,
+                explain: explainOpts,
+              },
+            ).catch((err) => {
+              log.warn(`structured memory search failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            }),
       ]);
 
     const conversationResults = [...runtimeConversationResults, ...bridgeConversationResults];
-
-    // F23 FIX: Normalize scores to [0,1] before cross-source merge.
-    // Different search methods produce scores on different scales:
-    //   - $vectorSearch: cosine similarity [0,1]
-    //   - $search/$text: BM25/TF-IDF [0,inf)
-    //   - $rankFusion/$scoreFusion: hybrid fusion scores
-    //   - KB and structured: same as legacy (depends on underlying method)
-    // We classify each source's search method and normalize accordingly.
     const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
     const normalizedLegacy = normalizeSearchResults(conversationResults, legacyMethod);
     const normalizedKb = normalizeSearchResults(kbResults, "kb");
@@ -638,7 +669,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       (a, b) => b.score - a.score,
     );
 
-    // Deduplicate results by content — keep highest-scoring on duplicate
     const deduped = deduplicateSearchResults(merged);
     const dedupCount = merged.length - deduped.length;
     if (dedupCount > 0) {
@@ -684,6 +714,74 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     return finalResults;
+  }
+
+  async search(
+    query: string,
+    opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
+  ): Promise<MemorySearchResult[]> {
+    const cleaned = query.trim();
+    if (!cleaned) {
+      this.setLastSearchMode("v2:empty-query");
+      return [];
+    }
+
+    const mongoCfg = this.config.mongodb!;
+    const maxResults = opts?.maxResults ?? 10;
+    const minScore = opts?.minScore ?? 0.1;
+    const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
+    const availablePaths = this.buildV2AvailablePaths(activeSources);
+
+    try {
+      const v2 = await searchV2(this.db, this.prefix, cleaned, this.agentId, {
+        availablePaths,
+        hasEpisodes: mongoCfg.episodes.enabled,
+        hasGraphData: mongoCfg.graph.enabled,
+        maxResults,
+        searchOptions: {
+          minScore,
+          sessionKey: opts?.sessionKey,
+          numCandidates: mongoCfg.numCandidates,
+          capabilities: this.capabilities,
+          fusionMethod: mongoCfg.fusionMethod,
+          embeddingMode: mongoCfg.embeddingMode,
+          conversationFilter: this.buildConversationChunkFilter(),
+          bridgeFilter: activeSources.conversation ? this.buildBridgeChunkFilter() : undefined,
+          bridgeMaxResults: this.getBridgeChunkBudget(maxResults),
+          scope: "agent",
+          scopeRef: this.agentScopeRef,
+        },
+      });
+
+      const v2Details = {
+        plan: v2.metadata.plan.paths,
+        confidence: v2.metadata.plan.confidence,
+        constraints: v2.metadata.plan.constraints,
+        pathsExecuted: v2.metadata.pathsExecuted,
+        resultsByPath: v2.metadata.resultsByPath,
+      };
+
+      if (v2.results.length > 0) {
+        this.setLastSearchMode("v2", v2Details);
+        return v2.results;
+      }
+
+      const fallbackResults = await this.legacySearch(cleaned, opts);
+      this.setLastSearchMode("v2->legacy-empty", {
+        ...v2Details,
+        fallbackResults: fallbackResults.length,
+      });
+      return fallbackResults;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`planner search failed, falling back to legacy search: ${message}`);
+      const fallbackResults = await this.legacySearch(cleaned, opts);
+      this.setLastSearchMode("v2->legacy-error", {
+        error: message,
+        fallbackResults: fallbackResults.length,
+      });
+      return fallbackResults;
+    }
   }
 
   async relevanceExplain(params: {
@@ -852,62 +950,62 @@ export class MongoDBMemoryManager implements MemorySearchManager {
                 onTrace: (event) => traces.push(event),
               }),
           // Bridge-note chunks — same collection, different namespace filter
-        !explainSources.conversation
-          ? emptyResults
-          : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
-              maxResults: bridgeMaxResults,
-              minScore,
-              numCandidates: mongoCfg.numCandidates,
-              sessionKey: params.sessionKey,
-              filter: this.buildBridgeChunkFilter(),
-              fusionMethod: mongoCfg.fusionMethod,
-              capabilities: this.capabilities,
-              vectorIndexName: `${this.prefix}chunks_vector`,
-              textIndexName: `${this.prefix}chunks_text`,
-              vectorWeight: 0.7,
-              textWeight: 0.3,
-              embeddingMode: mongoCfg.embeddingMode,
-              explain: explainOpts,
-              onTrace: (event) => traces.push(event),
-            }),
-        // KB chunks — skip if reference source is disabled
-        !explainSources.reference
-          ? emptyResults
-          : searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
-              maxResults: Math.max(3, Math.floor(maxResults / 3)),
-              minScore,
-              numCandidates: mongoCfg.numCandidates,
-              vectorIndexName: `${this.prefix}kb_chunks_vector`,
-              textIndexName: `${this.prefix}kb_chunks_text`,
-              capabilities: this.capabilities,
-              embeddingMode: mongoCfg.embeddingMode,
-              kbDocs: kbCollection(this.db, this.prefix),
-              explain: explainOpts,
-            }).catch((err) => {
-              log.warn(`relevanceExplain KB search failed: ${String(err)}`);
-              return [] as MemorySearchResult[];
-            }),
-        // Structured memory — skip if structured source is disabled
-        !explainSources.structured
-          ? emptyResults
-          : searchStructuredMemory(
-              structuredMemCollection(this.db, this.prefix),
-              query,
-              queryVector,
-              {
-                maxResults: Math.max(3, Math.floor(maxResults / 3)),
+          !explainSources.conversation
+            ? emptyResults
+            : mongoSearch(chunksCollection(this.db, this.prefix), query, queryVector, {
+                maxResults: bridgeMaxResults,
                 minScore,
-                filter: { agentId: this.agentId },
                 numCandidates: mongoCfg.numCandidates,
+                sessionKey: params.sessionKey,
+                filter: this.buildBridgeChunkFilter(),
+                fusionMethod: mongoCfg.fusionMethod,
                 capabilities: this.capabilities,
-                vectorIndexName: `${this.prefix}structured_mem_vector`,
+                vectorIndexName: `${this.prefix}chunks_vector`,
+                textIndexName: `${this.prefix}chunks_text`,
+                vectorWeight: 0.7,
+                textWeight: 0.3,
                 embeddingMode: mongoCfg.embeddingMode,
                 explain: explainOpts,
-              },
-            ).catch((err) => {
-              log.warn(`relevanceExplain structured memory search failed: ${String(err)}`);
-              return [] as MemorySearchResult[];
-            }),
+                onTrace: (event) => traces.push(event),
+              }),
+          // KB chunks — skip if reference source is disabled
+          !explainSources.reference
+            ? emptyResults
+            : searchKB(kbChunksCollection(this.db, this.prefix), query, queryVector, {
+                maxResults: Math.max(3, Math.floor(maxResults / 3)),
+                minScore,
+                numCandidates: mongoCfg.numCandidates,
+                vectorIndexName: `${this.prefix}kb_chunks_vector`,
+                textIndexName: `${this.prefix}kb_chunks_text`,
+                capabilities: this.capabilities,
+                embeddingMode: mongoCfg.embeddingMode,
+                kbDocs: kbCollection(this.db, this.prefix),
+                explain: explainOpts,
+              }).catch((err) => {
+                log.warn(`relevanceExplain KB search failed: ${String(err)}`);
+                return [] as MemorySearchResult[];
+              }),
+          // Structured memory — skip if structured source is disabled
+          !explainSources.structured
+            ? emptyResults
+            : searchStructuredMemory(
+                structuredMemCollection(this.db, this.prefix),
+                query,
+                queryVector,
+                {
+                  maxResults: Math.max(3, Math.floor(maxResults / 3)),
+                  minScore,
+                  filter: { agentId: this.agentId },
+                  numCandidates: mongoCfg.numCandidates,
+                  capabilities: this.capabilities,
+                  vectorIndexName: `${this.prefix}structured_mem_vector`,
+                  embeddingMode: mongoCfg.embeddingMode,
+                  explain: explainOpts,
+                },
+              ).catch((err) => {
+                log.warn(`relevanceExplain structured memory search failed: ${String(err)}`);
+                return [] as MemorySearchResult[];
+              }),
         ]);
       const conversationResults = [...runtimeConversationResults, ...bridgeConversationResults];
       const legacyMethod: SearchMethod = this.detectSearchMethod(mongoCfg);
@@ -1148,6 +1246,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         `type: ${String(record.type ?? type)}`,
         `key: ${String(record.key ?? key)}`,
         `value: ${String(record.value ?? "")}`,
+        typeof record.revision === "number" ? `revision: ${record.revision}` : null,
+        record.validFrom instanceof Date ? `validFrom: ${record.validFrom.toISOString()}` : null,
         typeof record.context === "string" ? `context: ${record.context}` : null,
         Array.isArray(record.tags) && record.tags.length > 0
           ? `tags: ${record.tags.join(", ")}`
@@ -1164,6 +1264,29 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         type,
         key,
       };
+    }
+
+    if (rawPath.startsWith("event:")) {
+      const eventId = rawPath.slice("event:".length).trim();
+      if (!eventId) {
+        throw new Error("path required");
+      }
+      return await this.readCanonicalEvent(eventId, rawPath);
+    }
+
+    if (rawPath.startsWith("episode:")) {
+      const [basePath, queryString] = rawPath.split("?", 2);
+      const episodeId = basePath.slice("episode:".length).trim();
+      if (!episodeId) {
+        throw new Error("path required");
+      }
+      const query = new URLSearchParams(queryString ?? "");
+      const expand = query.get("expand")?.trim().toLowerCase();
+      return await this.readEpisodeLocator({
+        rawPath,
+        episodeId,
+        expandEvents: expand === "events" || expand === "full",
+      });
     }
 
     if (rawPath.startsWith("kb:") || rawPath.startsWith("reference:")) {
@@ -1196,7 +1319,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       };
     }
 
-    if (rawPath.startsWith("conversation:") || rawPath.startsWith("events/") || rawPath.startsWith("sessions/")) {
+    if (
+      rawPath.startsWith("conversation:") ||
+      rawPath.startsWith("events/") ||
+      rawPath.startsWith("sessions/")
+    ) {
       return await this.readConversationChunk(rawPath, params.from, params.lines);
     }
 
@@ -1231,6 +1358,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           lexical: lexicalEnabled,
           hybrid: hybridEnabled,
         },
+        searchMode: this.lastSearchMode,
+        searchModeDetails: this.lastSearchDetails,
         sourceCoverage: {
           reference: mongoCfg.sources?.reference?.enabled && mongoCfg.kb.enabled,
           conversation: mongoCfg.sources?.conversation?.enabled,
@@ -1299,6 +1428,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       .sort({ startLine: 1 })
       .toArray();
     if (docs.length === 0) {
+      if (normalizedPath.startsWith("events/")) {
+        const eventId = normalizedPath.slice("events/".length).trim();
+        if (eventId) {
+          return await this.readCanonicalEvent(eventId, `conversation:${normalizedPath}`);
+        }
+      }
       return {
         text: "",
         path: `conversation:${normalizedPath}`,
@@ -1316,6 +1451,35 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       locator: `conversation:${normalizedPath}`,
       source: "conversation" as const,
       sourceType: "conversation" as const,
+    };
+  }
+
+  private async readCanonicalEvent(eventId: string, rawPath: string) {
+    const event = await eventsCollection(this.db, this.prefix).findOne({
+      agentId: this.agentId,
+      eventId,
+    });
+    if (!event) {
+      return {
+        text: "",
+        path: rawPath,
+        locator: rawPath,
+        source: "conversation" as const,
+        sourceType: "conversation" as const,
+      };
+    }
+    const role = typeof event.role === "string" ? event.role : "unknown-role";
+    const body = typeof event.body === "string" ? event.body : "";
+    const timestamp =
+      event.timestamp instanceof Date ? `timestamp: ${event.timestamp.toISOString()}\n` : "";
+    return {
+      text: `${timestamp}${role}: ${body}`.trim(),
+      path: rawPath,
+      locator: rawPath,
+      source: "conversation" as const,
+      sourceType: "conversation" as const,
+      type: "event",
+      key: eventId,
     };
   }
 
@@ -1361,6 +1525,90 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       locator: rawPath,
       source: "reference" as const,
       sourceType: "reference" as const,
+    };
+  }
+
+  private async readEpisodeLocator(params: {
+    rawPath: string;
+    episodeId: string;
+    expandEvents: boolean;
+  }) {
+    const { rawPath, episodeId, expandEvents } = params;
+    const episode = await episodesCollection(this.db, this.prefix).findOne({
+      agentId: this.agentId,
+      episodeId,
+    });
+    if (!episode) {
+      return {
+        text: "",
+        path: rawPath,
+        locator: rawPath,
+        source: "conversation" as const,
+        sourceType: "conversation" as const,
+      };
+    }
+
+    const sourceEventIds = Array.isArray(episode.sourceEventIds)
+      ? episode.sourceEventIds.filter((value): value is string => typeof value === "string")
+      : Array.isArray(episode.eventIds)
+        ? episode.eventIds.filter((value): value is string => typeof value === "string")
+        : [];
+
+    const lines = [
+      `type: episode`,
+      `episodeId: ${episodeId}`,
+      typeof episode.type === "string" ? `episodeType: ${episode.type}` : null,
+      typeof episode.title === "string" ? `title: ${episode.title}` : null,
+      typeof episode.summary === "string" ? `summary: ${episode.summary}` : null,
+      episode.timeRange?.start instanceof Date
+        ? `timeRangeStart: ${episode.timeRange.start.toISOString()}`
+        : null,
+      episode.timeRange?.end instanceof Date
+        ? `timeRangeEnd: ${episode.timeRange.end.toISOString()}`
+        : null,
+      typeof episode.sourceEventCount === "number"
+        ? `sourceEventCount: ${episode.sourceEventCount}`
+        : `sourceEventCount: ${sourceEventIds.length}`,
+      sourceEventIds.length > 0 && !expandEvents
+        ? `expandLocator: episode:${episodeId}?expand=events`
+        : null,
+    ].filter(Boolean);
+
+    if (expandEvents && sourceEventIds.length > 0) {
+      const events = await eventsCollection(this.db, this.prefix)
+        .find({
+          agentId: this.agentId,
+          eventId: { $in: sourceEventIds },
+        })
+        .toArray();
+      const eventOrder = new Map(sourceEventIds.map((value, index) => [value, index]));
+      events.sort((a, b) => {
+        const left = eventOrder.get(String(a.eventId)) ?? Number.MAX_SAFE_INTEGER;
+        const right = eventOrder.get(String(b.eventId)) ?? Number.MAX_SAFE_INTEGER;
+        return left - right;
+      });
+
+      if (events.length > 0) {
+        lines.push("sourceEvents:");
+        for (const event of events) {
+          const timestamp =
+            event.timestamp instanceof Date ? event.timestamp.toISOString() : "unknown-time";
+          const role = typeof event.role === "string" ? event.role : "unknown-role";
+          const body = typeof event.body === "string" ? event.body : "";
+          lines.push(`[${timestamp}] ${role}: ${body}`);
+        }
+      }
+    }
+
+    return {
+      text: lines.join("\n"),
+      path: rawPath,
+      locator: rawPath,
+      source: "conversation" as const,
+      sourceType: "conversation" as const,
+      title: typeof episode.title === "string" ? episode.title : undefined,
+      type: "episode",
+      key: episodeId,
     };
   }
 
@@ -1634,6 +1882,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       prefix: this.prefix,
       entry: { ...entry, workspaceDir: this.workspaceDir },
       embeddingMode: mongoCfg.embeddingMode,
+      client: this.client,
     });
   }
 
@@ -1680,6 +1929,17 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       if (projected.chunkCreated) {
         this.chunkCount += 1;
       }
+      await extractAndUpsertEntities({
+        db: this.db,
+        prefix: this.prefix,
+        agentId: this.agentId,
+        eventContent: event.body,
+        scope,
+        scopeRef: written.scopeRef,
+        sourceEventId: written.eventId,
+      }).catch((err) => {
+        log.warn("entity projection failed after event write", { error: err });
+      });
       this.dirty = false;
       return { eventId: written.eventId, chunkCreated: projected.chunkCreated };
     };
@@ -1821,6 +2081,17 @@ export async function writeEventAndProject(
         ...(event.metadata ? { metadata: event.metadata } : {}),
       },
     });
+    await extractAndUpsertEntities({
+      db,
+      prefix,
+      agentId: event.agentId,
+      eventContent: event.body,
+      scope: event.scope as MemoryScope,
+      scopeRef: written.scopeRef,
+      sourceEventId: written.eventId,
+    }).catch((projErr) => {
+      log.warn("entity projection failed during writeEventAndProject", { error: projErr });
+    });
 
     const durationMs = Date.now() - startMs;
     await recordIngestRun({
@@ -1914,19 +2185,53 @@ function pickBestEntityMatch(candidates: Entity[], query: string): Entity | null
   if (candidates.length === 0) {
     return null;
   }
-  return [...candidates].sort((a, b) => {
-    const scoreDiff = entityMatchScore(b, query) - entityMatchScore(a, query);
-    if (scoreDiff !== 0) {
-      return scoreDiff;
+  return (
+    [...candidates].toSorted((a, b) => {
+      const scoreDiff = entityMatchScore(b, query) - entityMatchScore(a, query);
+      if (scoreDiff !== 0) {
+        return scoreDiff;
+      }
+      const recencyDiff =
+        (b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0) -
+        (a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0);
+      if (recencyDiff !== 0) {
+        return recencyDiff;
+      }
+      return a.name.localeCompare(b.name);
+    })[0] ?? null
+  );
+}
+
+function buildGraphQueryCandidates(query: string): string[] {
+  const candidates = new Set<string>();
+  const add = (value: string | undefined) => {
+    const trimmed = value?.trim();
+    if (trimmed && trimmed.length >= 2) {
+      candidates.add(trimmed);
     }
-    const recencyDiff =
-      (b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0) -
-      (a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0);
-    if (recencyDiff !== 0) {
-      return recencyDiff;
+  };
+
+  for (const match of query.matchAll(/"([^"]+)"/g)) {
+    add(match[1]);
+  }
+  for (const match of query.matchAll(/[@#]([A-Za-z0-9_./-]+)/g)) {
+    add(match[1]);
+  }
+  for (const match of query.matchAll(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b/g)) {
+    add(match[0]);
+  }
+
+  if (candidates.size === 0) {
+    const words = query
+      .split(/\s+/)
+      .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+      .filter((word) => word.length >= 4);
+    for (const word of words.slice(0, 4)) {
+      add(word);
     }
-    return a.name.localeCompare(b.name);
-  })[0] ?? null;
+  }
+
+  return Array.from(candidates).slice(0, 6);
 }
 
 /**
@@ -1944,25 +2249,75 @@ export async function searchV2(
     hasEpisodes?: boolean;
     hasGraphData?: boolean;
     maxResults?: number;
+    searchOptions?: {
+      minScore?: number;
+      sessionKey?: string;
+      numCandidates?: number;
+      capabilities?: DetectedCapabilities;
+      fusionMethod?: ResolvedMongoDBConfig["fusionMethod"];
+      embeddingMode?: ResolvedMongoDBConfig["embeddingMode"];
+      conversationFilter?: Document;
+      bridgeFilter?: Document;
+      bridgeMaxResults?: number;
+      scope?: MemoryScope;
+      scopeRef?: string;
+    };
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
   try {
-    const agentScopeRef = resolveScopeRef({ scope: "agent", agentId });
-    const conversationChunkFilter: Document = {
+    const graphQueryCandidates =
+      context.knownEntityNames && context.knownEntityNames.length > 0
+        ? context.knownEntityNames
+        : buildGraphQueryCandidates(query);
+    const scope = context.searchOptions?.scope ?? "agent";
+    const agentScopeRef = context.searchOptions?.scopeRef ?? resolveScopeRef({ scope, agentId });
+    const conversationChunkFilter: Document = context.searchOptions?.conversationFilter ?? {
       source: { $in: ["conversation", "sessions"] },
       agentId,
     };
+    const bridgeChunkFilter = context.searchOptions?.bridgeFilter;
+    const maxResults = context.maxResults ?? 20;
+    const minScore = context.searchOptions?.minScore ?? 0.1;
+    const numCandidates = context.searchOptions?.numCandidates ?? 200;
+    const capabilities = context.searchOptions?.capabilities ?? {
+      vectorSearch: true,
+      textSearch: true,
+      scoreFusion: true,
+      rankFusion: false,
+    };
+    const fusionMethod = context.searchOptions?.fusionMethod ?? "scoreFusion";
+    const embeddingMode = context.searchOptions?.embeddingMode ?? "automated";
+    const bridgeMaxResults =
+      context.searchOptions?.bridgeMaxResults ?? Math.max(2, Math.ceil(maxResults / 3));
     const plan = planRetrieval(query, {
       availablePaths: context.availablePaths,
-      knownEntityNames: context.knownEntityNames,
+      knownEntityNames: graphQueryCandidates,
       hasEpisodes: context.hasEpisodes,
       hasGraphData: context.hasGraphData,
     });
+    const constrainedGraphCandidates =
+      plan.constraints?.entities?.names && plan.constraints.entities.names.length > 0
+        ? plan.constraints.entities.names
+        : graphQueryCandidates;
+    const timeRange = plan.constraints?.timeRange
+      ? resolveTimeRangePreset(plan.constraints.timeRange.preset)
+      : undefined;
+    const structuredFilter: {
+      agentId: string;
+      type?: string;
+    } = {
+      agentId,
+      ...(plan.constraints?.structured?.type ? { type: plan.constraints.structured.type } : {}),
+    };
+    const kbFilter = plan.constraints?.kb
+      ? plan.constraints.kb.source
+        ? { source: plan.constraints.kb.source }
+        : {}
+      : undefined;
 
     const results: MemorySearchResult[] = [];
     const pathsExecuted: RetrievalPath[] = [];
     const resultsByPath: Record<string, number> = {};
-    const maxResults = context.maxResults ?? 20;
 
     // Execute top 3 paths from plan (avoid executing all 6)
     const pathsToExecute = plan.paths.slice(0, 3);
@@ -1979,17 +2334,12 @@ export async function searchV2(
               null,
               {
                 maxResults: context.maxResults ?? 10,
-                minScore: 0.1,
-                filter: { agentId },
-                numCandidates: 200,
-                capabilities: {
-                  vectorSearch: true,
-                  textSearch: true,
-                  scoreFusion: true,
-                  rankFusion: false,
-                },
+                minScore,
+                filter: structuredFilter,
+                numCandidates,
+                capabilities,
                 vectorIndexName: `${prefix}structured_mem_vector`,
-                embeddingMode: "automated",
+                embeddingMode,
               },
             ).catch((err) => {
               log.warn(`searchV2 structured path failed: ${String(err)}`);
@@ -1999,20 +2349,21 @@ export async function searchV2(
             break;
           }
           case "raw-window": {
-            const now = new Date();
-            const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
             const events = await getEventsByTimeRange({
               db,
               prefix,
               agentId,
-              start: dayAgo,
-              end: now,
-              scope: "agent",
+              start: timeRange?.start ?? new Date(Date.now() - 24 * 60 * 60 * 1000),
+              end: timeRange?.end ?? new Date(),
+              scope,
               scopeRef: agentScopeRef,
             });
-            pathResults = events.map((e, i) => ({
-              path: `event:${e.eventId}`,
-              filePath: `event:${e.eventId}`,
+            const recentFirst = [...events].toSorted(
+              (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
+            );
+            pathResults = recentFirst.map((e, i) => ({
+              path: `events/${e.eventId}`,
+              filePath: `events/${e.eventId}`,
               startLine: 0,
               endLine: 0,
               snippet: e.body,
@@ -2022,16 +2373,16 @@ export async function searchV2(
             break;
           }
           case "graph": {
-            if (context.knownEntityNames?.length) {
+            if (constrainedGraphCandidates.length > 0) {
               const candidateEntities = (
                 await Promise.all(
-                  context.knownEntityNames.slice(0, 3).map((name) =>
+                  constrainedGraphCandidates.slice(0, 4).map((name) =>
                     findEntitiesByName({
                       db,
                       prefix,
                       query: name,
                       agentId,
-                      scope: "agent",
+                      scope,
                       scopeRef: agentScopeRef,
                       limit: 5,
                     }),
@@ -2045,7 +2396,7 @@ export async function searchV2(
                   prefix,
                   entityId: entity.entityId,
                   agentId,
-                  scope: "agent",
+                  scope,
                   scopeRef: agentScopeRef,
                 });
                 if (graph) {
@@ -2076,8 +2427,9 @@ export async function searchV2(
               prefix,
               query,
               agentId,
-              scope: "agent",
+              scope,
               scopeRef: agentScopeRef,
+              ...(timeRange ? { timeRange } : {}),
             });
             pathResults = episodes.map((ep, i) => ({
               path: `episode:${ep.episodeId}`,
@@ -2091,44 +2443,62 @@ export async function searchV2(
             break;
           }
           case "hybrid": {
-            const hybridHits = await mongoSearch(chunksCollection(db, prefix), query, null, {
-              maxResults: context.maxResults ?? 10,
-              minScore: 0.1,
-              numCandidates: 200,
-              filter: conversationChunkFilter,
-              fusionMethod: "scoreFusion",
-              capabilities: {
-                vectorSearch: true,
-                textSearch: true,
-                scoreFusion: true,
-                rankFusion: false,
-              },
-              vectorIndexName: `${prefix}chunks_vector`,
-              textIndexName: `${prefix}chunks_text`,
-              vectorWeight: 0.7,
-              textWeight: 0.3,
-              embeddingMode: "automated",
-            }).catch((err) => {
-              log.warn(`searchV2 hybrid path failed: ${String(err)}`);
-              return [] as MemorySearchResult[];
-            });
-            pathResults = hybridHits;
+            const searches: Array<Promise<MemorySearchResult[]>> = [];
+            if (conversationChunkFilter) {
+              searches.push(
+                mongoSearch(chunksCollection(db, prefix), query, null, {
+                  maxResults: context.maxResults ?? 10,
+                  minScore,
+                  numCandidates,
+                  sessionKey: context.searchOptions?.sessionKey,
+                  filter: conversationChunkFilter,
+                  fusionMethod,
+                  capabilities,
+                  vectorIndexName: `${prefix}chunks_vector`,
+                  textIndexName: `${prefix}chunks_text`,
+                  vectorWeight: 0.7,
+                  textWeight: 0.3,
+                  embeddingMode,
+                }).catch((err) => {
+                  log.warn(`searchV2 hybrid conversation path failed: ${String(err)}`);
+                  return [] as MemorySearchResult[];
+                }),
+              );
+            }
+            if (bridgeChunkFilter) {
+              searches.push(
+                mongoSearch(chunksCollection(db, prefix), query, null, {
+                  maxResults: bridgeMaxResults,
+                  minScore,
+                  numCandidates,
+                  sessionKey: context.searchOptions?.sessionKey,
+                  filter: bridgeChunkFilter,
+                  fusionMethod,
+                  capabilities,
+                  vectorIndexName: `${prefix}chunks_vector`,
+                  textIndexName: `${prefix}chunks_text`,
+                  vectorWeight: 0.7,
+                  textWeight: 0.3,
+                  embeddingMode,
+                }).catch((err) => {
+                  log.warn(`searchV2 hybrid bridge path failed: ${String(err)}`);
+                  return [] as MemorySearchResult[];
+                }),
+              );
+            }
+            pathResults = searches.length > 0 ? (await Promise.all(searches)).flat() : [];
             break;
           }
           case "kb": {
             const kbHits = await searchKB(kbChunksCollection(db, prefix), query, null, {
               maxResults: Math.max(3, Math.floor((context.maxResults ?? 10) / 3)),
-              minScore: 0.1,
-              numCandidates: 200,
+              minScore,
+              ...(kbFilter ? { filter: kbFilter } : {}),
+              numCandidates,
               vectorIndexName: `${prefix}kb_chunks_vector`,
               textIndexName: `${prefix}kb_chunks_text`,
-              capabilities: {
-                vectorSearch: true,
-                textSearch: true,
-                scoreFusion: true,
-                rankFusion: false,
-              },
-              embeddingMode: "automated",
+              capabilities,
+              embeddingMode,
               kbDocs: kbCollection(db, prefix),
             }).catch((err) => {
               log.warn(`searchV2 kb path failed: ${String(err)}`);
@@ -2175,8 +2545,98 @@ export type V2Status = {
   relations: { count: number };
   episodes: { count: number; latestTimestamp?: Date };
   projectionLag: Record<string, number | null>;
+  health: {
+    overall: "ok" | "degraded" | "health-uncertain";
+    retrieval: "ok" | "retrieval-degraded" | "health-uncertain";
+    recentNoRelevantResults: boolean;
+    canonicalIngest: "ok" | "canonical-ingest-failed" | "health-uncertain";
+    derivedProducts: Record<
+      string,
+      "ok" | "projection-behind" | "derived-product-unavailable" | "health-uncertain"
+    >;
+    diagnostics: string[];
+  };
   retrievalPaths: string[];
 };
+
+const PROJECTION_BEHIND_SECONDS = 5 * 60;
+
+export function classifyCanonicalIngestHealth(
+  latestIngestRun: Pick<IngestRun, "status"> | null,
+): "ok" | "canonical-ingest-failed" | "health-uncertain" {
+  if (!latestIngestRun) {
+    return "health-uncertain";
+  }
+  return latestIngestRun.status === "failed" ? "canonical-ingest-failed" : "ok";
+}
+
+export function classifyProjectionHealth(params: {
+  latestRun: Pick<ProjectionRun, "status"> | null;
+  lagSeconds: number | null;
+}): "ok" | "projection-behind" | "derived-product-unavailable" | "health-uncertain" {
+  const { latestRun, lagSeconds } = params;
+  if (!latestRun) {
+    return "health-uncertain";
+  }
+  if (latestRun.status === "failed") {
+    return "derived-product-unavailable";
+  }
+  if (lagSeconds === null) {
+    return "health-uncertain";
+  }
+  if (lagSeconds > PROJECTION_BEHIND_SECONDS) {
+    return "projection-behind";
+  }
+  return "ok";
+}
+
+export function classifyRetrievalHealth(params: {
+  status?: string | null;
+  hitSources?: string[] | null;
+}): {
+  state: "ok" | "retrieval-degraded" | "health-uncertain";
+  recentNoRelevantResults: boolean;
+} {
+  const status = params.status ?? null;
+  const hitSources = params.hitSources ?? [];
+  if (status === "ok") {
+    return { state: "ok", recentNoRelevantResults: false };
+  }
+  if (status === "degraded") {
+    return {
+      state: "retrieval-degraded",
+      recentNoRelevantResults: hitSources.length === 0,
+    };
+  }
+  return { state: "health-uncertain", recentNoRelevantResults: false };
+}
+
+export function computeOverallV2Health(params: {
+  retrieval: "ok" | "retrieval-degraded" | "health-uncertain";
+  canonicalIngest: "ok" | "canonical-ingest-failed" | "health-uncertain";
+  derivedProducts: Array<
+    "ok" | "projection-behind" | "derived-product-unavailable" | "health-uncertain"
+  >;
+}): "ok" | "degraded" | "health-uncertain" {
+  const { retrieval, canonicalIngest, derivedProducts } = params;
+  if (
+    retrieval === "retrieval-degraded" ||
+    canonicalIngest === "canonical-ingest-failed" ||
+    derivedProducts.some(
+      (state) => state === "projection-behind" || state === "derived-product-unavailable",
+    )
+  ) {
+    return "degraded";
+  }
+  if (
+    retrieval === "health-uncertain" ||
+    canonicalIngest === "health-uncertain" ||
+    derivedProducts.some((state) => state === "health-uncertain")
+  ) {
+    return "health-uncertain";
+  }
+  return "ok";
+}
 
 /**
  * Gather v2 health metrics: collection counts, projection lag, available retrieval paths.
@@ -2192,6 +2652,15 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
       getProjectionLag({ db, prefix, agentId, projectionType: "entities" }),
       getProjectionLag({ db, prefix, agentId, projectionType: "relations" }),
       getProjectionLag({ db, prefix, agentId, projectionType: "episodes" }),
+      getLatestIngestRun({ db, prefix, agentId }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "chunks" }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "entities" }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "relations" }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "episodes" }),
+      relevanceRunsCollection(db, prefix).findOne(
+        { agentId },
+        { sort: { ts: -1 }, projection: { status: 1, hitSources: 1 } },
+      ),
       eventsCollection(db, prefix).findOne(
         { agentId },
         { sort: { timestamp: -1 }, projection: { timestamp: 1 } },
@@ -2214,8 +2683,64 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
     const entitiesLag = val(settled[5], null);
     const relationsLag = val(settled[6], null);
     const episodesLag = val(settled[7], null);
-    const latestEvent = val(settled[8], null) as { timestamp?: Date } | null;
-    const latestEpisode = val(settled[9], null) as { updatedAt?: Date } | null;
+    const latestIngest = val(settled[8], null);
+    const latestChunksProjection = val(settled[9], null);
+    const latestEntitiesProjection = val(settled[10], null);
+    const latestRelationsProjection = val(settled[11], null);
+    const latestEpisodesProjection = val(settled[12], null);
+    const latestRetrieval = val(settled[13], null) as {
+      status?: string;
+      hitSources?: string[];
+    } | null;
+    const latestEvent = val(settled[14], null) as { timestamp?: Date } | null;
+    const latestEpisode = val(settled[15], null) as { updatedAt?: Date } | null;
+
+    const canonicalIngest = classifyCanonicalIngestHealth(latestIngest);
+    const retrievalHealth = classifyRetrievalHealth({
+      status: latestRetrieval?.status,
+      hitSources: latestRetrieval?.hitSources,
+    });
+    const derivedProducts = {
+      chunks: classifyProjectionHealth({
+        latestRun: latestChunksProjection,
+        lagSeconds: chunksLag,
+      }),
+      entities: classifyProjectionHealth({
+        latestRun: latestEntitiesProjection,
+        lagSeconds: entitiesLag,
+      }),
+      relations: classifyProjectionHealth({
+        latestRun: latestRelationsProjection,
+        lagSeconds: relationsLag,
+      }),
+      episodes: classifyProjectionHealth({
+        latestRun: latestEpisodesProjection,
+        lagSeconds: episodesLag,
+      }),
+    };
+    const diagnostics = [
+      retrievalHealth.state === "retrieval-degraded" ? "retrieval-degraded" : null,
+      retrievalHealth.recentNoRelevantResults ? "no-relevant-results" : null,
+      canonicalIngest === "canonical-ingest-failed" ? "canonical-ingest-failed" : null,
+      canonicalIngest === "health-uncertain" ? "health-uncertain:canonical-ingest" : null,
+      ...Object.entries(derivedProducts).map(([name, state]) => {
+        if (state === "projection-behind") {
+          return `projection-behind:${name}`;
+        }
+        if (state === "derived-product-unavailable") {
+          return `derived-product-unavailable:${name}`;
+        }
+        if (state === "health-uncertain") {
+          return `health-uncertain:${name}`;
+        }
+        return null;
+      }),
+    ].filter((value): value is string => Boolean(value));
+    const overall = computeOverallV2Health({
+      retrieval: retrievalHealth.state,
+      canonicalIngest,
+      derivedProducts: Object.values(derivedProducts),
+    });
 
     // Log any individual failures for diagnostics
     for (const r of settled) {
@@ -2240,6 +2765,14 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
         entities: entitiesLag,
         relations: relationsLag,
         episodes: episodesLag,
+      },
+      health: {
+        overall,
+        retrieval: retrievalHealth.state,
+        recentNoRelevantResults: retrievalHealth.recentNoRelevantResults,
+        canonicalIngest,
+        derivedProducts,
+        diagnostics,
       },
       retrievalPaths: ["structured", "raw-window", "graph", "hybrid", "kb", "episodic"],
     };

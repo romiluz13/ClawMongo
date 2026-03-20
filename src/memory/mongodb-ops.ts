@@ -124,6 +124,40 @@ export async function getRecentProjectionRuns(params: {
   }
 }
 
+export async function getLatestIngestRun(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+}): Promise<IngestRun | null> {
+  const { db, prefix, agentId } = params;
+  try {
+    const doc = await ingestRunsCollection(db, prefix).findOne({ agentId }, { sort: { ts: -1 } });
+    return (doc as IngestRun | null) ?? null;
+  } catch (err) {
+    log.error("getLatestIngestRun failed", { agentId, error: err });
+    throw err;
+  }
+}
+
+export async function getLatestProjectionRun(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  projectionType: ProjectionType;
+}): Promise<ProjectionRun | null> {
+  const { db, prefix, agentId, projectionType } = params;
+  try {
+    const doc = await projectionRunsCollection(db, prefix).findOne(
+      { agentId, projectionType },
+      { sort: { ts: -1 } },
+    );
+    return (doc as ProjectionRun | null) ?? null;
+  } catch (err) {
+    log.error("getLatestProjectionRun failed", { agentId, projectionType, error: err });
+    throw err;
+  }
+}
+
 export async function getProjectionLag(params: {
   db: Db;
   prefix: string;

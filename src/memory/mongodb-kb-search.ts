@@ -6,6 +6,7 @@ import type { DetectedCapabilities } from "./mongodb-schema.js";
 import {
   buildVectorSearchStage,
   MONGODB_MAX_NUM_CANDIDATES,
+  splitAtlasSearchFilter,
   type SearchExplainOptions,
 } from "./mongodb-search.js";
 import type { MemorySearchResult } from "./types.js";
@@ -129,6 +130,7 @@ export async function searchKB(
   // F12: Try hybrid search (rankFusion) when both vector and text are available
   if (canVector && canText && opts.capabilities.rankFusion) {
     try {
+      const { compoundFilter, postMatch } = splitAtlasSearchFilter(chunkFilter);
       const vsStage = buildVectorSearchStage({
         queryVector,
         queryText: query,
@@ -152,10 +154,11 @@ export async function searchKB(
                         index: opts.textIndexName,
                         compound: {
                           must: [{ text: { query, path: "text" } }],
+                          ...(compoundFilter ? { filter: compoundFilter } : {}),
                         },
                       },
                     },
-                    ...(chunkFilter ? [{ $match: chunkFilter }] : []),
+                    ...(postMatch ? [{ $match: postMatch }] : []),
                     { $limit: opts.maxResults * 4 },
                   ],
                 },
@@ -265,17 +268,19 @@ export async function searchKB(
   // Keyword search fallback using $search
   if (canText) {
     try {
+      const { compoundFilter, postMatch } = splitAtlasSearchFilter(chunkFilter);
       const pipeline: Document[] = [
         {
           $search: {
             index: opts.textIndexName,
             compound: {
               must: [{ text: { query, path: "text" } }],
+              ...(compoundFilter ? { filter: compoundFilter } : {}),
             },
             ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
           },
         },
-        ...(chunkFilter ? [{ $match: chunkFilter }] : []),
+        ...(postMatch ? [{ $match: postMatch }] : []),
         { $limit: opts.maxResults * 4 },
         {
           $project: {

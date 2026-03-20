@@ -245,4 +245,33 @@ describe("searchKB", () => {
     const vsStage = pipeline[0].$vectorSearch;
     expect(vsStage.filter).toEqual({ docId: { $in: ["doc-a", "doc-b"] } });
   });
+
+  it("pushes KB docId filters into the text-side compound.filter", async () => {
+    const hybridCaps: DetectedCapabilities = {
+      ...baseCapabilities,
+      rankFusion: true,
+    };
+    const col = mockKBChunksCol([
+      { path: "filtered.md", startLine: 1, endLine: 3, text: "filtered", score: 0.8 },
+    ]);
+    const kbDocs = mockKBDocsCol(["doc-a", "doc-b"]);
+
+    await searchKB(col, "filtered", [0.2], {
+      maxResults: 5,
+      minScore: 0.1,
+      filter: { tags: ["docs"], category: "architecture", source: "file" },
+      kbDocs,
+      vectorIndexName: "test_kb_chunks_vector",
+      textIndexName: "test_kb_chunks_text",
+      capabilities: hybridCaps,
+      embeddingMode: "automated",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const textPipeline = pipeline[0].$rankFusion.input.pipelines.text;
+    expect(textPipeline[0].$search.compound.filter).toEqual([
+      { in: { path: "docId", value: ["doc-a", "doc-b"] } },
+    ]);
+    expect(textPipeline[1]?.$match).toBeUndefined();
+  });
 });

@@ -47,9 +47,9 @@ import { getRecentIngestRuns } from "./mongodb-ops.js";
 import { planRetrieval } from "./mongodb-retrieval-planner.js";
 // Schema setup
 import { ensureCollections, ensureStandardIndexes, ensureSearchIndexes } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 // Search functions (direct vector search, keyword search, hybrid)
 import { vectorSearch, keywordSearch, buildVectorSearchStage } from "./mongodb-search.js";
-import { resolveScopeRef } from "./mongodb-scope.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -61,8 +61,8 @@ const PREFIX = "clawtest_";
 const AGENT_ID = `agent-e2e-${randomUUID().slice(0, 8)}`;
 const AUTO_EMBED_ENABLED = Boolean(
   process.env.VOYAGE_API_KEY ||
-    process.env.VOYAGE_API_QUERY_KEY ||
-    process.env.VOYAGE_API_INDEXING_KEY,
+  process.env.VOYAGE_API_QUERY_KEY ||
+  process.env.VOYAGE_API_INDEXING_KEY,
 );
 
 async function waitForVectorResults(
@@ -1020,8 +1020,16 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     it("should keep auto episode consolidation scoped to the requested session scopeRef", async () => {
       const sessionA = `scope-a-${randomUUID().slice(0, 8)}`;
       const sessionB = `scope-b-${randomUUID().slice(0, 8)}`;
-      const sessionAScopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId: sessionA });
-      const sessionBScopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId: sessionB });
+      const sessionAScopeRef = resolveScopeRef({
+        scope: "session",
+        agentId: AGENT_ID,
+        sessionId: sessionA,
+      });
+      const sessionBScopeRef = resolveScopeRef({
+        scope: "session",
+        agentId: AGENT_ID,
+        sessionId: sessionB,
+      });
 
       await writeEventAndProject(db, PREFIX, {
         agentId: AGENT_ID,
@@ -1116,6 +1124,16 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       expect(plan.paths[0]).toMatch(/raw-window|episodic/);
     });
 
+    it("should extract hard time constraints for explicit date windows", async () => {
+      const plan = planRetrieval("What happened yesterday with the deployment?", {
+        availablePaths: new Set(["raw-window", "graph", "hybrid", "episodic"]),
+        hasEpisodes: true,
+      });
+
+      expect(plan.constraints?.timeRange?.preset).toBe("yesterday");
+      expect(plan.constraints?.timeRange?.hard).toBe(true);
+    });
+
     it("should plan retrieval for keyword search", async () => {
       const plan = planRetrieval("MongoDB compound index optimization", {
         availablePaths: new Set(["raw-window", "hybrid", "kb", "structured"]),
@@ -1132,20 +1150,15 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
 
   describe("Phase 8: searchV2 Full Pipeline", () => {
     it("should search with raw-window path", async () => {
-      const { results, metadata } = await searchV2(
-        db,
-        PREFIX,
-        "data pipeline architecture",
-        AGENT_ID,
-        {
-          availablePaths: new Set(["raw-window"]),
-          maxResults: 10,
-        },
-      );
+      const { results, metadata } = await searchV2(db, PREFIX, "what happened today", AGENT_ID, {
+        availablePaths: new Set(["raw-window"]),
+        maxResults: 10,
+      });
 
       console.log(`  raw-window search: ${results.length} results`);
       console.log(`  Paths executed: ${metadata.pathsExecuted.join(", ")}`);
       expect(metadata.pathsExecuted).toContain("raw-window");
+      expect(metadata.plan.constraints?.timeRange?.preset).toBe("today");
     });
 
     it("should search with multiple paths including graph", async () => {
@@ -1220,6 +1233,23 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
 
   describe("Phase 9: V2 Status & Health", () => {
     it("should return comprehensive v2 status", async () => {
+      await db.collection(`${PREFIX}relevance_runs`).insertOne({
+        runId: `relevance-${randomUUID().slice(0, 8)}`,
+        agentId: AGENT_ID,
+        ts: new Date(),
+        sourceScope: "memory",
+        latencyMs: 12,
+        status: "ok",
+        queryHash: "phase9-health",
+        queryRedacted: "phase9-health",
+        profile: "e2e",
+        capabilities: {},
+        topK: 5,
+        hitSources: ["conversation", "episodic"],
+        sampleRate: 0.5,
+        sampled: true,
+      });
+
       const status = await getV2Status(db, PREFIX, AGENT_ID);
 
       console.log("\n  ═══ V2 System Status ═══");
@@ -1238,6 +1268,17 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       expect(status.events.count).toBeGreaterThan(0);
       expect(status.entities.count).toBeGreaterThan(0);
       expect(status.episodes.count).toBeGreaterThanOrEqual(1);
+      expect(status.projectionLag.chunks).not.toBeNull();
+      expect(status.projectionLag.entities).not.toBeNull();
+      expect(status.projectionLag.relations).not.toBeNull();
+      expect(status.projectionLag.episodes).not.toBeNull();
+      expect(status.health.overall).toBe("ok");
+      expect(status.health.retrieval).toBe("ok");
+      expect(status.health.canonicalIngest).toBe("ok");
+      expect(status.health.derivedProducts.chunks).toBe("ok");
+      expect(status.health.derivedProducts.entities).toBe("ok");
+      expect(status.health.derivedProducts.relations).toBe("ok");
+      expect(status.health.derivedProducts.episodes).toBe("ok");
       expect(status.retrievalPaths.length).toBeGreaterThan(0);
     });
 
@@ -1402,10 +1443,14 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         const chunkCount = await db.collection(`${PREFIX}chunks`).countDocuments({});
         expect(chunkCount).toBeGreaterThan(0);
 
-        const results = await waitForVectorResults(db, "data pipeline architecture and system design", {
-          maxResults: 5,
-          timeoutMs: VECTOR_SEARCH_TIMEOUT,
-        });
+        const results = await waitForVectorResults(
+          db,
+          "data pipeline architecture and system design",
+          {
+            maxResults: 5,
+            timeoutMs: VECTOR_SEARCH_TIMEOUT,
+          },
+        );
 
         // Should get results from the conversation chunks about DataVault architecture
         expect(results.length).toBeGreaterThan(0);
@@ -1430,10 +1475,14 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should find deployment-related content with semantic search",
       async () => {
-        const results = await waitForVectorResults(db, "Docker deployment Kubernetes production infrastructure", {
-          maxResults: 5,
-          timeoutMs: VECTOR_SEARCH_TIMEOUT,
-        });
+        const results = await waitForVectorResults(
+          db,
+          "Docker deployment Kubernetes production infrastructure",
+          {
+            maxResults: 5,
+            timeoutMs: VECTOR_SEARCH_TIMEOUT,
+          },
+        );
 
         expect(results.length).toBeGreaterThan(0);
 
@@ -1453,10 +1502,14 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should find bug-fix content with semantic search",
       async () => {
-        const results = await waitForVectorResults(db, "database connection error bug fix troubleshooting", {
-          maxResults: 5,
-          timeoutMs: VECTOR_SEARCH_TIMEOUT,
-        });
+        const results = await waitForVectorResults(
+          db,
+          "database connection error bug fix troubleshooting",
+          {
+            maxResults: 5,
+            timeoutMs: VECTOR_SEARCH_TIMEOUT,
+          },
+        );
 
         expect(results.length).toBeGreaterThan(0);
 
@@ -1502,10 +1555,14 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         // Search for a concept that appears in the conversation but with different words
         // The conversations discuss "real-time data processing with WebSocket"
         // but we search with synonymous terms
-        const results = await waitForVectorResults(db, "live streaming updates push notifications event-driven", {
-          maxResults: 10,
-          timeoutMs: VECTOR_SEARCH_TIMEOUT,
-        });
+        const results = await waitForVectorResults(
+          db,
+          "live streaming updates push notifications event-driven",
+          {
+            maxResults: 10,
+            timeoutMs: VECTOR_SEARCH_TIMEOUT,
+          },
+        );
 
         expect(results.length).toBeGreaterThan(0);
 

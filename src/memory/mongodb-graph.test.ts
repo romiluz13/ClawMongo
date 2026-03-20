@@ -4,6 +4,9 @@ import { describe, it, expect, vi } from "vitest";
 import {
   upsertEntity,
   upsertRelation,
+  upsertEntityLink,
+  setEntityLinkStatus,
+  getEntityLinks,
   findEntitiesByName,
   getEntitiesByType,
   expandGraph,
@@ -143,6 +146,111 @@ describe("mongodb-graph", () => {
       expect(update.$set.agentId).toBe("agent-1");
       expect(update.$set.scope).toBe("agent");
       expect(opts).toEqual({ upsert: true });
+    });
+  });
+
+  describe("upsertEntityLink", () => {
+    it("stores candidate links with a canonicalized entity pair", async () => {
+      const entityLinksCol = createMockCollection();
+      const db = createMockDb({ [`${PREFIX}entity_links`]: entityLinksCol });
+
+      const result = await upsertEntityLink({
+        db,
+        prefix: PREFIX,
+        link: {
+          fromEntityId: "ent-z",
+          toEntityId: "ent-a",
+          linkType: "candidate_same",
+          status: "active",
+          confidence: 0.65,
+          agentId: "agent-1",
+          scope: "agent",
+        },
+      });
+
+      expect(result.linkId).toBeTruthy();
+      const [filter, update, opts] = (entityLinksCol.updateOne as ReturnType<typeof vi.fn>).mock
+        .calls[0];
+      expect(filter).toEqual({
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        fromEntityId: "ent-a",
+        toEntityId: "ent-z",
+        linkType: "candidate_same",
+      });
+      expect(update.$set.status).toBe("active");
+      expect(update.$set.confidence).toBe(0.65);
+      expect(opts).toEqual({ upsert: true });
+    });
+  });
+
+  describe("setEntityLinkStatus", () => {
+    it("marks an existing link as rejected without changing the pair identity", async () => {
+      const entityLinksCol = createMockCollection({
+        updateOne: vi.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
+      });
+      const db = createMockDb({ [`${PREFIX}entity_links`]: entityLinksCol });
+
+      const changed = await setEntityLinkStatus({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        scope: "agent",
+        fromEntityId: "ent-b",
+        toEntityId: "ent-a",
+        linkType: "candidate_same",
+        status: "rejected",
+      });
+
+      expect(changed).toBe(true);
+      const [filter, update] = (entityLinksCol.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter.fromEntityId).toBe("ent-a");
+      expect(filter.toEntityId).toBe("ent-b");
+      expect(update.$set.status).toBe("rejected");
+    });
+  });
+
+  describe("getEntityLinks", () => {
+    it("returns links touching the requested entity", async () => {
+      const docs = [
+        {
+          linkId: "link-1",
+          fromEntityId: "ent-1",
+          toEntityId: "ent-2",
+          linkType: "candidate_same",
+          status: "active",
+          confidence: 0.65,
+          agentId: "agent-1",
+          scope: "agent",
+          scopeRef: "agent:agent-1",
+          updatedAt: new Date(),
+        },
+      ];
+      const entityLinksCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue(docs),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}entity_links`]: entityLinksCol });
+
+      const results = await getEntityLinks({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        entityId: "ent-1",
+        status: "active",
+      });
+
+      expect(results).toHaveLength(1);
+      const [filter] = (entityLinksCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter.agentId).toBe("agent-1");
+      expect(filter.status).toBe("active");
+      expect(filter.$or).toEqual([{ fromEntityId: "ent-1" }, { toEntityId: "ent-1" }]);
     });
   });
 
@@ -510,7 +618,9 @@ describe("mongodb-graph", () => {
               agentId: "agent-1",
               scope: "agent",
               updatedAt: new Date("2026-01-01"),
-              transitiveRelations: [{ fromEntityId: "ent-3", toEntityId: "ent-4", type: "depends_on", depth: 0 }],
+              transitiveRelations: [
+                { fromEntityId: "ent-3", toEntityId: "ent-4", type: "depends_on", depth: 0 },
+              ],
             },
           ]),
         }),
@@ -628,9 +738,11 @@ describe("mongodb-graph", () => {
     it("extracts @mentions as person entities", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -649,9 +761,11 @@ describe("mongodb-graph", () => {
     it("extracts #tags as topic entities", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -670,9 +784,11 @@ describe("mongodb-graph", () => {
     it("extracts URLs as document entities", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -691,9 +807,11 @@ describe("mongodb-graph", () => {
     it("extracts file paths as document entities", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -712,9 +830,11 @@ describe("mongodb-graph", () => {
     it("extracts 'quoted names' as person entities (min 3 chars)", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -733,9 +853,11 @@ describe("mongodb-graph", () => {
     it("filters out stop words and short names", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -752,9 +874,11 @@ describe("mongodb-graph", () => {
     it("generates deterministic entityIds via hash", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result1 = await extractAndUpsertEntities({
@@ -781,9 +905,11 @@ describe("mongodb-graph", () => {
     it("returns empty result for content with no extractable entities", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
       });
 
       const result = await extractAndUpsertEntities({
@@ -795,6 +921,35 @@ describe("mongodb-graph", () => {
       });
 
       expect(result.entities).toHaveLength(0);
+    });
+
+    it("creates candidate_same links for ambiguous person mentions without merging them", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
+      });
+
+      await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: 'Pair @sarah with "Sarah Chen" on the design review.',
+        scope: "agent",
+        sourceEventId: "evt-1",
+      });
+
+      const linkCalls = (entityLinksCol.updateOne as ReturnType<typeof vi.fn>).mock.calls;
+      expect(linkCalls.length).toBeGreaterThan(0);
+      const candidateCall = linkCalls.find(
+        ([filter]: [Record<string, unknown>]) => filter.linkType === "candidate_same",
+      );
+      expect(candidateCall).toBeDefined();
+      expect(candidateCall?.[1].$set.status).toBe("active");
+      expect(candidateCall?.[1].$set.provenance.heuristic).toBe("shared-name-tokens");
     });
   });
 });

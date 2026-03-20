@@ -7,6 +7,7 @@ import {
   getUnconsolidatedEvents,
   markEventsConsolidated,
 } from "./mongodb-events.js";
+import { recordProjectionRun } from "./mongodb-ops.js";
 import { episodesCollection } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 
@@ -46,7 +47,9 @@ export type EpisodeSummarizer = (
   tags?: string[];
 }>;
 
-function buildEpisodeSummarizerInput(events: Array<{ role: string; body: string; timestamp: Date }>) {
+function buildEpisodeSummarizerInput(
+  events: Array<{ role: string; body: string; timestamp: Date }>,
+) {
   const conversational = events.filter((event) => {
     const body = event.body.trim();
     return body.length > 0 && (event.role === "user" || event.role === "assistant");
@@ -101,6 +104,7 @@ export async function materializeEpisode(params: {
   summarizer: EpisodeSummarizer;
 }): Promise<Episode | null> {
   const { db, prefix, agentId, type, timeRange, scope, summarizer } = params;
+  const startMs = Date.now();
   try {
     const resolvedScope = scope ?? "agent";
     const scopeRef = resolveScopeRef({
@@ -124,6 +128,17 @@ export async function materializeEpisode(params: {
       log.info(
         `skipping episode materialization: only ${events.length} events in range for agent=${agentId}`,
       );
+      await recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "episodes",
+          status: "partial",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }).catch(() => {});
       return null;
     }
 
@@ -139,6 +154,17 @@ export async function materializeEpisode(params: {
       log.info(
         `skipping episode materialization: only ${summarizerInput.length} conversational events in range for agent=${agentId}`,
       );
+      await recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "episodes",
+          status: "partial",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }).catch(() => {});
       return null;
     }
     const { title, summary, tags } = await summarizer(summarizerInput);
@@ -215,8 +241,30 @@ export async function materializeEpisode(params: {
     log.info(
       `episode materialized: ${episodeId} type=${type} events=${events.length} agent=${agentId}`,
     );
+    await recordProjectionRun({
+      db,
+      prefix,
+      run: {
+        agentId,
+        projectionType: "episodes",
+        status: "ok",
+        itemsProjected: 1,
+        durationMs: Date.now() - startMs,
+      },
+    }).catch(() => {});
     return episode;
   } catch (err) {
+    await recordProjectionRun({
+      db,
+      prefix,
+      run: {
+        agentId,
+        projectionType: "episodes",
+        status: "failed",
+        itemsProjected: 0,
+        durationMs: Date.now() - startMs,
+      },
+    }).catch(() => {});
     log.error(`materializeEpisode failed: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   }
@@ -313,9 +361,10 @@ export async function searchEpisodes(params: {
   agentId: string;
   scope?: MemoryScope;
   scopeRef?: string;
+  timeRange?: { start: Date; end: Date };
   limit?: number;
 }): Promise<Episode[]> {
-  const { db, prefix, query, agentId, scope, scopeRef, limit } = params;
+  const { db, prefix, query, agentId, scope, scopeRef, timeRange, limit } = params;
 
   // Guard: empty/whitespace-only query would produce a match-all regex
   if (!query.trim()) {
@@ -340,6 +389,10 @@ export async function searchEpisodes(params: {
     }
     if (scopeRef) {
       filter.scopeRef = scopeRef;
+    }
+    if (timeRange) {
+      filter["timeRange.start"] = { $lte: timeRange.end };
+      filter["timeRange.end"] = { $gte: timeRange.start };
     }
 
     const docs = await col

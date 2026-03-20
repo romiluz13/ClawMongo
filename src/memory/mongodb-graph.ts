@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { entitiesCollection, relationsCollection } from "./mongodb-schema.js";
+import { recordProjectionRun } from "./mongodb-ops.js";
+import {
+  entitiesCollection,
+  entityLinksCollection,
+  relationsCollection,
+} from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 
 const log = createSubsystemLogger("memory:mongodb:graph");
@@ -56,6 +61,24 @@ export type Relation = {
   updatedAt: Date;
 };
 
+export type EntityLinkType = "confirmed_same" | "candidate_same" | "related_mention";
+export type EntityLinkStatus = "active" | "rejected";
+
+export type EntityLink = {
+  linkId: string;
+  fromEntityId: string;
+  toEntityId: string;
+  linkType: EntityLinkType;
+  status: EntityLinkStatus;
+  confidence: number;
+  agentId: string;
+  scope: MemoryScope;
+  scopeRef?: string;
+  sourceEventIds?: string[];
+  provenance?: Record<string, unknown>;
+  updatedAt: Date;
+};
+
 export type GraphExpansionResult = {
   rootEntity: Entity;
   connections: Array<{
@@ -84,6 +107,64 @@ function relationPriority(type: RelationType): number {
 
 function relationRecency(value: unknown): number {
   return value instanceof Date ? value.getTime() : 0;
+}
+
+function canonicalizeEntityPair(left: string, right: string) {
+  return left <= right
+    ? { fromEntityId: left, toEntityId: right }
+    : { fromEntityId: right, toEntityId: left };
+}
+
+function makeEntityLinkId(params: {
+  fromEntityId: string;
+  toEntityId: string;
+  linkType: EntityLinkType;
+  agentId: string;
+  scope: MemoryScope;
+  scopeRef: string;
+}): string {
+  return createHash("sha256")
+    .update(
+      `${params.agentId}:${params.scope}:${params.scopeRef}:${params.fromEntityId}:${params.toEntityId}:${params.linkType}`,
+    )
+    .digest("hex")
+    .slice(0, 24);
+}
+
+function normalizeEntityNameTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function inferEntityLinkType(
+  left: ExtractedEntity,
+  right: ExtractedEntity,
+): { linkType: EntityLinkType; confidence: number; provenance?: Record<string, unknown> } {
+  const leftTokens = normalizeEntityNameTokens(left.name);
+  const rightTokens = normalizeEntityNameTokens(right.name);
+  const sharedTokens = leftTokens.filter((token) => rightTokens.includes(token));
+
+  if (
+    left.type === right.type &&
+    left.type === "person" &&
+    sharedTokens.length > 0 &&
+    left.entityId !== right.entityId
+  ) {
+    return {
+      linkType: "candidate_same",
+      confidence: 0.65,
+      provenance: { heuristic: "shared-name-tokens", sharedTokens },
+    };
+  }
+
+  return {
+    linkType: "related_mention",
+    confidence: 0.2,
+    provenance: { heuristic: "co-mentioned" },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +280,143 @@ export async function upsertRelation(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Upsert entity link
+// ---------------------------------------------------------------------------
+
+export async function upsertEntityLink(params: {
+  db: Db;
+  prefix: string;
+  link: Omit<EntityLink, "linkId" | "updatedAt" | "scopeRef"> & {
+    linkId?: string;
+    updatedAt?: Date;
+    scopeRef?: string;
+  };
+}): Promise<{ upserted: boolean; linkId: string }> {
+  const { db, prefix, link } = params;
+  try {
+    const collection = entityLinksCollection(db, prefix);
+    const scopeRef = resolveScopeRef({
+      scope: link.scope,
+      scopeRef: link.scopeRef,
+      agentId: link.agentId,
+    });
+    const pair = canonicalizeEntityPair(link.fromEntityId, link.toEntityId);
+    const linkId =
+      link.linkId ??
+      makeEntityLinkId({
+        ...pair,
+        linkType: link.linkType,
+        agentId: link.agentId,
+        scope: link.scope,
+        scopeRef,
+      });
+    const now = link.updatedAt ?? new Date();
+    const setDoc: Document = {
+      linkId,
+      ...pair,
+      linkType: link.linkType,
+      status: link.status,
+      confidence: link.confidence,
+      agentId: link.agentId,
+      scope: link.scope,
+      scopeRef,
+      updatedAt: now,
+    };
+    if (link.sourceEventIds !== undefined) {
+      setDoc.sourceEventIds = link.sourceEventIds;
+    }
+    if (link.provenance !== undefined) {
+      setDoc.provenance = link.provenance;
+    }
+
+    const result = await collection.updateOne(
+      {
+        agentId: link.agentId,
+        scope: link.scope,
+        scopeRef,
+        fromEntityId: pair.fromEntityId,
+        toEntityId: pair.toEntityId,
+        linkType: link.linkType,
+      },
+      { $set: setDoc, $setOnInsert: { createdAt: now } },
+      { upsert: true },
+    );
+
+    return { upserted: result.upsertedCount > 0, linkId };
+  } catch (err) {
+    log.error(`upsertEntityLink failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+}
+
+export async function setEntityLinkStatus(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  scope: MemoryScope;
+  fromEntityId: string;
+  toEntityId: string;
+  linkType: EntityLinkType;
+  scopeRef?: string;
+  status: EntityLinkStatus;
+}): Promise<boolean> {
+  const { db, prefix, agentId, scope, linkType, status } = params;
+  const collection = entityLinksCollection(db, prefix);
+  const scopeRef = resolveScopeRef({ scope, scopeRef: params.scopeRef, agentId });
+  const pair = canonicalizeEntityPair(params.fromEntityId, params.toEntityId);
+  const result = await collection.updateOne(
+    {
+      agentId,
+      scope,
+      scopeRef,
+      fromEntityId: pair.fromEntityId,
+      toEntityId: pair.toEntityId,
+      linkType,
+    },
+    { $set: { status, updatedAt: new Date() } },
+  );
+  return result.matchedCount > 0;
+}
+
+export async function getEntityLinks(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  entityId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  status?: EntityLinkStatus;
+  linkTypes?: EntityLinkType[];
+  limit?: number;
+}): Promise<EntityLink[]> {
+  const { db, prefix, agentId, entityId, scope, scopeRef, status, linkTypes, limit } = params;
+  const collection = entityLinksCollection(db, prefix);
+  const filter: Document = {
+    agentId,
+    $or: [{ fromEntityId: entityId }, { toEntityId: entityId }],
+  };
+  if (scope) {
+    filter.scope = scope;
+  }
+  if (scopeRef) {
+    filter.scopeRef = scopeRef;
+  }
+  if (status) {
+    filter.status = status;
+  }
+  if (linkTypes && linkTypes.length > 0) {
+    filter.linkType = { $in: linkTypes };
+  }
+
+  const docs = await collection
+    .find(filter)
+    .toSorted({ confidence: -1, updatedAt: -1 })
+    .limit(limit ?? 50)
+    .toArray();
+  return docs as unknown as EntityLink[];
+}
+
+// ---------------------------------------------------------------------------
 // Find entities by name (regex search on name/aliases)
 // ---------------------------------------------------------------------------
 
@@ -300,8 +518,17 @@ export async function expandGraph(params: {
   bidirectional?: boolean;
   maxConnections?: number;
 }): Promise<GraphExpansionResult | null> {
-  const { db, prefix, entityId, agentId, scope, scopeRef, maxDepth, bidirectional, maxConnections } =
-    params;
+  const {
+    db,
+    prefix,
+    entityId,
+    agentId,
+    scope,
+    scopeRef,
+    maxDepth,
+    bidirectional,
+    maxConnections,
+  } = params;
   try {
     const entCol = entitiesCollection(db, prefix);
     const relCol = relationsCollection(db, prefix);
@@ -497,7 +724,8 @@ export async function expandGraph(params: {
       if (weightDiff !== 0) {
         return weightDiff;
       }
-      const recencyDiff = relationRecency(b.relation.updatedAt) - relationRecency(a.relation.updatedAt);
+      const recencyDiff =
+        relationRecency(b.relation.updatedAt) - relationRecency(a.relation.updatedAt);
       if (recencyDiff !== 0) {
         return recencyDiff;
       }
@@ -667,6 +895,7 @@ export async function extractAndUpsertEntities(params: {
   sourceEventId?: string;
 }): Promise<{ entities: ExtractedEntity[]; relationsCreated: number }> {
   const { db, prefix, agentId, eventContent, scope, sourceEventId } = params;
+  const startMs = Date.now();
   const scopeRef = resolveScopeRef({ scope, scopeRef: params.scopeRef, agentId });
 
   const extracted: ExtractedEntity[] = [];
@@ -719,6 +948,30 @@ export async function extractAndUpsertEntities(params: {
   }
 
   if (extracted.length === 0) {
+    await Promise.allSettled([
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "entities",
+          status: "ok",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "relations",
+          status: "ok",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+    ]);
     return { entities: [], relationsCreated: 0 };
   }
 
@@ -741,11 +994,29 @@ export async function extractAndUpsertEntities(params: {
       });
     }
 
-    // Create "mentioned_with" relations between co-occurring entities
+    // Create relationship edges and explicit, auditable entity-link records
+    // without collapsing identity into one hidden canonical entity.
     let relationsCreated = 0;
     if (extracted.length >= 2) {
       for (let i = 0; i < extracted.length - 1 && i < 5; i++) {
         for (let j = i + 1; j < extracted.length && j < 6; j++) {
+          const link = inferEntityLinkType(extracted[i], extracted[j]);
+          await upsertEntityLink({
+            db,
+            prefix,
+            link: {
+              fromEntityId: extracted[i].entityId,
+              toEntityId: extracted[j].entityId,
+              linkType: link.linkType,
+              status: "active",
+              confidence: link.confidence,
+              provenance: link.provenance,
+              agentId,
+              scope,
+              scopeRef,
+              ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
+            },
+          });
           await upsertRelation({
             db,
             prefix,
@@ -769,8 +1040,56 @@ export async function extractAndUpsertEntities(params: {
     log.info(
       `extracted ${extracted.length} entities and ${relationsCreated} relations from event content for agent=${agentId}`,
     );
+    await Promise.allSettled([
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "entities",
+          status: "ok",
+          itemsProjected: extracted.length,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "relations",
+          status: "ok",
+          itemsProjected: relationsCreated,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+    ]);
     return { entities: extracted, relationsCreated };
   } catch (err) {
+    await Promise.allSettled([
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "entities",
+          status: "failed",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+      recordProjectionRun({
+        db,
+        prefix,
+        run: {
+          agentId,
+          projectionType: "relations",
+          status: "failed",
+          itemsProjected: 0,
+          durationMs: Date.now() - startMs,
+        },
+      }),
+    ]);
     log.error(
       `extractAndUpsertEntities failed: ${err instanceof Error ? err.message : String(err)}`,
     );

@@ -1,10 +1,10 @@
-import type { Db, Collection, Document } from "mongodb";
+import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode, MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
-import { structuredMemCollection } from "./mongodb-schema.js";
+import { structuredMemCollection, structuredMemRevisionsCollection } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 import {
   buildVectorSearchStage,
@@ -46,6 +46,95 @@ export type StructuredMemoryEntry = {
   tenantId?: string;
 };
 
+type StructuredMemoryRevision = {
+  type: StructuredMemoryType;
+  key: string;
+  value: string;
+  context?: string;
+  confidence?: number;
+  source?: "agent" | "user" | "session" | "ingestion";
+  sessionId?: string;
+  agentId: string;
+  tags?: string[];
+  scope: MemoryScope;
+  scopeRef: string;
+  revision: number;
+  validFrom: Date;
+  validTo: Date;
+  supersededAt: Date;
+  createdAt?: Date;
+  updatedAt: Date;
+};
+
+function arraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
+  const a = left ?? [];
+  const b = right ?? [];
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function hasStructuredValueChanged(existing: Document, entry: StructuredMemoryEntry): boolean {
+  return (
+    existing.value !== entry.value ||
+    (typeof existing.context === "string" ? existing.context : undefined) !== entry.context ||
+    (typeof existing.confidence === "number" ? existing.confidence : undefined) !==
+      entry.confidence ||
+    (typeof existing.source === "string" ? existing.source : undefined) !== entry.source ||
+    (typeof existing.sessionId === "string" ? existing.sessionId : undefined) !== entry.sessionId ||
+    !arraysEqual(
+      Array.isArray(existing.tags) ? existing.tags.map((tag) => String(tag)) : undefined,
+      entry.tags,
+    )
+  );
+}
+
+function buildRevisionDoc(params: {
+  existing: Document;
+  scope: MemoryScope;
+  scopeRef: string;
+  now: Date;
+}): StructuredMemoryRevision {
+  const revision =
+    typeof params.existing.revision === "number" && Number.isFinite(params.existing.revision)
+      ? params.existing.revision
+      : 1;
+  const validFrom =
+    params.existing.validFrom instanceof Date
+      ? params.existing.validFrom
+      : params.existing.createdAt instanceof Date
+        ? params.existing.createdAt
+        : params.existing.updatedAt instanceof Date
+          ? params.existing.updatedAt
+          : params.now;
+
+  return {
+    type: params.existing.type as StructuredMemoryType,
+    key: String(params.existing.key ?? ""),
+    value: String(params.existing.value ?? ""),
+    agentId: String(params.existing.agentId ?? ""),
+    scope: params.scope,
+    scopeRef: params.scopeRef,
+    revision,
+    validFrom,
+    validTo: params.now,
+    supersededAt: params.now,
+    updatedAt: params.existing.updatedAt instanceof Date ? params.existing.updatedAt : params.now,
+    ...(typeof params.existing.context === "string" ? { context: params.existing.context } : {}),
+    ...(typeof params.existing.confidence === "number"
+      ? { confidence: params.existing.confidence }
+      : {}),
+    ...(typeof params.existing.source === "string"
+      ? { source: params.existing.source as StructuredMemoryEntry["source"] }
+      : {}),
+    ...(typeof params.existing.sessionId === "string"
+      ? { sessionId: params.existing.sessionId }
+      : {}),
+    ...(Array.isArray(params.existing.tags)
+      ? { tags: params.existing.tags.map((tag) => String(tag)) }
+      : {}),
+    ...(params.existing.createdAt instanceof Date ? { createdAt: params.existing.createdAt } : {}),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Write (upsert)
 // ---------------------------------------------------------------------------
@@ -55,9 +144,11 @@ export async function writeStructuredMemory(params: {
   prefix: string;
   entry: StructuredMemoryEntry;
   embeddingMode: MemoryMongoDBEmbeddingMode;
+  client?: MongoClient;
 }): Promise<{ upserted: boolean; id: string }> {
   const { db, prefix, entry } = params;
   const collection = structuredMemCollection(db, prefix);
+  const revisions = structuredMemRevisionsCollection(db, prefix);
 
   // ClawMongo stores structured memory as text and relies on MongoDB automatic
   // embeddings during vector search instead of precomputing vectors here.
@@ -82,6 +173,7 @@ export async function writeStructuredMemory(params: {
     scope,
     scopeRef,
     embeddingStatus,
+    validFrom: now,
     updatedAt: now,
   };
   if (entry.context !== undefined) {
@@ -100,24 +192,108 @@ export async function writeStructuredMemory(params: {
     setDoc.tags = entry.tags;
   }
 
-  const setOnInsert: Document = {
-    createdAt: now,
+  const identityFilter = {
+    agentId: entry.agentId,
+    scope,
+    scopeRef,
+    type: entry.type,
+    key: entry.key,
   };
 
-  // Upsert by type + key (composite unique key)
-  const result = await collection.updateOne(
-    { agentId: entry.agentId, scope, scopeRef, type: entry.type, key: entry.key },
-    { $set: setDoc, $setOnInsert: setOnInsert },
-    { upsert: true },
-  );
+  const persist = async (
+    session?: ClientSession,
+  ): Promise<{ upserted: boolean; id: string; revision: number }> => {
+    const existing = await collection.findOne(identityFilter, session ? { session } : undefined);
+    if (!existing) {
+      const result = await collection.updateOne(
+        identityFilter,
+        {
+          $set: { ...setDoc, revision: 1 },
+          $setOnInsert: { createdAt: now },
+        },
+        { upsert: true, ...(session ? { session } : {}) },
+      );
+      return {
+        upserted: result.upsertedCount > 0,
+        id: result.upsertedId ? String(result.upsertedId) : entry.key,
+        revision: 1,
+      };
+    }
 
-  const upserted = result.upsertedCount > 0;
-  const id = result.upsertedId ? String(result.upsertedId) : entry.key;
+    const currentRevision =
+      typeof existing.revision === "number" && Number.isFinite(existing.revision)
+        ? existing.revision
+        : 1;
+    const currentValidFrom =
+      existing.validFrom instanceof Date
+        ? existing.validFrom
+        : existing.createdAt instanceof Date
+          ? existing.createdAt
+          : existing.updatedAt instanceof Date
+            ? existing.updatedAt
+            : now;
+
+    if (!hasStructuredValueChanged(existing, entry)) {
+      await collection.updateOne(
+        identityFilter,
+        {
+          $set: {
+            ...setDoc,
+            revision: currentRevision,
+            validFrom: currentValidFrom,
+          },
+        },
+        session ? { session } : {},
+      );
+      return { upserted: false, id: entry.key, revision: currentRevision };
+    }
+
+    await revisions.insertOne(
+      buildRevisionDoc({ existing, scope, scopeRef, now }),
+      session ? { session } : {},
+    );
+    await collection.updateOne(
+      identityFilter,
+      {
+        $set: {
+          ...setDoc,
+          revision: currentRevision + 1,
+          validFrom: now,
+        },
+        $setOnInsert: {
+          createdAt: existing.createdAt instanceof Date ? existing.createdAt : now,
+        },
+      },
+      { upsert: true, ...(session ? { session } : {}) },
+    );
+    return { upserted: false, id: entry.key, revision: currentRevision + 1 };
+  };
+
+  const outcome = params.client
+    ? await (async () => {
+        const session = params.client!.startSession();
+        try {
+          let result: { upserted: boolean; id: string; revision: number } | undefined;
+          await session.withTransaction(async () => {
+            result = await persist(session);
+          });
+          return result ?? { upserted: false, id: entry.key, revision: 1 };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn(
+            `structured memory transaction unavailable, falling back to sequential writes: ${message}`,
+          );
+          return await persist();
+        } finally {
+          await session.endSession();
+        }
+      })()
+    : await persist();
 
   log.info(
-    `structured memory ${upserted ? "created" : "updated"}: type=${entry.type} key=${entry.key}`,
+    `structured memory ${outcome.upserted ? "created" : "updated"}: type=${entry.type} key=${entry.key} revision=${outcome.revision}`,
   );
-  return { upserted, id };
+  return { upserted: outcome.upserted, id: outcome.id };
 }
 
 // ---------------------------------------------------------------------------

@@ -103,7 +103,7 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      'Mandatory recall step: semantically search MongoDB-backed runtime knowledge across conversation history, reference knowledge, and structured memory. Returns top snippets with source, path, and relevance score. Use for any question about prior work, decisions, dates, people, preferences, or todos. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
+      'Mandatory runtime recall step: search MongoDB-backed memory for prior work, decisions, dates, people, preferences, todos, and recent history. Results may include other active recall sources, but reference-document lookups should prefer kb_search. Returns top snippets with source, path, and relevance score. Example: memory_search({query: "what auth approach did we decide on?"}) If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.',
     parameters: MemorySearchSchema,
     execute:
       ({ cfg, agentId }) =>
@@ -156,7 +156,7 @@ export function createMemoryGetTool(options: {
     label: "Memory Get",
     name: "memory_get",
     description:
-      "Read an exact Mongo-backed memory object by locator. Supports conversation chunks, reference documents, and structured memory records. Use after memory_search or kb_search to pull the exact item you need.",
+      "Read an exact Mongo-backed locator returned by memory_search or kb_search. Supports conversation/event-backed recall items, episode summary locators, reference documents, and structured memory records.",
     parameters: MemoryGetSchema,
     execute:
       ({ cfg, agentId }) =>
@@ -328,7 +328,7 @@ export function createKBSearchTool(options: {
     label: "KB Search",
     name: "kb_search",
     description:
-      'Search the knowledge base for imported documents, FAQs, architecture specs, and reference materials. Returns matching snippets with source and relevance score. Optional filters: tags, category, source. Use for factual/reference lookups when you need specific documentation rather than general memory recall. Example: kb_search({query: "API rate limiting policy", tags: ["docs"]})',
+      'Search the knowledge base for imported documents, FAQs, architecture specs, and other reference materials. Returns matching snippets with source and relevance score. Optional filters: tags, category, source. Use for documentation/reference lookups when the target is explicit reference material rather than general runtime recall. Example: kb_search({query: "API rate limiting policy", tags: ["docs"]})',
     parameters: KBSearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });

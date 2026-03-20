@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { recordProjectionRun } from "./mongodb-ops.js";
 import { eventsCollection, chunksCollection } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 
@@ -238,6 +239,7 @@ export async function projectChunksFromEvents(params: {
   batchSize?: number;
 }): Promise<{ eventsProcessed: number; chunksCreated: number }> {
   const { db, prefix, agentId, batchSize } = params;
+  const startMs = Date.now();
 
   const events = await getUnprojectedEvents({ db, prefix, agentId, limit: batchSize });
   if (events.length === 0) {
@@ -248,13 +250,35 @@ export async function projectChunksFromEvents(params: {
 
   try {
     for (const event of events) {
-      const { chunkCreated } = await projectEventChunk({ db, prefix, event });
+      const { chunkCreated } = await projectEventChunk({ db, prefix, event, recordRun: false });
       if (chunkCreated) {
         chunksCreated++;
       }
     }
+    await recordProjectionRun({
+      db,
+      prefix,
+      run: {
+        agentId,
+        projectionType: "chunks",
+        status: "ok",
+        itemsProjected: chunksCreated,
+        durationMs: Date.now() - startMs,
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    await recordProjectionRun({
+      db,
+      prefix,
+      run: {
+        agentId,
+        projectionType: "chunks",
+        status: "failed",
+        itemsProjected: chunksCreated,
+        durationMs: Date.now() - startMs,
+      },
+    }).catch(() => {});
     log.warn(
       `projection failed after ${chunksCreated} chunks created from ${events.length} events for agent=${agentId}: ${msg}`,
     );
@@ -269,8 +293,10 @@ export async function projectEventChunk(params: {
   db: Db;
   prefix: string;
   event: CanonicalEvent;
+  recordRun?: boolean;
 }): Promise<{ chunkCreated: boolean }> {
   const { db, prefix, event } = params;
+  const startMs = Date.now();
   const chunks = chunksCollection(db, prefix);
   const path = `events/${event.eventId}`;
   const text = renderEventChunkText(event);
@@ -292,5 +318,18 @@ export async function projectEventChunk(params: {
     { upsert: true },
   );
   await markEventsProjected({ db, prefix, eventIds: [event.eventId] });
+  if (params.recordRun !== false) {
+    await recordProjectionRun({
+      db,
+      prefix,
+      run: {
+        agentId: event.agentId,
+        projectionType: "chunks",
+        status: "ok",
+        itemsProjected: result.upsertedCount > 0 ? 1 : 0,
+        durationMs: Date.now() - startMs,
+      },
+    }).catch(() => {});
+  }
   return { chunkCreated: result.upsertedCount > 0 };
 }

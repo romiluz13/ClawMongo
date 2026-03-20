@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   planRetrieval,
+  resolveTimeRangePreset,
   type RetrievalPath,
   type RetrievalContext,
 } from "./mongodb-retrieval-planner.js";
@@ -24,6 +25,10 @@ function makeContext(overrides: Partial<RetrievalContext> = {}): RetrievalContex
     ...overrides,
   };
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -67,6 +72,30 @@ describe("mongodb-retrieval-planner", () => {
     expect(["high", "medium", "low"]).toContain(plan.confidence);
     expect(typeof plan.reasoning).toBe("string");
     expect(plan.reasoning.length).toBeGreaterThan(0);
+  });
+
+  it("extracts a hard time constraint for yesterday queries", () => {
+    const plan = planRetrieval("what did we decide yesterday", makeContext());
+    expect(plan.constraints?.timeRange?.preset).toBe("yesterday");
+    expect(plan.constraints?.timeRange?.hard).toBe(true);
+  });
+
+  it("extracts a structured type constraint for decision queries", () => {
+    const plan = planRetrieval("what was the decision about auth rollout", makeContext());
+    expect(plan.constraints?.structured?.type).toBe("decision");
+    expect(plan.paths[0]).toBe("structured");
+  });
+
+  it("extracts a KB source constraint for API queries", () => {
+    const plan = planRetrieval("what does the API docs say about auth", makeContext());
+    expect(plan.constraints?.kb?.source).toBe("api");
+    expect(plan.paths[0]).toBe("kb");
+  });
+
+  it("extracts entity constraints from known names", () => {
+    const plan = planRetrieval("what does Alice own", makeContext({ knownEntityNames: ["Alice"] }));
+    expect(plan.constraints?.entities?.names).toEqual(["Alice"]);
+    expect(plan.paths[0]).toBe("graph");
   });
 
   it("excludes disabled sources from plan", () => {
@@ -159,5 +188,14 @@ describe("mongodb-retrieval-planner", () => {
     const plan = planRetrieval("tell me something", { availablePaths: new Set() });
     expect(plan.paths).toEqual([]);
     expect(plan.confidence).toBe("low");
+  });
+
+  it("resolves last-7d time preset against a fixed clock", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-20T12:00:00Z"));
+
+    const range = resolveTimeRangePreset("last-7d");
+    expect(range.start.toISOString()).toBe("2026-03-13T12:00:00.000Z");
+    expect(range.end.toISOString()).toBe("2026-03-20T12:00:00.000Z");
   });
 });
