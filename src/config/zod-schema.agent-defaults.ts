@@ -109,6 +109,7 @@ export const AgentDefaultsSchema = z
         postCompactionSections: z.array(z.string()).optional(),
         model: z.string().optional(),
         timeoutSeconds: z.number().int().positive().optional(),
+        truncateAfterCompaction: z.boolean().optional(),
         memoryFlush: z
           .object({
             enabled: z.boolean().optional(),

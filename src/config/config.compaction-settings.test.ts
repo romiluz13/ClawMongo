@@ -17,6 +17,7 @@ describe("config compaction settings", () => {
                 enabled: true,
                 maxRetries: 2,
               },
+              truncateAfterCompaction: true,
               memoryFlush: {
                 enabled: false,
                 softThresholdTokens: 1234,
@@ -40,6 +41,7 @@ describe("config compaction settings", () => {
         );
         expect(cfg.agents?.defaults?.compaction?.qualityGuard?.enabled).toBe(true);
         expect(cfg.agents?.defaults?.compaction?.qualityGuard?.maxRetries).toBe(2);
+        expect(cfg.agents?.defaults?.compaction?.truncateAfterCompaction).toBe(true);
         expect(cfg.agents?.defaults?.compaction?.memoryFlush?.enabled).toBe(false);
         expect(cfg.agents?.defaults?.compaction?.memoryFlush?.softThresholdTokens).toBe(1234);
         expect(cfg.agents?.defaults?.compaction?.memoryFlush?.prompt).toBe("Write notes.");

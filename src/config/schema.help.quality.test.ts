@@ -359,6 +359,7 @@ const TARGET_KEYS = [
   "agents.defaults.compaction.postCompactionSections",
   "agents.defaults.compaction.timeoutSeconds",
   "agents.defaults.compaction.model",
+  "agents.defaults.compaction.truncateAfterCompaction",
   "agents.defaults.compaction.memoryFlush",
   "agents.defaults.compaction.memoryFlush.enabled",
   "agents.defaults.compaction.memoryFlush.softThresholdTokens",
@@ -788,6 +789,12 @@ describe("config help copy quality", () => {
 
     const compactionModel = FIELD_HELP["agents.defaults.compaction.model"];
     expect(/provider\/model|different model|primary agent model/i.test(compactionModel)).toBe(true);
+
+    const truncateAfterCompaction =
+      FIELD_HELP["agents.defaults.compaction.truncateAfterCompaction"];
+    expect(
+      /session JSONL|transcript|MongoDB-backed runtime memory/i.test(truncateAfterCompaction),
+    ).toBe(true);
 
     const flush = FIELD_HELP["agents.defaults.compaction.memoryFlush.enabled"];
     expect(/pre-compaction|memory flush|token/i.test(flush)).toBe(true);

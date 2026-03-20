@@ -342,6 +342,12 @@ export type AgentCompactionConfig = {
   model?: string;
   /** Maximum time in seconds for a single compaction operation (default: 900). */
   timeoutSeconds?: number;
+  /**
+   * Truncate the session JSONL file after compaction to remove entries that
+   * were summarized. Prevents unbounded transcript-file growth.
+   * Default: false.
+   */
+  truncateAfterCompaction?: boolean;
 };
 
 export type AgentCompactionMemoryFlushConfig = {

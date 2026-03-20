@@ -94,6 +94,7 @@ import { log } from "./logger.js";
 import { buildModelAliasLines, resolveModelAsync } from "./model.js";
 import { buildEmbeddedSandboxInfo } from "./sandbox-info.js";
 import { prewarmSessionFile, trackSessionManagerAccess } from "./session-manager-cache.js";
+import { truncateSessionAfterCompaction } from "./session-truncation.js";
 import { resolveEmbeddedRunSkillEntries } from "./skills-runtime.js";
 import {
   applySystemPromptOverrideToSession,
@@ -1056,6 +1057,24 @@ export async function compactEmbeddedPiSessionDirect(
             log.warn("after_compaction hook failed", {
               errorMessage: err instanceof Error ? err.message : String(err),
               errorStack: err instanceof Error ? err.stack : undefined,
+            });
+          }
+        }
+        if (params.config?.agents?.defaults?.compaction?.truncateAfterCompaction) {
+          try {
+            const truncation = await truncateSessionAfterCompaction({
+              sessionFile: params.sessionFile,
+            });
+            if (truncation.truncated) {
+              log.info(
+                `[compaction] post-compaction truncation removed ${truncation.entriesRemoved} entries ` +
+                  `(sessionKey=${params.sessionKey ?? params.sessionId})`,
+              );
+            }
+          } catch (error) {
+            log.warn("[compaction] post-compaction truncation failed", {
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
             });
           }
         }
