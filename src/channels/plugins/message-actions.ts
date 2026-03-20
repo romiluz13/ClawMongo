@@ -1,21 +1,11 @@
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../../config/config.js";
 import { defaultRuntime } from "../../runtime.js";
 import { getChannelPlugin, listChannelPlugins } from "./index.js";
+import { dispatchChannelMessageAction } from "./message-action-dispatch.js";
 import type { ChannelMessageCapability } from "./message-capabilities.js";
-import type { ChannelMessageActionContext, ChannelMessageActionName } from "./types.js";
+import type { ChannelMessageActionName } from "./types.js";
 
 type ChannelActions = NonNullable<NonNullable<ReturnType<typeof getChannelPlugin>>["actions"]>;
-
-function requiresTrustedRequesterSender(ctx: ChannelMessageActionContext): boolean {
-  const plugin = getChannelPlugin(ctx.channel);
-  return Boolean(
-    plugin?.actions?.requiresTrustedRequesterSender?.({
-      action: ctx.action,
-      toolContext: ctx.toolContext,
-    }),
-  );
-}
 
 const loggedMessageActionErrors = new Set<string>();
 
@@ -142,23 +132,7 @@ export function channelSupportsMessageCapabilityForChannel(
   return listChannelMessageCapabilitiesForChannel(params).includes(capability);
 }
 
-export async function dispatchChannelMessageAction(
-  ctx: ChannelMessageActionContext,
-): Promise<AgentToolResult<unknown> | null> {
-  if (requiresTrustedRequesterSender(ctx) && !ctx.requesterSenderId?.trim()) {
-    throw new Error(
-      `Trusted sender identity is required for ${ctx.channel}:${ctx.action} in tool-driven contexts.`,
-    );
-  }
-  const plugin = getChannelPlugin(ctx.channel);
-  if (!plugin?.actions?.handleAction) {
-    return null;
-  }
-  if (plugin.actions.supportsAction && !plugin.actions.supportsAction({ action: ctx.action })) {
-    return null;
-  }
-  return await plugin.actions.handleAction(ctx);
-}
+export { dispatchChannelMessageAction };
 
 export const __testing = {
   resetLoggedMessageActionErrors() {
