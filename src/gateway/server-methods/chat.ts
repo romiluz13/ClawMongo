@@ -16,6 +16,7 @@ import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { normalizeInputProvenance, type InputProvenance } from "../../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
+import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 import {
   stripInlineDirectiveTagsForDisplay,
   stripInlineDirectiveTagsFromMessageForDisplay,
@@ -1333,6 +1334,40 @@ export const chatHandlers: GatewayRequestHandlers = {
         channel: INTERNAL_MESSAGE_CHANNEL,
       });
       const deliveredReplies: Array<{ payload: ReplyPayload; kind: "block" | "final" }> = [];
+      const userTranscriptMessage = {
+        role: "user" as const,
+        content: parsedMessage,
+        timestamp: now,
+      };
+      let userTranscriptUpdateEmitted = false;
+      const emitUserTranscriptUpdate = () => {
+        if (userTranscriptUpdateEmitted) {
+          return;
+        }
+        const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(sessionKey);
+        const resolvedSessionId = latestEntry?.sessionId ?? entry?.sessionId;
+        if (!resolvedSessionId) {
+          return;
+        }
+        const transcriptPath = resolveTranscriptPath({
+          sessionId: resolvedSessionId,
+          storePath: latestStorePath,
+          sessionFile: latestEntry?.sessionFile ?? entry?.sessionFile,
+          agentId,
+        });
+        if (!transcriptPath) {
+          return;
+        }
+
+        // Emit the user-side transcript update once so webchat can refresh immediately
+        // without treating transcript events as a replacement for canonical Mongo writes.
+        userTranscriptUpdateEmitted = true;
+        emitSessionTranscriptUpdate({
+          sessionFile: transcriptPath,
+          sessionKey,
+          message: userTranscriptMessage,
+        });
+      };
       const dispatcher = createReplyDispatcher({
         ...prefixOptions,
         onError: (err) => {
@@ -1357,6 +1392,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            emitUserTranscriptUpdate();
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,
@@ -1378,6 +1414,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          emitUserTranscriptUpdate();
           if (!agentRunStarted) {
             const btwReplies = deliveredReplies
               .map((entry) => entry.payload)
