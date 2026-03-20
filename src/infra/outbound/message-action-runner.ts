@@ -651,14 +651,16 @@ async function handlePollAction(ctx: ResolvedActionContext): Promise<MessageActi
       dryRun,
       silent: silent ?? undefined,
     },
-    to,
-    question,
-    options,
-    maxSelections,
-    durationSeconds: durationSeconds ?? undefined,
-    durationHours: durationHours ?? undefined,
-    threadId: resolvedThreadId ?? undefined,
-    isAnonymous,
+    resolveCorePoll: () => ({
+      to,
+      question,
+      options,
+      maxSelections,
+      durationSeconds: durationSeconds ?? undefined,
+      durationHours: durationHours ?? undefined,
+      threadId: resolvedThreadId ?? undefined,
+      isAnonymous,
+    }),
   });
 
   return {

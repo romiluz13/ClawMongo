@@ -143,10 +143,12 @@ describe("executeSendAction", () => {
         params: {},
         dryRun: false,
       },
-      to: "channel:123",
-      question: "Lunch?",
-      options: ["Pizza", "Sushi"],
-      maxSelections: 1,
+      resolveCorePoll: () => ({
+        to: "channel:123",
+        question: "Lunch?",
+        options: ["Pizza", "Sushi"],
+        maxSelections: 1,
+      }),
     });
 
     expect(result.handledBy).toBe("plugin");
@@ -270,13 +272,15 @@ describe("executeSendAction", () => {
         accountId: "acc-1",
         dryRun: false,
       },
-      to: "channel:123",
-      question: "Lunch?",
-      options: ["Pizza", "Sushi"],
-      maxSelections: 1,
-      durationSeconds: 300,
-      threadId: "thread-1",
-      isAnonymous: true,
+      resolveCorePoll: () => ({
+        to: "channel:123",
+        question: "Lunch?",
+        options: ["Pizza", "Sushi"],
+        maxSelections: 1,
+        durationSeconds: 300,
+        threadId: "thread-1",
+        isAnonymous: true,
+      }),
     });
 
     expect(mocks.sendPoll).toHaveBeenCalledWith(
@@ -321,11 +325,13 @@ describe("executeSendAction", () => {
           mode: GATEWAY_CLIENT_MODES.BACKEND,
         },
       },
-      to: "channel:123",
-      question: "Lunch?",
-      options: ["Pizza", "Sushi"],
-      maxSelections: 1,
-      durationHours: 6,
+      resolveCorePoll: () => ({
+        to: "channel:123",
+        question: "Lunch?",
+        options: ["Pizza", "Sushi"],
+        maxSelections: 1,
+        durationHours: 6,
+      }),
     });
 
     expect(mocks.dispatchChannelMessageAction).not.toHaveBeenCalled();
