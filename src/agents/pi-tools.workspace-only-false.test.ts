@@ -195,10 +195,12 @@ describe("FS tools with workspaceOnly=false", () => {
     ).rejects.toThrow(/Path escapes (workspace|sandbox) root/);
   });
 
-  it("removes file-mutation tools from memory-triggered runs", async () => {
+  it("restricts memory-triggered runs to append-only writes on the allowed memory path", async () => {
+    const memoryPath = "memory/2026-03-20.md";
     const tools = createOpenClawCodingTools({
       workspaceDir,
       trigger: "memory",
+      memoryFlushWritePath: memoryPath,
       config: {
         tools: {
           exec: {
@@ -212,10 +214,22 @@ describe("FS tools with workspaceOnly=false", () => {
       modelId: "gpt-5",
     });
 
-    expect(tools.find((tool) => tool.name === "write")).toBeUndefined();
+    const writeTool = tools.find((tool) => tool.name === "write");
+    expect(writeTool).toBeDefined();
     expect(tools.find((tool) => tool.name === "edit")).toBeUndefined();
     expect(tools.find((tool) => tool.name === "exec")).toBeUndefined();
     expect(tools.find((tool) => tool.name === "read")).toBeDefined();
-    expect(tools.map((tool) => tool.name)).not.toContain("write");
+
+    const allowedResult = await writeTool!.execute("memory-flush-write", {
+      path: memoryPath,
+      content: "first line",
+    });
+    expect(hasToolError(allowedResult)).toBe(false);
+    await expect(
+      writeTool!.execute("memory-flush-write-denied", {
+        path: "memory/other.md",
+        content: "second line",
+      }),
+    ).rejects.toThrow(`Memory flush writes are restricted to ${memoryPath}`);
   });
 });

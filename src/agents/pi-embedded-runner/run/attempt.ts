@@ -1513,6 +1513,7 @@ export async function runEmbeddedAttempt(
           allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
           sessionKey: sandboxSessionKey,
           sessionId: params.sessionId,
+          memoryFlushWritePath: params.memoryFlushWritePath,
           runId: params.runId,
           agentDir,
           workspaceDir: effectiveWorkspace,
