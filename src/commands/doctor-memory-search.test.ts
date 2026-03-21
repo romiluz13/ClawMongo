@@ -64,8 +64,10 @@ describe("noteMemorySearchHealth", () => {
   const cfg = {} as OpenClawConfig;
 
   function expectOnlyBackendHealthNote() {
-    expect(note).toHaveBeenCalledTimes(1);
+    // 2 calls: backend health note + recall diagnostic note
+    expect(note).toHaveBeenCalledTimes(2);
     expect(String(note.mock.calls[0]?.[0] ?? "")).toContain("MongoDB connected. Profile:");
+    expect(String(note.mock.calls[1]?.[1] ?? "")).toBe("Memory Recall Diagnostic");
   }
 
   function getLastNoteMessage(): string {
@@ -128,7 +130,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: false, error: "node-llama-cpp not installed" },
     });
 
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(3);
     const message = getLastNoteMessage();
     expect(message).toContain("gateway reports local embeddings are not ready");
     expect(message).toContain("node-llama-cpp not installed");
@@ -272,7 +274,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: true },
     });
 
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(3);
     const message = getLastNoteMessage();
     expect(message).toContain("reports memory embeddings are ready");
   });
@@ -292,7 +294,7 @@ describe("noteMemorySearchHealth", () => {
       },
     });
 
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(3);
     const message = getLastNoteMessage();
     expect(message).toContain("Gateway memory probe for default agent is not ready");
     expect(message).toContain("openclaw configure --section model");
@@ -308,7 +310,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(3);
     const message = getLastNoteMessage();
     expect(message).toContain("openclaw configure --section model");
   });
@@ -332,7 +334,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note).toHaveBeenCalledTimes(2);
+    expect(note).toHaveBeenCalledTimes(3);
     const providerCalls = resolveApiKeyForProvider.mock.calls as Array<[{ provider: string }]>;
     const providersChecked = providerCalls.map(([arg]) => arg.provider);
     expect(providersChecked).toEqual(["openai", "google", "voyage", "mistral"]);

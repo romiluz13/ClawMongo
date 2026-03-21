@@ -24,7 +24,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
   it("does not override when already above floor and not in safeguard mode", () => {
     const settingsManager = {
-      getCompactionReserveTokens: () => 32_000,
+      getCompactionReserveTokens: () => 50_000,
       getCompactionKeepRecentTokens: () => 20_000,
       applyOverrides: vi.fn(),
     };
@@ -35,7 +35,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
     });
 
     expect(result.didOverride).toBe(false);
-    expect(result.compaction.reserveTokens).toBe(32_000);
+    expect(result.compaction.reserveTokens).toBe(50_000);
     expect(settingsManager.applyOverrides).not.toHaveBeenCalled();
   });
 
@@ -65,7 +65,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
   it("applies keepRecentTokens when explicitly configured", () => {
     const settingsManager = {
-      getCompactionReserveTokens: () => 20_000,
+      getCompactionReserveTokens: () => 50_000,
       getCompactionKeepRecentTokens: () => 20_000,
       applyOverrides: vi.fn(),
     };
@@ -91,7 +91,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
   it("preserves current keepRecentTokens when safeguard mode leaves it unset", () => {
     const settingsManager = {
-      getCompactionReserveTokens: () => 25_000,
+      getCompactionReserveTokens: () => 50_000,
       getCompactionKeepRecentTokens: () => 20_000,
       applyOverrides: vi.fn(),
     };
@@ -107,7 +107,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
   it("treats keepRecentTokens=0 as invalid and keeps the current setting", () => {
     const settingsManager = {
-      getCompactionReserveTokens: () => 25_000,
+      getCompactionReserveTokens: () => 50_000,
       getCompactionKeepRecentTokens: () => 20_000,
       applyOverrides: vi.fn(),
     };

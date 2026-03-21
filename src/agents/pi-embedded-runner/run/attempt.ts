@@ -1965,6 +1965,7 @@ export async function runEmbeddedAttempt(
       userTimeFormat,
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
+      memoryBackend: params.config ? (params.config.memory?.backend ?? "mongodb") : undefined,
     });
     const systemPromptReport = buildSystemPromptReport({
       source: "run",

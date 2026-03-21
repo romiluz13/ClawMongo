@@ -123,7 +123,7 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     expect(bridgeIndex).toBeLessThan(silentIndex);
   });
 
-  it("does NOT render bridge section when isMinimal=true (subagent mode)", () => {
+  it("renders condensed bridge section when isMinimal=true and memoryBackend=mongodb (subagent mode)", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
       toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
@@ -131,8 +131,23 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
       promptMode: "minimal",
     });
 
+    // Condensed bridge for sub-agents: essential guidance only
+    expect(prompt).toContain("## MongoDB Memory");
+    expect(prompt).toContain("memory_search");
+    // Full bridge sections should NOT appear in minimal mode
     expect(prompt).not.toContain("## MongoDB Memory Integration");
-    expect(prompt).not.toContain("The MongoDB memory backend is active.");
+    expect(prompt).not.toContain("memory_search FIRST (not file reads)");
+  });
+
+  it("does NOT render bridge for minimal mode when backend is not mongodb", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_search", "memory_get"],
+      memoryBackend: "local",
+      promptMode: "minimal",
+    });
+
+    expect(prompt).not.toContain("## MongoDB Memory");
   });
 
   it("does NOT render bridge section when memoryBackend is undefined", () => {

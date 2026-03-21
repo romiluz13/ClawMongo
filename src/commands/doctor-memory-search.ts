@@ -99,6 +99,12 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
 
     // Check embedding coverage (embeddingStatus) while connection is still open
     await noteEmbeddingCoverage(client, mongoConfig);
+
+    // Show memory recall diagnostic guidance
+    const recallDiag = noteMemoryRecallDiagnostic({ backend: "mongodb" });
+    if (recallDiag) {
+      note(recallDiag.lines, recallDiag.title);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     note(
@@ -398,4 +404,38 @@ function buildGatewayProbeWarning(
   return detail
     ? `Gateway memory probe for default agent is not ready: ${detail}`
     : "Gateway memory probe for default agent is not ready.";
+}
+
+/**
+ * MongoDB-adapted three-failure-mode diagnostic for memory recall issues.
+ * Based on the VelvetShark "Memory Masterclass" failure taxonomy, adapted
+ * for ClawMongo where "Never Stored" is rare (runtime write path is automatic)
+ * and "Not Retrieved" (agent didn't search MongoDB) is the primary failure mode.
+ */
+export function noteMemoryRecallDiagnostic(params: {
+  backend?: string;
+}): { title: string; lines: string } | null {
+  if (params.backend !== "mongodb") {
+    return null;
+  }
+  const lines = [
+    "If the agent seems to forget things, check these three failure modes:",
+    "",
+    "1. Not Retrieved (most common)",
+    "   The agent didn't call memory_search before answering.",
+    "   Fix: Check that the MongoDB bridge section is in the system prompt.",
+    "   Verify: Look for memory_search tool calls in the session transcript.",
+    "",
+    "2. Compaction Lost It",
+    "   Important context was summarized away during auto-compaction.",
+    "   Fix: Raise reserveTokensFloor (default: 40000) or compact before new instructions.",
+    "   Verify: Check the compaction summary for missing context.",
+    "",
+    "3. Never Stored",
+    "   In ClawMongo this is rare -- conversation turns auto-persist to MongoDB.",
+    "   But structured facts (preferences, decisions) require explicit memory_write.",
+    "   Fix: Check that memory_write is available and the flush is enabled.",
+    "   Verify: Search MongoDB events/structured_memory collections directly.",
+  ].join("\n");
+  return { title: "Memory Recall Diagnostic", lines };
 }

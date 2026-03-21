@@ -20,15 +20,24 @@ type OwnerIdDisplay = "raw" | "hash";
 /**
  * Builds the MongoDB bridge section that gives MongoDB-specific instructions
  * the "last word" after AGENTS.md/SOUL.md context files.
- * Only renders when memoryBackend === "mongodb" and !isMinimal.
+ * Renders full bridge when memoryBackend === "mongodb" and !isMinimal.
+ * Renders condensed bridge (memory_search guidance only) in minimal mode.
  */
 function buildMongoDBBridgeSection(params: {
   memoryBackend?: string;
   isMinimal: boolean;
   availableTools?: ReadonlySet<string>;
 }): string[] {
-  if (params.memoryBackend !== "mongodb" || params.isMinimal) {
+  if (params.memoryBackend !== "mongodb") {
     return [];
+  }
+  if (params.isMinimal) {
+    // Condensed bridge for sub-agents: just memory_search routing guidance
+    return [
+      "## MongoDB Memory",
+      "MongoDB memory is active. Use memory_search for prior context before answering.",
+      "",
+    ];
   }
   const tools = params.availableTools;
   const lines: string[] = [

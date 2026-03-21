@@ -756,6 +756,7 @@ export async function compactEmbeddedPiSessionDirect(
       userTimeFormat,
       contextFiles,
       memoryCitationsMode: params.config?.memory?.citations,
+      memoryBackend: params.config ? (params.config.memory?.backend ?? "mongodb") : undefined,
     });
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
 

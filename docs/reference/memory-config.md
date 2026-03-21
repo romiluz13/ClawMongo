@@ -90,6 +90,42 @@ memory: {
 - `memory.citations` controls citation visibility (`auto`/`on`/`off`).
 - `status().backend = "mongodb"` in diagnostics confirms the MongoDB backend is active.
 
+## Compaction tuning
+
+### reserveTokensFloor
+
+Controls the minimum token budget reserved for the agent before compaction
+triggers. The default is `40000` (40K tokens). This gives the agent enough room
+for tool use, memory search results, and multi-step reasoning before the session
+auto-compacts.
+
+```json5
+agents: {
+  defaults: {
+    compaction: {
+      reserveTokensFloor: 40000
+    }
+  }
+}
+```
+
+Raise this value if the agent frequently compacts mid-task. Lower it only on
+small-context models where compaction cost is a concern.
+
+### Pre-compaction memory flush
+
+Before compaction, the agent automatically runs a "memory flush" turn that
+stores durable facts to MongoDB via `memory_write`. This ensures important
+context survives compaction.
+
+The flush is enabled by default. Configure it under
+`agents.defaults.compaction.memoryFlush`:
+
+- `enabled` (default: `true`) -- toggle the flush entirely.
+- `softThresholdTokens` (default: `4000`) -- token margin before compaction that triggers the flush.
+- `prompt` -- custom flush prompt (safety hints are always appended).
+- `systemPrompt` -- custom system prompt for the flush turn.
+
 ## Additional memory paths
 
 If you want to index Markdown files outside the default workspace layout, add

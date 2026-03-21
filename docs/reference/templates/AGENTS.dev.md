@@ -42,6 +42,12 @@ git commit -m "Add agent workspace"
 
 - HEARTBEAT.md can hold a tiny checklist for heartbeat runs; keep it small.
 
+## Compaction tips
+
+- Compact BEFORE giving new instructions, not after.
+- Let auto-compaction flush durable facts to MongoDB via `memory_write` before summarizing.
+- If the agent loses context after compaction, check that `reserveTokensFloor` is high enough (default: 40000).
+
 ## Customize
 
 - Add your preferred style, rules, and bridge guidance here.

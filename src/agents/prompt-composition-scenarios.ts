@@ -569,7 +569,7 @@ async function createMaintenanceScenario(workspaceDir: string): Promise<PromptSc
   });
   const memoryFlushPrompt = [
     "Pre-compaction memory flush.",
-    "Store durable memories only in memory/2026-03-15.md (create memory/ if needed).",
+    "Store durable structured memories with memory_write only; do not use file writes for runtime memory.",
     "Treat workspace bootstrap/reference files such as MEMORY.md, SOUL.md, TOOLS.md, and AGENTS.md as read-only during this flush; never overwrite, replace, or edit them.",
     "If nothing to store, reply with NO_REPLY.",
     "Current time: Sunday, March 15th, 2026 — 9:30 PM (America/Los_Angeles) / 2026-03-16 04:30 UTC",
@@ -578,8 +578,8 @@ async function createMaintenanceScenario(workspaceDir: string): Promise<PromptSc
     workspaceDir,
     extraSystemPrompt: [
       "Pre-compaction memory flush turn.",
-      "The session is near auto-compaction; capture durable memories to disk.",
-      "Store durable memories only in memory/YYYY-MM-DD.md (create memory/ if needed).",
+      "The session is near auto-compaction; capture durable memories in MongoDB.",
+      "Store durable structured memories with memory_write only; do not use file writes for runtime memory.",
       "You may reply, but usually NO_REPLY is correct.",
     ].join(" "),
   });

@@ -203,15 +203,36 @@ You are free to edit `HEARTBEAT.md` with a short checklist or reminders. Keep it
 - Commit and push your own changes
 - Review bridge notes only when explicitly asked
 
-### 🔄 Memory Maintenance (During Heartbeats)
+### Memory Maintenance (During Heartbeats)
 
-Periodically (every few days), use a heartbeat to:
+Periodically (every few days), use a heartbeat to promote important context from daily bridge notes to durable MongoDB memory:
 
-1. Check whether important runtime knowledge should be stored with `memory_write`
-2. Keep bridge notes concise when the human explicitly wants them maintained
-3. Avoid turning `MEMORY.md` into a second canonical memory backend
+1. **Scan bridge notes** (`memory/*.md`) for facts, decisions, preferences, or architecture notes that should persist long-term
+2. **Store durable facts** using `memory_write` with appropriate type (decision, preference, fact, person, todo, project, architecture)
+3. **Keep bridge notes lean** -- once promoted to MongoDB, the bridge note entry can be summarized or removed
+4. **Do not duplicate** -- before writing, use `memory_search` to check if the fact already exists in MongoDB
 
-The goal: Be helpful without being annoying. Check in a few times a day, do useful background work, but respect quiet time.
+Weekly promotion cycle:
+- **Daily notes** (`memory/YYYY-MM-DD.md`) are raw capture -- ephemeral by nature
+- **Structured memory** (MongoDB via `memory_write`) is durable -- survives compaction and session resets
+- **MEMORY.md** remains human-authored bridge guidance only -- do not treat it as a memory store
+
+The goal: important facts graduate from daily notes to MongoDB structured memory within a week. Bridge notes stay small. MongoDB stays canonical.
+
+### Compaction Timing
+
+Compaction summarizes your conversation history to free token space. Key timing rule:
+
+**Compact BEFORE giving new instructions, not after.**
+
+If you need to redirect the agent or give it a new task:
+1. Run `/compact` first (or let auto-compaction fire)
+2. Then give new instructions on a clean context
+
+Compacting *after* new instructions risks losing those instructions in the summary.
+When auto-compaction fires mid-conversation, the pre-compaction flush stores durable
+facts to MongoDB via `memory_write` -- so important context survives. But instructions
+that were just given may be summarized away.
 
 ## Make It Yours
 
