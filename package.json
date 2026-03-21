@@ -242,6 +242,10 @@
       "types": "./dist/plugin-sdk/diffs.d.ts",
       "default": "./dist/plugin-sdk/diffs.js"
     },
+    "./plugin-sdk/discord": {
+      "types": "./dist/plugin-sdk/discord.d.ts",
+      "default": "./dist/plugin-sdk/discord.js"
+    },
     "./plugin-sdk/extension-shared": {
       "types": "./dist/plugin-sdk/extension-shared.d.ts",
       "default": "./dist/plugin-sdk/extension-shared.js"
@@ -309,6 +313,10 @@
     "./plugin-sdk/llm-task": {
       "types": "./dist/plugin-sdk/llm-task.d.ts",
       "default": "./dist/plugin-sdk/llm-task.js"
+    },
+    "./plugin-sdk/memory-core": {
+      "types": "./dist/plugin-sdk/memory-core.d.ts",
+      "default": "./dist/plugin-sdk/memory-core.js"
     },
     "./plugin-sdk/provider-auth": {
       "types": "./dist/plugin-sdk/provider-auth.d.ts",
@@ -553,6 +561,9 @@
     "test:docker:live-gateway": "bash scripts/test-live-gateway-models-docker.sh",
     "test:docker:live-models": "bash scripts/test-live-models-docker.sh",
     "test:docker:onboard": "bash scripts/e2e/onboard-docker.sh",
+    "upstream:analyze": "bash scripts/upstream-analyze.sh",
+    "upstream:report": "bash scripts/upstream-report.sh",
+    "upstream:steady": "bash scripts/upstream-steady.sh",
     "test:docker:plugins": "bash scripts/e2e/plugins-docker.sh",
     "test:docker:qr": "bash scripts/e2e/qr-import-docker.sh",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
@@ -586,10 +597,7 @@
     "tui:dev": "OPENCLAW_PROFILE=dev CLAWDBOT_PROFILE=dev node scripts/run-node.mjs --dev tui",
     "ui:build": "node scripts/ui.js build",
     "ui:dev": "node scripts/ui.js dev",
-    "ui:install": "node scripts/ui.js install",
-    "upstream:analyze": "bash scripts/sync-upstream.sh --ref origin/main --fail-if-outside-allowlist --fail-if-excluded-present && node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
-    "upstream:report": "node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
-    "upstream:steady": "bash scripts/upstream-steady-state.sh"
+    "ui:install": "node scripts/ui.js install"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.16.1",

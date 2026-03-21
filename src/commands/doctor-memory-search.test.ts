@@ -312,6 +312,7 @@ describe("noteMemorySearchHealth", () => {
 
     expect(note).toHaveBeenCalledTimes(3);
     const message = getLastNoteMessage();
+    expect(message).toContain("needs at least one embedding provider");
     expect(message).toContain("openclaw configure --section model");
   });
 

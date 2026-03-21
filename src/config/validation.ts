@@ -3,7 +3,7 @@ import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent
 import { CHANNEL_IDS } from "../channels/builtin-registry.js";
 import { normalizeChatChannelId } from "../channels/registry.js";
 import { withBundledPluginAllowlistCompat } from "../plugins/bundled-compat.js";
-import { resolveBundledWebSearchPluginIds } from "../plugins/bundled-web-search.js";
+import { listBundledWebSearchPluginIds } from "../plugins/bundled-web-search-ids.js";
 import {
   normalizePluginsConfig,
   resolveEffectiveEnableState,
@@ -361,15 +361,33 @@ function validateConfigObjectWithPluginsBase(
       return compatConfig ?? config;
     }
 
+    const allow = config.plugins?.allow;
+    if (!Array.isArray(allow) || allow.length === 0) {
+      compatConfig = config;
+      return config;
+    }
+
+    const bundledWebSearchPluginIds = new Set(listBundledWebSearchPluginIds());
     const workspaceDir = resolveAgentWorkspaceDir(config, resolveDefaultAgentId(config));
-    const bundledWebSearchPluginIds = resolveBundledWebSearchPluginIds({
+    const seenCompatPluginIds = new Set<string>();
+    const compatPluginIds = loadPluginManifestRegistry({
       config,
       workspaceDir: workspaceDir ?? undefined,
       env: opts.env,
-    });
+    })
+      .plugins.filter((plugin) => {
+        if (seenCompatPluginIds.has(plugin.id)) {
+          return false;
+        }
+        seenCompatPluginIds.add(plugin.id);
+        return plugin.origin === "bundled" && bundledWebSearchPluginIds.has(plugin.id);
+      })
+      .map((plugin) => plugin.id)
+      .toSorted((left, right) => left.localeCompare(right));
+
     compatConfig = withBundledPluginAllowlistCompat({
       config,
-      pluginIds: bundledWebSearchPluginIds,
+      pluginIds: compatPluginIds,
     });
     return compatConfig ?? config;
   };
