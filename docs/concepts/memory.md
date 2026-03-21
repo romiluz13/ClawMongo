@@ -17,6 +17,7 @@ The mental model is simple:
 - MongoDB is the only live retrieval and durable system-memory backend.
 - Canonical runtime truth is event-first.
 - Chunks, graph entities, relations, episodes, summaries, and embeddings are derived products.
+- Procedures are explicit, versioned derived artifacts when ClawMongo learns a repeatable workflow.
 - The agent uses four memory tools: `memory_search`, `memory_get`, `kb_search`,
   and `memory_write`.
 
@@ -59,7 +60,7 @@ ClawMongo keeps one source of truth per kind of data:
   - derived synchronized session chunks
   - imported KB documents and KB chunks
   - structured memory records written by `memory_write`
-  - derived graph entities, relations, episodes, and future summary references
+  - derived graph entities, relations, episodes, procedures, and future summary references
   - retrieval diagnostics and relevance telemetry
 
 Do not treat MongoDB exports back to Markdown as canonical records. They are
@@ -78,10 +79,13 @@ ClawMongo exposes four memory tools:
   - Use when the target is documentation, FAQs, architecture specs, or other explicit reference content.
 - `memory_get`
   - Exact read by locator.
-  - Supports MongoDB-backed locators returned by recall tools.
+  - Supports MongoDB-backed locators returned by recall tools, including event,
+    episode, relation, procedure, KB, and structured-memory locators.
 - `memory_write`
   - Durable structured writes for facts, decisions, preferences, todos, people,
     projects, and architecture notes.
+  - The durable record may later gain salience, temporal validity, provenance,
+    and supersession metadata through MongoDB-native lifecycle handling.
 
 Routing guidance:
 
@@ -145,11 +149,30 @@ The runtime contract is:
 3. `memory_get` reopens the exact MongoDB-backed locator you already found.
 4. `memory_write` stores durable structured runtime knowledge.
 
+The intuition contract is:
+
+1. heart/bootstrap Markdown teaches the agent how to use memory well
+2. MongoDB runtime memory tells the agent what is currently true
+3. questions about current situation, active constraints, major ongoing context, crises, or "what matters now" should prioritize active runtime memory before generic background recall
+4. `MEMORY.md` and `memory/*.md` may inform recall, but they do not override MongoDB-backed current truth
+
 The backend tries the best available path for the supported deployment:
 
 1. hybrid fusion when lexical and vector are both available
 2. vector-only search when vectors are available but lexical is not
 3. lexical Search when `mongot` search is available
+
+Planner-directed recall can route through these MongoDB-backed lanes before the
+final backstop:
+
+1. `active-critical` for current crises, blockers, and “what matters now”
+2. `procedural` for workflows and learned runbooks
+3. `structured` for durable facts, preferences, and current truth
+4. `raw-window` for recent canonical events
+5. `graph` for entity-connected recall
+6. `episodic` for summaries and consolidated event windows
+7. `kb` for explicit reference retrieval
+8. `hybrid` as the broad lexical/vector backstop
 
 The runtime never silently switches back to SQLite or QMD.
 

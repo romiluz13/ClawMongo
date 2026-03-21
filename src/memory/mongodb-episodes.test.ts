@@ -749,6 +749,55 @@ describe("mongodb-episodes", () => {
       expect(result.reason).toBe("event_count");
     });
 
+    it("keeps the threshold-crossing event in the auto-materialized episode window", async () => {
+      const start = new Date("2026-03-15T10:00:00Z");
+      const events = Array.from({ length: 2 }, (_, i) => ({
+        eventId: `evt-${i}`,
+        agentId: AGENT_ID,
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `Message ${i}`,
+        scope: "agent",
+        timestamp: new Date(start.getTime() + i * 60_000),
+      }));
+
+      vi.mocked(getUnconsolidatedEvents).mockResolvedValue(events as never);
+      vi.mocked(getEventsByTimeRangeMock).mockResolvedValue(events as never);
+
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              toArray: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await checkAutoEpisodeTriggers({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        summarizer: mockSummarizer,
+        maxEventsWithoutEpisode: 1,
+      });
+
+      expect(result.triggered).toBe(true);
+      expect(result.reason).toBe("event_count");
+      expect(mockSummarizer).toHaveBeenCalledWith([
+        {
+          role: "user",
+          body: "Message 0",
+          timestamp: events[0].timestamp,
+        },
+        {
+          role: "assistant",
+          body: "Message 1",
+          timestamp: events[1].timestamp,
+        },
+      ]);
+    });
+
     it("does not trigger when under thresholds", async () => {
       // 10 events, no gap
       const start = new Date("2026-03-15T10:00:00Z");

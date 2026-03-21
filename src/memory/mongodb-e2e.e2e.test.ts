@@ -69,6 +69,8 @@ const EXPECTED_COLLECTION_SUFFIXES = [
   "kb_chunks",
   "structured_mem",
   "structured_mem_revisions",
+  "procedures",
+  "procedure_revisions",
   "relevance_runs",
   "relevance_artifacts",
   "relevance_regressions",
@@ -80,7 +82,7 @@ const EXPECTED_COLLECTION_SUFFIXES = [
   "ingest_runs",
   "projection_runs",
 ] as const;
-const EXPECTED_STANDARD_INDEX_COUNT = 47;
+const EXPECTED_STANDARD_INDEX_COUNT = 53;
 
 let client: MongoClient;
 let db: Db;

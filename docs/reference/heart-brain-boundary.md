@@ -49,6 +49,10 @@ Rules:
 - If ClawMongo adds prompt guidance after these files, that guidance may route
   memory behavior but must not replace persona, identity, or policy defined by
   the files themselves.
+- The heart is also responsible for memory intuition:
+  - when the agent should check memory
+  - when current runtime context matters more than generic background knowledge
+  - which categories of user state deserve early recall
 
 ## Bridge files
 
@@ -75,13 +79,23 @@ MongoDB is authoritative for runtime retrieval and durable memory services:
 - synchronized session chunks
 - knowledge base documents and KB chunks
 - structured memory written by tools
+- structured current-state metadata such as salience, temporal validity, and supersession
 - retrieval diagnostics and relevance telemetry
+- explicit, versioned procedural memory artifacts when learned workflows are promoted
 
 Rules:
 
 - MongoDB may optimize retrieval and persistence.
 - MongoDB may add structured memory types, KB indexes, and session recall.
+- MongoDB may store learned procedures, but only as explicit, reviewable artifacts
+  and never as hidden prompt rewrites.
 - MongoDB must not silently redefine the workspace bootstrap contract.
+- MongoDB is authoritative for current runtime truth, including active ongoing
+  conditions and structured facts that may supersede older state.
+- When heart guidance and runtime memory interact, the heart teaches the agent
+  how to look; the brain provides the current answer.
+- Exact MongoDB-backed locators must remain reopenable, including event,
+  episode, relation, structured, procedure, and KB surfaces.
 
 ## Required invariants
 

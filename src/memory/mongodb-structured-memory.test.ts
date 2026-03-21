@@ -162,6 +162,31 @@ describe("writeStructuredMemory", () => {
     expect(updateCall[1].$set.embedding).toBeUndefined();
   });
 
+  it("infers critical salience for crisis-like ongoing facts", async () => {
+    const col = createMockStructuredCol();
+    const revisionsCol = createMockStructuredCol();
+
+    await writeStructuredMemory({
+      db: mockDb({
+        test_structured_mem: col,
+        test_structured_mem_revisions: revisionsCol,
+      }),
+      prefix: "test_",
+      entry: {
+        type: "fact",
+        key: "israel-status",
+        value: "There is a war in Israel right now",
+        agentId: "main",
+      },
+      embeddingMode: "automated",
+    });
+
+    const updateCall = (col.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(updateCall[1].$set.salience).toBe("critical");
+    expect(updateCall[1].$set.temporalScope).toBe("ongoing");
+    expect(updateCall[1].$set.reviewAt).toBeInstanceOf(Date);
+  });
+
   it("writes explicit scope to structured memory entry", async () => {
     const col = createMockStructuredCol();
     const revisionsCol = createMockStructuredCol();
@@ -445,6 +470,26 @@ describe("searchStructuredMemory", () => {
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const vectorFilter = pipeline[0].$vectorSearch.filter;
     expect(vectorFilter.agentId).toBe("main");
+  });
+
+  it("adds current-only filters for active critical lookups", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate).mockReturnValueOnce({
+      toArray: vi.fn(async () => []),
+    } as unknown as ReturnType<Collection["aggregate"]>);
+
+    await searchStructuredMemory(col, "what matters right now", null, {
+      maxResults: 5,
+      filter: { currentOnly: true, salience: ["critical", "high"], agentId: "main" },
+      capabilities: noSearchCapabilities,
+      vectorIndexName: "unused",
+      embeddingMode: "automated",
+    });
+
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(pipeline[0].$match.state).toBe("active");
+    expect(pipeline[0].$match.salience).toEqual({ $in: ["critical", "high"] });
+    expect(pipeline[0].$match.$or).toBeDefined();
   });
 });
 

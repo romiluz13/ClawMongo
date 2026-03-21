@@ -60,5 +60,11 @@ export {
   type RetrievalPlan,
   type RetrievalPath,
 } from "./mongodb-retrieval-planner.js";
+export {
+  writeProcedure,
+  searchProcedures,
+  type ProcedureEntry,
+  type ProcedureState,
+} from "./mongodb-procedures.js";
 export { backfillEventsFromChunks } from "./mongodb-migration.js";
 export { rerankResults, type RerankWeights } from "./mongodb-manager.js";

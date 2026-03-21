@@ -29,6 +29,10 @@ export type StructuredMemoryType =
   | "architecture"
   | "custom";
 
+export type StructuredMemorySalience = "critical" | "high" | "normal" | "low";
+export type StructuredMemoryTemporalScope = "ongoing" | "bounded" | "permanent" | "transient";
+export type StructuredMemoryState = "active" | "invalidated" | "conflicted";
+
 export type StructuredMemoryEntry = {
   type: StructuredMemoryType;
   key: string;
@@ -44,6 +48,19 @@ export type StructuredMemoryEntry = {
   workspaceDir?: string;
   userId?: string;
   tenantId?: string;
+  salience?: StructuredMemorySalience;
+  temporalScope?: StructuredMemoryTemporalScope;
+  provenance?: Record<string, unknown>;
+  sourceEventIds?: string[];
+  state?: StructuredMemoryState;
+  validTo?: Date;
+  reviewAt?: Date;
+  lastConfirmedAt?: Date;
+  openedAt?: Date;
+  openedCount?: number;
+  lastUsedAt?: Date;
+  reinforcementCount?: number;
+  sourceReliability?: number;
 };
 
 type StructuredMemoryRevision = {
@@ -59,9 +76,21 @@ type StructuredMemoryRevision = {
   scope: MemoryScope;
   scopeRef: string;
   revision: number;
+  state: StructuredMemoryState;
+  salience: StructuredMemorySalience;
+  temporalScope: StructuredMemoryTemporalScope;
+  provenance?: Record<string, unknown>;
+  sourceEventIds?: string[];
+  sourceReliability?: number;
+  reinforcementCount?: number;
   validFrom: Date;
   validTo: Date;
   supersededAt: Date;
+  reviewAt?: Date;
+  lastConfirmedAt?: Date;
+  supersedes?: Record<string, unknown>;
+  invalidatedBy?: Record<string, unknown>;
+  conflictsWith?: Record<string, unknown>[];
   createdAt?: Date;
   updatedAt: Date;
 };
@@ -80,11 +109,108 @@ function hasStructuredValueChanged(existing: Document, entry: StructuredMemoryEn
       entry.confidence ||
     (typeof existing.source === "string" ? existing.source : undefined) !== entry.source ||
     (typeof existing.sessionId === "string" ? existing.sessionId : undefined) !== entry.sessionId ||
+    (typeof existing.salience === "string" ? existing.salience : undefined) !== entry.salience ||
+    (typeof existing.temporalScope === "string" ? existing.temporalScope : undefined) !==
+      entry.temporalScope ||
+    (typeof existing.state === "string" ? existing.state : undefined) !== entry.state ||
+    (typeof existing.sourceReliability === "number" ? existing.sourceReliability : undefined) !==
+      entry.sourceReliability ||
+    JSON.stringify(existing.provenance ?? null) !== JSON.stringify(entry.provenance ?? null) ||
+    !arraysEqual(
+      Array.isArray(existing.sourceEventIds)
+        ? existing.sourceEventIds.map((value) => String(value))
+        : undefined,
+      entry.sourceEventIds,
+    ) ||
     !arraysEqual(
       Array.isArray(existing.tags) ? existing.tags.map((tag) => String(tag)) : undefined,
       entry.tags,
     )
   );
+}
+
+function inferSalience(entry: StructuredMemoryEntry): StructuredMemorySalience {
+  if (entry.salience) {
+    return entry.salience;
+  }
+  const haystack =
+    `${entry.value} ${entry.context ?? ""} ${(entry.tags ?? []).join(" ")}`.toLowerCase();
+  if (/\b(war|crisis|emergency|safety|danger|urgent|critical)\b/.test(haystack)) {
+    return "critical";
+  }
+  if (/\b(blocker|blocked|constraint|right now|currently|active)\b/.test(haystack)) {
+    return "high";
+  }
+  if (entry.type === "preference" || entry.type === "decision") {
+    return "high";
+  }
+  if (entry.type === "todo") {
+    return "normal";
+  }
+  return "normal";
+}
+
+function inferTemporalScope(entry: StructuredMemoryEntry): StructuredMemoryTemporalScope {
+  if (entry.temporalScope) {
+    return entry.temporalScope;
+  }
+  switch (entry.type) {
+    case "preference":
+    case "person":
+    case "architecture":
+    case "decision":
+      return "permanent";
+    case "project":
+    case "todo":
+    case "fact":
+      return "ongoing";
+    default:
+      return "transient";
+  }
+}
+
+function inferSourceReliability(entry: StructuredMemoryEntry): number {
+  if (typeof entry.sourceReliability === "number") {
+    return entry.sourceReliability;
+  }
+  switch (entry.source) {
+    case "user":
+      return 0.95;
+    case "ingestion":
+      return 0.85;
+    case "session":
+      return 0.8;
+    case "agent":
+    default:
+      return 0.75;
+  }
+}
+
+function inferReviewAt(params: {
+  entry: StructuredMemoryEntry;
+  salience: StructuredMemorySalience;
+  temporalScope: StructuredMemoryTemporalScope;
+  now: Date;
+}): Date | undefined {
+  if (params.entry.reviewAt) {
+    return params.entry.reviewAt;
+  }
+  if (params.entry.validTo) {
+    return params.entry.validTo;
+  }
+  if (params.temporalScope === "bounded") {
+    return new Date(params.now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  }
+  if (params.temporalScope === "ongoing" && params.salience === "critical") {
+    return new Date(params.now.getTime() + 24 * 60 * 60 * 1000);
+  }
+  if (params.temporalScope === "ongoing" && params.salience === "high") {
+    return new Date(params.now.getTime() + 3 * 24 * 60 * 60 * 1000);
+  }
+  if (params.temporalScope === "transient") {
+    return new Date(params.now.getTime() + 24 * 60 * 60 * 1000);
+  }
+  return undefined;
 }
 
 function buildRevisionDoc(params: {
@@ -114,6 +240,18 @@ function buildRevisionDoc(params: {
     scope: params.scope,
     scopeRef: params.scopeRef,
     revision,
+    state:
+      typeof params.existing.state === "string"
+        ? (params.existing.state as StructuredMemoryState)
+        : "active",
+    salience:
+      typeof params.existing.salience === "string"
+        ? (params.existing.salience as StructuredMemorySalience)
+        : "normal",
+    temporalScope:
+      typeof params.existing.temporalScope === "string"
+        ? (params.existing.temporalScope as StructuredMemoryTemporalScope)
+        : "permanent",
     validFrom,
     validTo: params.now,
     supersededAt: params.now,
@@ -125,11 +263,41 @@ function buildRevisionDoc(params: {
     ...(typeof params.existing.source === "string"
       ? { source: params.existing.source as StructuredMemoryEntry["source"] }
       : {}),
+    ...(typeof params.existing.sourceReliability === "number"
+      ? { sourceReliability: params.existing.sourceReliability }
+      : {}),
     ...(typeof params.existing.sessionId === "string"
       ? { sessionId: params.existing.sessionId }
       : {}),
     ...(Array.isArray(params.existing.tags)
       ? { tags: params.existing.tags.map((tag) => String(tag)) }
+      : {}),
+    ...(Array.isArray(params.existing.sourceEventIds)
+      ? { sourceEventIds: params.existing.sourceEventIds.map((value) => String(value)) }
+      : {}),
+    ...(params.existing.provenance && typeof params.existing.provenance === "object"
+      ? { provenance: params.existing.provenance as Record<string, unknown> }
+      : {}),
+    ...(typeof params.existing.reinforcementCount === "number"
+      ? { reinforcementCount: params.existing.reinforcementCount }
+      : {}),
+    ...(params.existing.reviewAt instanceof Date ? { reviewAt: params.existing.reviewAt } : {}),
+    ...(params.existing.lastConfirmedAt instanceof Date
+      ? { lastConfirmedAt: params.existing.lastConfirmedAt }
+      : {}),
+    ...(params.existing.supersedes && typeof params.existing.supersedes === "object"
+      ? { supersedes: params.existing.supersedes as Record<string, unknown> }
+      : {}),
+    ...(params.existing.invalidatedBy && typeof params.existing.invalidatedBy === "object"
+      ? { invalidatedBy: params.existing.invalidatedBy as Record<string, unknown> }
+      : {}),
+    ...(Array.isArray(params.existing.conflictsWith)
+      ? {
+          conflictsWith: params.existing.conflictsWith.filter(
+            (value): value is Record<string, unknown> =>
+              Boolean(value && typeof value === "object"),
+          ),
+        }
       : {}),
     ...(params.existing.createdAt instanceof Date ? { createdAt: params.existing.createdAt } : {}),
   };
@@ -165,6 +333,12 @@ export async function writeStructuredMemory(params: {
     userId: entry.userId,
     tenantId: entry.tenantId,
   });
+  const salience = inferSalience(entry);
+  const temporalScope = inferTemporalScope(entry);
+  const sourceReliability = inferSourceReliability(entry);
+  const state = entry.state ?? "active";
+  const reviewAt = inferReviewAt({ entry, salience, temporalScope, now });
+  const lastConfirmedAt = entry.lastConfirmedAt ?? now;
   const setDoc: Document = {
     type: entry.type,
     key: entry.key,
@@ -173,6 +347,11 @@ export async function writeStructuredMemory(params: {
     scope,
     scopeRef,
     embeddingStatus,
+    state,
+    salience,
+    temporalScope,
+    sourceReliability,
+    lastConfirmedAt,
     validFrom: now,
     updatedAt: now,
   };
@@ -191,6 +370,30 @@ export async function writeStructuredMemory(params: {
   if (entry.tags !== undefined) {
     setDoc.tags = entry.tags;
   }
+  if (entry.provenance !== undefined) {
+    setDoc.provenance = entry.provenance;
+  }
+  if (entry.sourceEventIds !== undefined) {
+    setDoc.sourceEventIds = entry.sourceEventIds;
+  }
+  if (reviewAt !== undefined) {
+    setDoc.reviewAt = reviewAt;
+  }
+  if (entry.validTo !== undefined) {
+    setDoc.validTo = entry.validTo;
+  }
+  if (entry.openedAt !== undefined) {
+    setDoc.openedAt = entry.openedAt;
+  }
+  if (entry.lastUsedAt !== undefined) {
+    setDoc.lastUsedAt = entry.lastUsedAt;
+  }
+  if (entry.openedCount !== undefined) {
+    setDoc.openedCount = entry.openedCount;
+  }
+  if (entry.reinforcementCount !== undefined) {
+    setDoc.reinforcementCount = entry.reinforcementCount;
+  }
 
   const identityFilter = {
     agentId: entry.agentId,
@@ -208,8 +411,8 @@ export async function writeStructuredMemory(params: {
       const result = await collection.updateOne(
         identityFilter,
         {
-          $set: { ...setDoc, revision: 1 },
-          $setOnInsert: { createdAt: now },
+          $set: { ...setDoc, revision: 1, reinforcementCount: entry.reinforcementCount ?? 1 },
+          $setOnInsert: { createdAt: now, openedCount: entry.openedCount ?? 0 },
         },
         { upsert: true, ...(session ? { session } : {}) },
       );
@@ -241,6 +444,10 @@ export async function writeStructuredMemory(params: {
             ...setDoc,
             revision: currentRevision,
             validFrom: currentValidFrom,
+            lastConfirmedAt: now,
+          },
+          $inc: {
+            reinforcementCount: 1,
           },
         },
         session ? { session } : {},
@@ -252,16 +459,33 @@ export async function writeStructuredMemory(params: {
       buildRevisionDoc({ existing, scope, scopeRef, now }),
       session ? { session } : {},
     );
+    const nextSetDoc: Document = {
+      ...setDoc,
+      revision: currentRevision + 1,
+      validFrom: now,
+      supersedes: {
+        revision: currentRevision,
+        type: String(existing.type ?? entry.type),
+        key: String(existing.key ?? entry.key),
+      },
+    };
+    if (state === "conflicted") {
+      nextSetDoc.conflictsWith = [
+        {
+          revision: currentRevision,
+          type: String(existing.type ?? entry.type),
+          key: String(existing.key ?? entry.key),
+        },
+      ];
+    }
+
     await collection.updateOne(
       identityFilter,
       {
-        $set: {
-          ...setDoc,
-          revision: currentRevision + 1,
-          validFrom: now,
-        },
+        $set: nextSetDoc,
         $setOnInsert: {
           createdAt: existing.createdAt instanceof Date ? existing.createdAt : now,
+          openedCount: typeof existing.openedCount === "number" ? existing.openedCount : 0,
         },
       },
       { upsert: true, ...(session ? { session } : {}) },
@@ -335,6 +559,10 @@ export async function searchStructuredMemory(
       agentId?: string;
       scope?: MemoryScope;
       scopeRef?: string;
+      state?: StructuredMemoryState | StructuredMemoryState[];
+      salience?: StructuredMemorySalience[];
+      temporalScope?: StructuredMemoryTemporalScope[];
+      currentOnly?: boolean;
     };
     capabilities: DetectedCapabilities;
     vectorIndexName: string;
@@ -373,6 +601,25 @@ export async function searchStructuredMemory(
       if (opts.filter?.scopeRef) {
         filter.scopeRef = opts.filter.scopeRef;
       }
+      if (opts.filter?.state) {
+        filter.state = Array.isArray(opts.filter.state)
+          ? { $in: opts.filter.state }
+          : opts.filter.state;
+      }
+      if (opts.filter?.salience?.length) {
+        filter.salience = { $in: opts.filter.salience };
+      }
+      if (opts.filter?.temporalScope?.length) {
+        filter.temporalScope = { $in: opts.filter.temporalScope };
+      }
+      const currentMatch =
+        opts.filter?.currentOnly === true
+          ? {
+              state: "active",
+              validFrom: { $lte: new Date() },
+              $or: [{ validTo: { $exists: false } }, { validTo: { $gte: new Date() } }],
+            }
+          : undefined;
 
       const vsStage = buildVectorSearchStage({
         queryVector,
@@ -388,6 +635,7 @@ export async function searchStructuredMemory(
       if (vsStage) {
         const pipeline: Document[] = [
           { $vectorSearch: vsStage },
+          ...(currentMatch ? [{ $match: currentMatch }] : []),
           { $limit: opts.maxResults },
           {
             $project: {
@@ -400,6 +648,9 @@ export async function searchStructuredMemory(
               tags: 1,
               scope: 1,
               scopeRef: 1,
+              state: 1,
+              salience: 1,
+              temporalScope: 1,
               score: { $meta: "vectorSearchScore" },
             },
           },
@@ -451,6 +702,22 @@ export async function searchStructuredMemory(
     if (opts.filter?.scopeRef) {
       matchFilter.scopeRef = opts.filter.scopeRef;
     }
+    if (opts.filter?.state) {
+      matchFilter.state = Array.isArray(opts.filter.state)
+        ? { $in: opts.filter.state }
+        : opts.filter.state;
+    }
+    if (opts.filter?.salience?.length) {
+      matchFilter.salience = { $in: opts.filter.salience };
+    }
+    if (opts.filter?.temporalScope?.length) {
+      matchFilter.temporalScope = { $in: opts.filter.temporalScope };
+    }
+    if (opts.filter?.currentOnly) {
+      matchFilter.state = "active";
+      matchFilter.validFrom = { $lte: new Date() };
+      matchFilter.$or = [{ validTo: { $exists: false } }, { validTo: { $gte: new Date() } }];
+    }
 
     const docs = await collection
       .aggregate([
@@ -466,6 +733,9 @@ export async function searchStructuredMemory(
             tags: 1,
             scope: 1,
             scopeRef: 1,
+            state: 1,
+            salience: 1,
+            temporalScope: 1,
             score: { $meta: "textScore" },
           },
         },

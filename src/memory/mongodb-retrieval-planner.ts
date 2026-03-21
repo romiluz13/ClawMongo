@@ -2,7 +2,15 @@ import { createSubsystemLogger } from "../logging/subsystem.js";
 
 const log = createSubsystemLogger("memory:mongodb:planner");
 
-export type RetrievalPath = "structured" | "raw-window" | "graph" | "hybrid" | "kb" | "episodic";
+export type RetrievalPath =
+  | "active-critical"
+  | "structured"
+  | "raw-window"
+  | "graph"
+  | "hybrid"
+  | "kb"
+  | "episodic"
+  | "procedural";
 
 export type RetrievalTimeRangePreset =
   | "today"
@@ -14,6 +22,12 @@ export type RetrievalTimeRangePreset =
   | "this-month";
 
 export type RetrievalConstraints = {
+  activeCritical?: {
+    salience: Array<"critical" | "high">;
+    requireCurrent: boolean;
+    hard: boolean;
+    reason: string;
+  };
   timeRange?: {
     preset: RetrievalTimeRangePreset;
     hard: boolean;
@@ -132,14 +146,45 @@ const EPISODIC_KEYWORDS = [
 ];
 const EPISODIC_REGEXES = buildKeywordRegexes(EPISODIC_KEYWORDS);
 
+const ACTIVE_CRITICAL_KEYWORDS = [
+  "what matters now",
+  "what should you know right now",
+  "what's the situation",
+  "current situation",
+  "going on with",
+  "right now",
+  "currently",
+  "active blocker",
+  "blocker",
+  "constraint",
+  "crisis",
+  "war",
+  "status",
+];
+const ACTIVE_CRITICAL_REGEXES = buildKeywordRegexes(ACTIVE_CRITICAL_KEYWORDS);
+
+const PROCEDURAL_KEYWORDS = [
+  "how do we",
+  "workflow",
+  "runbook",
+  "process",
+  "procedure",
+  "playbook",
+  "steps",
+  "checklist",
+];
+const PROCEDURAL_REGEXES = buildKeywordRegexes(PROCEDURAL_KEYWORDS);
+
 // Deterministic tie-breaking priority (lower = higher priority)
 const PATH_PRIORITY: Record<RetrievalPath, number> = {
-  structured: 0,
-  "raw-window": 1,
-  graph: 2,
-  episodic: 3,
-  kb: 4,
-  hybrid: 5,
+  "active-critical": 0,
+  procedural: 1,
+  structured: 2,
+  "raw-window": 3,
+  graph: 4,
+  episodic: 5,
+  kb: 6,
+  hybrid: 7,
 };
 
 const STRUCTURED_TYPE_MATCHERS: Array<{ type: string; regexes: RegExp[] }> = [
@@ -279,6 +324,20 @@ function extractKBConstraint(query: string): RetrievalConstraints["kb"] | undefi
   return undefined;
 }
 
+function extractActiveCriticalConstraint(
+  query: string,
+): RetrievalConstraints["activeCritical"] | undefined {
+  if (ACTIVE_CRITICAL_REGEXES.some((re) => re.test(query))) {
+    return {
+      salience: ["critical", "high"],
+      requireCurrent: true,
+      hard: false,
+      reason: "current-state or active-context signal detected",
+    };
+  }
+  return undefined;
+}
+
 function extractEntityConstraint(
   query: string,
   knownEntityNames?: string[],
@@ -318,13 +377,22 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
 
     // Score each path
     const scores: Record<RetrievalPath, number> = {
+      "active-critical": 0,
       structured: 0,
       "raw-window": 0,
       graph: 0,
       hybrid: 0,
       kb: 0,
       episodic: 0,
+      procedural: 0,
     };
+
+    const activeCriticalConstraint = extractActiveCriticalConstraint(query);
+    if (activeCriticalConstraint) {
+      scores["active-critical"] += 4;
+      constraints.activeCritical = activeCriticalConstraint;
+      reasons.push(activeCriticalConstraint.reason);
+    }
 
     // Check structured signals (word-boundary regex)
     const structuredConstraint = extractStructuredConstraint(query);
@@ -371,6 +439,11 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
     if (EPISODIC_REGEXES.some((re) => re.test(query))) {
       scores.episodic += 3;
       reasons.push("episodic/summary keywords detected");
+    }
+
+    if (PROCEDURAL_REGEXES.some((re) => re.test(query))) {
+      scores.procedural += 3;
+      reasons.push("procedural/workflow keywords detected");
     }
 
     // Hybrid is always baseline

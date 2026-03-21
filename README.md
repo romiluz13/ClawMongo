@@ -35,11 +35,12 @@ ClawMongo keeps the OpenClaw agent experience but upgrades memory into a MongoDB
 - **Official runtime: MongoDB Community + `mongod` + `mongot`**: ClawMongo ships one supported memory backend and one supported deployment shape.
 - **Voyage AI autoEmbed (voyage-4-large)**: with `memory.mongodb.embeddingMode = "automated"`, mongot delegates to the Voyage AI API for embedding generation at index time and query time. No application-side embedding code or manual vector management.
 - **Canonical events architecture**: events serve as the canonical data model. Chunks, entities, relations, and episodes are all derived projections. Live runtime writes go directly through the MongoDB event path, and Markdown sync remains a bridge/import path only.
+- **Heart-brain contract**: workspace Markdown stays the heart that teaches identity, policy, and memory discipline. MongoDB stays the brain that holds runtime truth, recall, procedures, and diagnostics.
 - **Knowledge graph with `$graphLookup`**: entities and relations form a traversable graph. Bi-directional expansion, entity extraction from conversations, and graph-aware retrieval paths.
-- **Episode materialization**: raw event sequences are consolidated into searchable episodes (daily, topic, decision, weekly types) with summarization.
-- **Hybrid retrieval with intelligent planning**: a retrieval planner scores 6 paths (hybrid, raw-window, graph, episodic, structured, kb) and a heuristic reranker applies source diversity and episode boost before final results.
-- **Real agent memory tools**: `memory_search`, `memory_get`, `kb_search`, and `memory_write` give the agent a clean recall/read/write model instead of ad-hoc file-only memory.
-- **Operational guarantees**: schema validation, transactions where available, retention controls, sync probes, and memory status are first-class.
+- **Episode materialization**: raw event sequences are consolidated into searchable episodes through the live write path, with configurable event-count/session-gap triggers and exact episode reopen.
+- **Planner-driven retrieval with current-state bias**: the retrieval planner now reasons over 8 paths (`active-critical`, `procedural`, `structured`, `raw-window`, `graph`, `episodic`, `kb`, `hybrid`) so the agent can surface current critical context before broad background recall.
+- **Real agent memory tools**: `memory_search`, `memory_get`, `kb_search`, and `memory_write` give the agent a clean recall/read/write model instead of ad-hoc file-only memory. `memory_get` can reopen conversation/event, episode, relation, procedure, structured, and KB locators.
+- **Operational guarantees**: schema validation, transactions where available, no TTL on canonical collections, sync probes, projection health, and memory status are first-class.
 
 ClawMongo intentionally uses the MongoDB features that materially improve agent memory without turning setup into a science project.
 
@@ -76,11 +77,17 @@ If you export MongoDB data into `.md` for readability, treat it as a projection,
 ```text
 Inbound event
   -> routing/policy checks
-  -> runtime knowledge lives in MongoDB
+  -> runtime truth written as canonical MongoDB event
+  -> derived promotion may create:
+       - structured memory with salience / temporal validity / provenance
+       - procedures from repeatable assistant workflows
+       - episodes from unconsolidated event windows
   -> memory_search recalls across:
-       1) conversation/history
-       2) reference knowledge
+       1) active critical memory
+       2) procedural memory
        3) structured memory
+       4) recent raw event window
+       5) graph / episodes / hybrid backstops
   -> kb_search targets imported reference material
   -> memory_get reads exact Mongo-backed locators
   -> memory_write stores durable structured facts
@@ -105,7 +112,17 @@ Inbound message / tool output
             └─ relations collection   (links between entities, weighted, typed)
 ```
 
-**16 collections total** (v1: 11, v2 adds: events, entities, relations, episodes, ingest_runs, projection_runs), backed by 44 standard indexes and 6 search indexes (3 text + 3 vector with autoEmbed).
+**20 collections total**, backed by **53 standard indexes** and **up to 8 MongoDB Search indexes** when Search Index Management is available:
+
+- `chunks`, `files`, `embedding_cache`, `meta`
+- `knowledge_base`, `kb_chunks`
+- `structured_mem`, `structured_mem_revisions`
+- `procedures`, `procedure_revisions`
+- `relevance_runs`, `relevance_artifacts`, `relevance_regressions`
+- `events`, `entities`, `relations`, `entity_links`, `episodes`
+- `ingest_runs`, `projection_runs`
+
+The canonical collections are the event/logical-memory surfaces. Chunks, graph, episodes, and procedures are all derived and auditable.
 
 #### Vector Search (Voyage AI autoEmbed)
 
@@ -147,28 +164,58 @@ expandGraph(entityId, { bidirectional: true, maxDepth: 2 })
   -> merge + deduplicate connections
 ```
 
+#### Structured Memory and Procedures
+
+Structured memory now tracks more than a bare fact string. Current records can carry:
+
+- salience (`critical`, `high`, `normal`, `low`)
+- temporal validity (`ongoing`, `bounded`, `permanent`, `transient`)
+- state (`active`, `invalidated`, `conflicted`)
+- provenance and `sourceEventIds`
+- review/confirmation timestamps
+- reinforcement/open/usefulness counters
+
+This lets ClawMongo distinguish “this is important right now” from “this is generally useful background.”
+
+Procedures are explicit derived artifacts, not hidden prompt rewrites. When the assistant emits a repeatable workflow, ClawMongo can promote it into a versioned procedure record with:
+
+- intent tags and trigger queries
+- ordered steps
+- provenance
+- revision history
+- exact reopen via `procedure:<id>`
+
 #### Episodes and Consolidation
 
 Events are consolidated into episodes through materialization (daily summaries, topic clusters, decision records). The consolidation lifecycle tracks which events have been processed:
 
 - `getUnconsolidatedEvents()` returns events not yet rolled up
 - `markEventsConsolidated()` stamps `consolidatedAt` + `consolidatedIntoEpisodeId`
-- `checkAutoEpisodeTriggers()` fires on session gaps (>30 min), event count thresholds (>50), or explicit triggers, with rate limiting
+- `checkAutoEpisodeTriggers()` fires on session gaps, configurable event count thresholds (`memory.mongodb.episodes.minEventsForEpisode`), or explicit triggers, with rate limiting
 
 #### Retrieval Planner and Reranking
 
-The retrieval planner (`planRetrieval`) scores 6 retrieval paths based on query analysis:
+The retrieval planner (`planRetrieval`) scores 8 retrieval paths based on query analysis:
 
-| Path         | When it scores high                    |
-| ------------ | -------------------------------------- |
-| `hybrid`     | General knowledge queries              |
-| `raw-window` | Recent context ("what did I just say") |
-| `graph`      | Entity names detected in query         |
-| `episodic`   | Time-range or summary queries          |
-| `structured` | Fact/preference lookups                |
-| `kb`         | Reference material queries             |
+| Path              | When it scores high                                            |
+| ----------------- | -------------------------------------------------------------- |
+| `active-critical` | current-state, crisis, blocker, or “what matters now” queries  |
+| `procedural`      | workflow, runbook, process, or exact learned procedure lookups |
+| `structured`      | fact/preference/current-truth lookups                          |
+| `raw-window`      | Recent context ("what did I just say")                         |
+| `graph`           | Entity names detected in query                                 |
+| `episodic`        | Time-range or summary queries                                  |
+| `kb`              | Reference material queries                                     |
+| `hybrid`          | broad lexical/vector fallback                                  |
 
-After retrieval, `rerankResults` applies source diversity penalty (avoids all results from one source) and episode boost (episodic results get a score bump), then deduplicates and slices.
+After retrieval, `rerankResults` applies source diversity penalty, episode boost, deduplication, and backstop execution so narrow planners do not block broad recall. The runtime can also reopen exact locators for:
+
+- `events/<id>` and `event:<id>`
+- `episode:<id>`
+- `relation:<from>-<to>`
+- `structured:<type>:<key>`
+- `procedure:<id>`
+- KB locators returned by `kb_search`
 
 ## Sponsors
 

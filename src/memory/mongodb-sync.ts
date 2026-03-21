@@ -12,12 +12,12 @@ import {
 } from "./internal.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { chunksCollection, filesCollection } from "./mongodb-schema.js";
+import { resolveScopeRef } from "./mongodb-scope.js";
 import {
   buildSessionEntry,
   listSessionFilesForAgent,
   type SessionFileEntry,
 } from "./session-files.js";
-import { resolveScopeRef } from "./mongodb-scope.js";
 import type { InternalMemoryStoredSource, MemorySyncProgressUpdate } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:sync");
@@ -242,8 +242,7 @@ async function syncFileAtomically(params: {
     model,
     embeddings,
     embeddingStatus,
-  } =
-    params;
+  } = params;
 
   if (!client || !params.useTransactions) {
     await deleteChunksForPath(chunksCol, file.path, namespace);
@@ -681,7 +680,9 @@ async function syncSessionFiles(params: {
       new Set(params.validPaths),
     );
     await params.filesCol.deleteMany({
-      _id: { $in: staleSessionPaths.map((storedPath) => buildStorageId(sessionNamespace, storedPath)) },
+      _id: {
+        $in: staleSessionPaths.map((storedPath) => buildStorageId(sessionNamespace, storedPath)),
+      },
     } as Record<string, unknown>);
   }
 
@@ -704,8 +705,17 @@ async function syncSessionFileAtomically(params: {
   embeddings: number[][] | null;
   embeddingStatus: EmbeddingStatus;
 }): Promise<{ upserted: number; disableTransactions: boolean }> {
-  const { client, chunksCol, filesCol, entry, namespace, chunks, model, embeddings, embeddingStatus } =
-    params;
+  const {
+    client,
+    chunksCol,
+    filesCol,
+    entry,
+    namespace,
+    chunks,
+    model,
+    embeddings,
+    embeddingStatus,
+  } = params;
 
   if (!client || !params.useTransactions) {
     await deleteChunksForPath(chunksCol, entry.path, namespace);

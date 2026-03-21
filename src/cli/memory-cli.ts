@@ -275,6 +275,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
   const allResults: Array<{
     agentId: string;
     status: ReturnType<MemoryManager["status"]>;
+    detailedStatus?: Record<string, unknown>;
     embeddingProbe?: Awaited<ReturnType<MemoryManager["probeEmbeddingAvailability"]>>;
     indexError?: string;
     scan?: MemorySourceScan;
@@ -291,8 +292,13 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         let embeddingProbe:
           | Awaited<ReturnType<typeof manager.probeEmbeddingAvailability>>
           | undefined;
+        let detailedStatus: Record<string, unknown> | undefined;
         let indexError: string | undefined;
         const syncFn = manager.sync ? manager.sync.bind(manager) : undefined;
+        const detailedStatusFn =
+          "getDetailedStatus" in manager && typeof manager.getDetailedStatus === "function"
+            ? manager.getDetailedStatus.bind(manager)
+            : undefined;
         if (deep) {
           await withProgress({ label: "Checking memory…", total: 2 }, async (progress) => {
             progress.setLabel("Probing vector…");
@@ -302,6 +308,9 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
             embeddingProbe = await manager.probeEmbeddingAvailability();
             progress.tick();
           });
+          if (detailedStatusFn) {
+            detailedStatus = await detailedStatusFn().catch(() => undefined);
+          }
           if (opts.index && syncFn) {
             await withProgressTotals(
               {
@@ -350,7 +359,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
               sources,
             })
           : undefined;
-        allResults.push({ agentId, status, embeddingProbe, indexError, scan });
+        allResults.push({ agentId, status, detailedStatus, embeddingProbe, indexError, scan });
       },
     });
   }
@@ -370,7 +379,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
   const label = (text: string) => muted(`${text}:`);
 
   for (const result of allResults) {
-    const { agentId, status, embeddingProbe, indexError, scan } = result;
+    const { agentId, status, detailedStatus, embeddingProbe, indexError, scan } = result;
     const filesIndexed = status.files ?? 0;
     const chunksIndexed = status.chunks ?? 0;
     const totalFiles = scan?.totalFiles ?? null;
@@ -386,6 +395,23 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
     const modelLabel = status.model ?? status.provider;
     const workspacePath = status.workspaceDir ? shortenHomePath(status.workspaceDir) : "<unknown>";
     const sourceList = status.sources?.length ? status.sources.join(", ") : null;
+    const v2 =
+      detailedStatus &&
+      typeof detailedStatus === "object" &&
+      "health" in detailedStatus &&
+      "projectionLag" in detailedStatus &&
+      "retrievalPaths" in detailedStatus
+        ? (detailedStatus as {
+            health: {
+              overall: string;
+              retrieval: string;
+              canonicalIngest: string;
+              diagnostics?: string[];
+            };
+            projectionLag: Record<string, number | null>;
+            retrievalPaths: string[];
+          })
+        : null;
     const lines = [
       `${heading("Memory Search")} ${muted(`(${agentId})`)}`,
       `${label("Provider")} ${info(status.provider)} ${muted(`(requested: ${requestedProvider})`)}`,
@@ -394,6 +420,12 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       `${label("Indexed")} ${success(indexedLabel)}`,
       `${label("Dirty")} ${status.dirty ? warn("yes") : muted("no")}`,
       `${label("Workspace")} ${info(workspacePath)}`,
+      v2
+        ? `${label("V2 health")} ${info(
+            `overall=${v2.health.overall}, retrieval=${v2.health.retrieval}, ingest=${v2.health.canonicalIngest}`,
+          )}`
+        : null,
+      v2 ? `${label("V2 paths")} ${info(v2.retrievalPaths.join(", "))}` : null,
     ].filter(Boolean) as string[];
     const custom = status.custom && typeof status.custom === "object" ? status.custom : null;
     const searchModes =
@@ -420,6 +452,18 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       lines.push(`${label("Embeddings")} ${colorize(rich, stateColor, state)}`);
       if (embeddingProbe.error) {
         lines.push(`${label("Embeddings error")} ${warn(embeddingProbe.error)}`);
+      }
+    }
+    if (v2) {
+      lines.push(
+        `${label("V2 lag")} ${info(
+          Object.entries(v2.projectionLag)
+            .map(([name, lag]) => `${name}=${lag ?? "n/a"}`)
+            .join(", "),
+        )}`,
+      );
+      if (v2.health.diagnostics?.length) {
+        lines.push(`${label("V2 diagnostics")} ${warn(v2.health.diagnostics.join(", "))}`);
       }
     }
     if (status.sourceCounts?.length) {

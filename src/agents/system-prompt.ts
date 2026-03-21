@@ -35,6 +35,7 @@ function buildMongoDBBridgeSection(params: {
     "## MongoDB Memory Integration",
     "The MongoDB memory backend is active. Runtime knowledge is Mongo-canonical while heart/bootstrap files remain Markdown guidance:",
     "- To recall: always call memory_search FIRST (not file reads)",
+    "- For current situation, active constraints, crises, blockers, or major ongoing context: treat active runtime memory as first-class recall, not optional background context",
   ];
   if (!tools || tools.has("memory_write")) {
     lines.push("- To store structured data: use memory_write (not file writes)");
@@ -87,6 +88,9 @@ function buildMemorySection(params: {
       ? "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory. If the target is imported documentation or explicit reference material, use kb_search."
       : "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory.";
     lines.push(intro);
+    lines.push(
+      "If the user asks about their current situation, active constraints, ongoing blockers, crisis context, location-sensitive context, or what matters right now, check active runtime memory before answering from generic background knowledge.",
+    );
     lines.push("");
     lines.push("### When to use each tool");
     lines.push(
@@ -128,6 +132,9 @@ function buildMemorySection(params: {
     }
     lines.push("- Conversation/history recall -> memory_search");
     lines.push('- Broad "what do I know about X?" -> memory_search');
+    lines.push(
+      "- Current-state or situational questions -> memory_search first, with extra attention to active high-priority runtime memory",
+    );
   } else {
     lines.push(
       "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search against the configured runtime memory backend; then use memory_get only for the specific Mongo-backed locator you need. If low confidence after search, say you checked.",

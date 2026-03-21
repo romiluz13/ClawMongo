@@ -11,12 +11,14 @@ import {
 // ---------------------------------------------------------------------------
 
 const ALL_PATHS: Set<RetrievalPath> = new Set([
+  "active-critical",
   "structured",
   "raw-window",
   "graph",
   "hybrid",
   "kb",
   "episodic",
+  "procedural",
 ]);
 
 function makeContext(overrides: Partial<RetrievalContext> = {}): RetrievalContext {
@@ -45,6 +47,12 @@ describe("mongodb-retrieval-planner", () => {
     expect(plan.paths[0]).toBe("raw-window");
   });
 
+  it("routes current-situation queries to active-critical first", () => {
+    const plan = planRetrieval("what's the situation in Israel right now", makeContext());
+    expect(plan.paths[0]).toBe("active-critical");
+    expect(plan.constraints?.activeCritical?.salience).toEqual(["critical", "high"]);
+  });
+
   it("routes query with known entity name to graph first", () => {
     const ctx = makeContext({ knownEntityNames: ["Alice"] });
     const plan = planRetrieval("what does Alice work on", ctx);
@@ -59,6 +67,11 @@ describe("mongodb-retrieval-planner", () => {
   it("routes 'give me a recap of the deployment' to episodic first", () => {
     const plan = planRetrieval("give me a recap of the deployment", makeContext());
     expect(plan.paths[0]).toBe("episodic");
+  });
+
+  it("routes workflow queries to procedural first", () => {
+    const plan = planRetrieval("what is the runbook for rotating auth keys", makeContext());
+    expect(plan.paths[0]).toBe("procedural");
   });
 
   it("routes 'what's in the docs about authentication' to kb first", () => {

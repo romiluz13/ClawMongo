@@ -11,7 +11,12 @@ import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backe
 import { normalizeExtraMemoryPaths } from "./internal.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
+import {
+  heuristicEpisodeSummarizer,
+  promoteDerivedMemoryFromEvent,
+} from "./mongodb-derived-memory.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
+import { checkAutoEpisodeTriggers } from "./mongodb-episodes.js";
 import { writeEvent, projectEventChunk, getEventsByTimeRange } from "./mongodb-events.js";
 import {
   extractAndUpsertEntities,
@@ -30,6 +35,8 @@ import {
   type IngestRun,
   type ProjectionRun,
 } from "./mongodb-ops.js";
+import type { ProcedureEntry } from "./mongodb-procedures.js";
+import { searchProcedures } from "./mongodb-procedures.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -60,6 +67,7 @@ import {
   filesCollection,
   kbChunksCollection,
   metaCollection,
+  proceduresCollection,
   relevanceRunsCollection,
   structuredMemCollection,
 } from "./mongodb-schema.js";
@@ -318,6 +326,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private fileCount = 0;
   private chunkCount = 0;
   private writeQueue: Promise<void> = Promise.resolve();
+  private derivationQueue: Promise<void> = Promise.resolve();
   private lastSearchMode = "legacy";
   private lastSearchDetails: Record<string, unknown> | undefined;
 
@@ -519,6 +528,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const paths = new Set<RetrievalPath>();
 
     if (activeSources.structured) {
+      paths.add("active-critical");
+      paths.add("procedural");
       paths.add("structured");
     }
     if (activeSources.reference) {
@@ -1242,15 +1253,51 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           sourceType: "structured" as const,
         };
       }
+      await structuredMemCollection(this.db, this.prefix).updateOne(
+        { _id: record._id },
+        {
+          $set: { openedAt: new Date() },
+          $inc: { openedCount: 1 },
+        },
+      );
       const text = [
         `type: ${String(record.type ?? type)}`,
         `key: ${String(record.key ?? key)}`,
         `value: ${String(record.value ?? "")}`,
         typeof record.revision === "number" ? `revision: ${record.revision}` : null,
+        typeof record.state === "string" ? `state: ${record.state}` : null,
+        typeof record.salience === "string" ? `salience: ${record.salience}` : null,
+        typeof record.temporalScope === "string" ? `temporalScope: ${record.temporalScope}` : null,
         record.validFrom instanceof Date ? `validFrom: ${record.validFrom.toISOString()}` : null,
+        record.validTo instanceof Date ? `validTo: ${record.validTo.toISOString()}` : null,
+        record.reviewAt instanceof Date ? `reviewAt: ${record.reviewAt.toISOString()}` : null,
+        record.lastConfirmedAt instanceof Date
+          ? `lastConfirmedAt: ${record.lastConfirmedAt.toISOString()}`
+          : null,
+        typeof record.reinforcementCount === "number"
+          ? `reinforcementCount: ${record.reinforcementCount}`
+          : null,
+        typeof record.sourceReliability === "number"
+          ? `sourceReliability: ${record.sourceReliability}`
+          : null,
         typeof record.context === "string" ? `context: ${record.context}` : null,
         Array.isArray(record.tags) && record.tags.length > 0
           ? `tags: ${record.tags.join(", ")}`
+          : null,
+        Array.isArray(record.sourceEventIds) && record.sourceEventIds.length > 0
+          ? `sourceEventIds: ${record.sourceEventIds.join(", ")}`
+          : null,
+        record.provenance && typeof record.provenance === "object"
+          ? `provenance: ${JSON.stringify(record.provenance)}`
+          : null,
+        record.supersedes && typeof record.supersedes === "object"
+          ? `supersedes: ${JSON.stringify(record.supersedes)}`
+          : null,
+        record.invalidatedBy && typeof record.invalidatedBy === "object"
+          ? `invalidatedBy: ${JSON.stringify(record.invalidatedBy)}`
+          : null,
+        Array.isArray(record.conflictsWith) && record.conflictsWith.length > 0
+          ? `conflictsWith: ${JSON.stringify(record.conflictsWith)}`
           : null,
       ]
         .filter(Boolean)
@@ -1263,6 +1310,67 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         sourceType: "structured" as const,
         type,
         key,
+      };
+    }
+
+    if (rawPath.startsWith("procedure:")) {
+      const procedureId = rawPath.slice("procedure:".length).trim();
+      if (!procedureId) {
+        throw new Error("path required");
+      }
+      const record = await proceduresCollection(this.db, this.prefix).findOne({
+        agentId: this.agentId,
+        procedureId,
+      });
+      if (!record) {
+        return {
+          text: "",
+          path: rawPath,
+          locator: rawPath,
+          source: "structured" as const,
+          sourceType: "structured" as const,
+        };
+      }
+      await proceduresCollection(this.db, this.prefix).updateOne(
+        { _id: record._id },
+        {
+          $set: { openedAt: new Date() },
+          $inc: { openedCount: 1 },
+        },
+      );
+      const text = [
+        `procedureId: ${String(record.procedureId ?? procedureId)}`,
+        `name: ${String(record.name ?? "")}`,
+        Array.isArray(record.intentTags) && record.intentTags.length > 0
+          ? `intentTags: ${record.intentTags.join(", ")}`
+          : null,
+        Array.isArray(record.triggerQueries) && record.triggerQueries.length > 0
+          ? `triggerQueries: ${record.triggerQueries.join(" | ")}`
+          : null,
+        Array.isArray(record.steps) && record.steps.length > 0
+          ? `steps:\n${record.steps.map((step: unknown, index: number) => `${index + 1}. ${String(step)}`).join("\n")}`
+          : null,
+        Array.isArray(record.successSignals) && record.successSignals.length > 0
+          ? `successSignals: ${record.successSignals.join(", ")}`
+          : null,
+        typeof record.state === "string" ? `state: ${record.state}` : null,
+        typeof record.confidence === "number" ? `confidence: ${record.confidence}` : null,
+        typeof record.revision === "number" ? `revision: ${record.revision}` : null,
+        Array.isArray(record.sourceEventIds) && record.sourceEventIds.length > 0
+          ? `sourceEventIds: ${record.sourceEventIds.join(", ")}`
+          : null,
+        record.provenance && typeof record.provenance === "object"
+          ? `provenance: ${JSON.stringify(record.provenance)}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        text,
+        path: rawPath,
+        locator: rawPath,
+        source: "structured" as const,
+        sourceType: "structured" as const,
       };
     }
 
@@ -1287,6 +1395,60 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         episodeId,
         expandEvents: expand === "events" || expand === "full",
       });
+    }
+
+    if (rawPath.startsWith("relation:")) {
+      const relationId = rawPath.slice("relation:".length).trim();
+      if (!relationId) {
+        throw new Error("path required");
+      }
+      const relation = (
+        await relationsCollection(this.db, this.prefix)
+          .find(
+            {
+              agentId: this.agentId,
+              scope: "agent",
+              scopeRef: this.agentScopeRef,
+            },
+            {
+              sort: { updatedAt: -1, _id: 1 },
+              limit: 50,
+            },
+          )
+          .toArray()
+      ).find((candidate) => {
+        const fromEntityId = String(candidate.fromEntityId ?? "");
+        const toEntityId = String(candidate.toEntityId ?? "");
+        return `${fromEntityId}-${toEntityId}` === relationId;
+      });
+      if (!relation) {
+        return {
+          text: "",
+          path: rawPath,
+          locator: rawPath,
+          source: "conversation" as const,
+          sourceType: "conversation" as const,
+        };
+      }
+      const text = [
+        `type: ${String(relation.type ?? "")}`,
+        `fromEntityId: ${String(relation.fromEntityId ?? "")}`,
+        `toEntityId: ${String(relation.toEntityId ?? "")}`,
+        typeof relation.weight === "number" ? `weight: ${relation.weight}` : null,
+        typeof relation.confidence === "number" ? `confidence: ${relation.confidence}` : null,
+        relation.updatedAt instanceof Date
+          ? `updatedAt: ${relation.updatedAt.toISOString()}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        text,
+        path: rawPath,
+        locator: rawPath,
+        source: "conversation" as const,
+        sourceType: "conversation" as const,
+      };
     }
 
     if (rawPath.startsWith("kb:") || rawPath.startsWith("reference:")) {
@@ -1360,6 +1522,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         },
         searchMode: this.lastSearchMode,
         searchModeDetails: this.lastSearchDetails,
+        retrievalPaths: [
+          "active-critical",
+          "structured",
+          "raw-window",
+          "graph",
+          "hybrid",
+          "kb",
+          "episodic",
+          "procedural",
+        ],
         sourceCoverage: {
           reference: mongoCfg.sources?.reference?.enabled && mongoCfg.kb.enabled,
           conversation: mongoCfg.sources?.conversation?.enabled,
@@ -1886,6 +2058,93 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     });
   }
 
+  async writeProcedure(entry: ProcedureEntry): Promise<{ upserted: boolean; id: string }> {
+    const mongoCfg = this.config.mongodb!;
+    const { writeProcedure: writeFn } = await import("./mongodb-procedures.js");
+    return writeFn({
+      db: this.db,
+      prefix: this.prefix,
+      entry: { ...entry, workspaceDir: this.workspaceDir },
+      embeddingMode: mongoCfg.embeddingMode,
+      client: this.client,
+    });
+  }
+
+  async getDetailedStatus(): Promise<V2Status> {
+    return getV2Status(this.db, this.prefix, this.agentId);
+  }
+
+  private enqueueDerivedWork(task: () => Promise<void>): void {
+    const run = async () => {
+      try {
+        await task();
+      } catch (err) {
+        log.warn(`derived memory work failed: ${String(err)}`);
+      }
+    };
+    const next = this.derivationQueue.then(run, run);
+    this.derivationQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  private schedulePostWriteDerivations(params: {
+    eventId: string;
+    role: "user" | "assistant" | "system" | "tool";
+    body: string;
+    sessionId?: string;
+    timestamp: Date;
+    scope: MemoryScope;
+    scopeRef: string;
+  }): void {
+    const mongoCfg = this.config.mongodb;
+    if (!mongoCfg) {
+      return;
+    }
+
+    const event = {
+      eventId: params.eventId,
+      agentId: this.agentId,
+      role: params.role,
+      body: params.body,
+      sessionId: params.sessionId,
+      timestamp: params.timestamp,
+      scope: params.scope,
+      scopeRef: params.scopeRef,
+      workspaceDir: this.workspaceDir,
+    } as const;
+
+    this.enqueueDerivedWork(async () => {
+      await promoteDerivedMemoryFromEvent({
+        db: this.db,
+        prefix: this.prefix,
+        client: this.client,
+        embeddingMode: mongoCfg.embeddingMode,
+        event,
+      });
+    });
+
+    if (!mongoCfg.episodes.enabled) {
+      return;
+    }
+
+    this.enqueueDerivedWork(async () => {
+      const triggerThreshold = Math.max(1, mongoCfg.episodes.minEventsForEpisode - 1);
+      await checkAutoEpisodeTriggers({
+        db: this.db,
+        prefix: this.prefix,
+        agentId: this.agentId,
+        summarizer: heuristicEpisodeSummarizer,
+        scope: params.scope,
+        scopeRef: params.scopeRef,
+        maxEventsWithoutEpisode: triggerThreshold,
+      }).catch((err) => {
+        log.warn(`auto episode trigger failed after event write: ${String(err)}`);
+      });
+    });
+  }
+
   async writeConversationEvent(event: {
     role: "user" | "assistant" | "system" | "tool";
     body: string;
@@ -1940,6 +2199,15 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       }).catch((err) => {
         log.warn("entity projection failed after event write", { error: err });
       });
+      this.schedulePostWriteDerivations({
+        eventId: written.eventId,
+        role: event.role,
+        body: event.body,
+        sessionId: event.sessionId,
+        timestamp: written.timestamp,
+        scope,
+        scopeRef: written.scopeRef,
+      });
       this.dirty = false;
       return { eventId: written.eventId, chunkCreated: projected.chunkCreated };
     };
@@ -1975,6 +2243,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       clearTimeout(this.watchTimer);
       this.watchTimer = null;
     }
+
+    await this.derivationQueue;
 
     // Close the file watcher
     if (this.watcher) {
@@ -2261,6 +2531,7 @@ export async function searchV2(
       bridgeMaxResults?: number;
       scope?: MemoryScope;
       scopeRef?: string;
+      allowHybridBackstop?: boolean;
     };
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
@@ -2289,6 +2560,7 @@ export async function searchV2(
     const embeddingMode = context.searchOptions?.embeddingMode ?? "automated";
     const bridgeMaxResults =
       context.searchOptions?.bridgeMaxResults ?? Math.max(2, Math.ceil(maxResults / 3));
+    const allowHybridBackstop = context.searchOptions?.allowHybridBackstop ?? true;
     const plan = planRetrieval(query, {
       availablePaths: context.availablePaths,
       knownEntityNames: graphQueryCandidates,
@@ -2309,6 +2581,16 @@ export async function searchV2(
       agentId,
       ...(plan.constraints?.structured?.type ? { type: plan.constraints.structured.type } : {}),
     };
+    const activeCriticalFilter = {
+      agentId,
+      state: "active" as const,
+      salience: plan.constraints?.activeCritical?.salience ?? (["critical", "high"] as const),
+      currentOnly: true,
+    };
+    const proceduralFilter = {
+      agentId,
+      state: "active" as const,
+    };
     const kbFilter = plan.constraints?.kb
       ? plan.constraints.kb.source
         ? { source: plan.constraints.kb.source }
@@ -2319,7 +2601,8 @@ export async function searchV2(
     const pathsExecuted: RetrievalPath[] = [];
     const resultsByPath: Record<string, number> = {};
 
-    // Execute top 3 paths from plan (avoid executing all 6)
+    // Execute the top planned paths first, but keep hybrid as the backstop when
+    // specialized paths come back weak or empty.
     const pathsToExecute = plan.paths.slice(0, 3);
 
     for (const path of pathsToExecute) {
@@ -2327,6 +2610,27 @@ export async function searchV2(
         let pathResults: MemorySearchResult[] = [];
 
         switch (path) {
+          case "active-critical": {
+            const criticalHits = await searchStructuredMemory(
+              structuredMemCollection(db, prefix),
+              query,
+              null,
+              {
+                maxResults: context.maxResults ?? 10,
+                minScore,
+                filter: activeCriticalFilter,
+                numCandidates,
+                capabilities,
+                vectorIndexName: `${prefix}structured_mem_vector`,
+                embeddingMode,
+              },
+            ).catch((err) => {
+              log.warn(`searchV2 active-critical path failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            });
+            pathResults = criticalHits;
+            break;
+          }
           case "structured": {
             const structuredHits = await searchStructuredMemory(
               structuredMemCollection(db, prefix),
@@ -2442,6 +2746,27 @@ export async function searchV2(
             }));
             break;
           }
+          case "procedural": {
+            const procedureHits = await searchProcedures(
+              proceduresCollection(db, prefix),
+              query,
+              null,
+              {
+                maxResults: context.maxResults ?? 10,
+                minScore,
+                filter: proceduralFilter,
+                numCandidates,
+                capabilities,
+                vectorIndexName: `${prefix}procedures_vector`,
+                embeddingMode,
+              },
+            ).catch((err) => {
+              log.warn(`searchV2 procedural path failed: ${String(err)}`);
+              return [] as MemorySearchResult[];
+            });
+            pathResults = procedureHits;
+            break;
+          }
           case "hybrid": {
             const searches: Array<Promise<MemorySearchResult[]>> = [];
             if (conversationChunkFilter) {
@@ -2521,7 +2846,62 @@ export async function searchV2(
     }
 
     // Deduplicate, rerank, and limit
-    const deduped = deduplicateSearchResults(results);
+    let deduped = deduplicateSearchResults(results);
+    const needsProceduralBackstop =
+      context.availablePaths.has("procedural") &&
+      !pathsToExecute.includes("procedural") &&
+      deduped.length < Math.max(2, Math.ceil(maxResults / 3));
+    if (needsProceduralBackstop) {
+      try {
+        const procedureFallback = await searchProcedures(
+          proceduresCollection(db, prefix),
+          query,
+          null,
+          {
+            maxResults: context.maxResults ?? 10,
+            minScore,
+            filter: proceduralFilter,
+            numCandidates,
+            capabilities,
+            vectorIndexName: `${prefix}procedures_vector`,
+            embeddingMode,
+          },
+        );
+        if (procedureFallback.length > 0) {
+          pathsExecuted.push("procedural");
+          resultsByPath.procedural = procedureFallback.length;
+          deduped = deduplicateSearchResults([...deduped, ...procedureFallback]);
+        }
+      } catch (err) {
+        log.warn(`searchV2 procedural backstop failed: ${String(err)}`);
+      }
+    }
+
+    const needsHybridBackstop =
+      allowHybridBackstop &&
+      context.availablePaths.has("hybrid") &&
+      !pathsExecuted.includes("hybrid") &&
+      deduped.length < Math.max(2, Math.ceil(maxResults / 3));
+    if (needsHybridBackstop) {
+      try {
+        const fallback = await searchV2(db, prefix, query, agentId, {
+          ...context,
+          availablePaths: new Set(["hybrid"]),
+          maxResults,
+          searchOptions: {
+            ...context.searchOptions,
+            allowHybridBackstop: false,
+          },
+        });
+        if (fallback.results.length > 0) {
+          pathsExecuted.push("hybrid");
+          resultsByPath.hybrid = fallback.results.length;
+          deduped = deduplicateSearchResults([...deduped, ...fallback.results]);
+        }
+      } catch (err) {
+        log.warn(`searchV2 hybrid backstop failed: ${String(err)}`);
+      }
+    }
     const reranked = rerankResults(deduped, query);
     const finalResults = reranked.slice(0, maxResults);
 
@@ -2544,6 +2924,7 @@ export type V2Status = {
   entities: { count: number };
   relations: { count: number };
   episodes: { count: number; latestTimestamp?: Date };
+  procedures: { count: number; latestTimestamp?: Date };
   projectionLag: Record<string, number | null>;
   health: {
     overall: "ok" | "degraded" | "health-uncertain";
@@ -2648,15 +3029,20 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
       entitiesCollection(db, prefix).countDocuments({ agentId }),
       relationsCollection(db, prefix).countDocuments({ agentId }),
       episodesCollection(db, prefix).countDocuments({ agentId }),
+      proceduresCollection(db, prefix).countDocuments({ agentId }),
       getProjectionLag({ db, prefix, agentId, projectionType: "chunks" }),
       getProjectionLag({ db, prefix, agentId, projectionType: "entities" }),
       getProjectionLag({ db, prefix, agentId, projectionType: "relations" }),
       getProjectionLag({ db, prefix, agentId, projectionType: "episodes" }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "structured-promotion" }),
+      getProjectionLag({ db, prefix, agentId, projectionType: "procedures" }),
       getLatestIngestRun({ db, prefix, agentId }),
       getLatestProjectionRun({ db, prefix, agentId, projectionType: "chunks" }),
       getLatestProjectionRun({ db, prefix, agentId, projectionType: "entities" }),
       getLatestProjectionRun({ db, prefix, agentId, projectionType: "relations" }),
       getLatestProjectionRun({ db, prefix, agentId, projectionType: "episodes" }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "structured-promotion" }),
+      getLatestProjectionRun({ db, prefix, agentId, projectionType: "procedures" }),
       relevanceRunsCollection(db, prefix).findOne(
         { agentId },
         { sort: { ts: -1 }, projection: { status: 1, hitSources: 1 } },
@@ -2666,6 +3052,10 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
         { sort: { timestamp: -1 }, projection: { timestamp: 1 } },
       ),
       episodesCollection(db, prefix).findOne(
+        { agentId },
+        { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } },
+      ),
+      proceduresCollection(db, prefix).findOne(
         { agentId },
         { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } },
       ),
@@ -2679,26 +3069,32 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
     const entityCount = val(settled[1], 0);
     const relationCount = val(settled[2], 0);
     const episodeCount = val(settled[3], 0);
-    const chunksLag = val(settled[4], null);
-    const entitiesLag = val(settled[5], null);
-    const relationsLag = val(settled[6], null);
-    const episodesLag = val(settled[7], null);
-    const latestIngest = val(settled[8], null);
-    const latestChunksProjection = val(settled[9], null);
-    const latestEntitiesProjection = val(settled[10], null);
-    const latestRelationsProjection = val(settled[11], null);
-    const latestEpisodesProjection = val(settled[12], null);
-    const latestRetrieval = val(settled[13], null) as {
+    const procedureCount = val(settled[4], 0);
+    const chunksLag = val(settled[5], null);
+    const entitiesLag = val(settled[6], null);
+    const relationsLag = val(settled[7], null);
+    const episodesLag = val(settled[8], null);
+    const structuredPromotionLag = val(settled[9], null);
+    const proceduresLag = val(settled[10], null);
+    const latestIngest = val(settled[11], null);
+    const latestChunksProjection = val(settled[12], null);
+    const latestEntitiesProjection = val(settled[13], null);
+    const latestRelationsProjection = val(settled[14], null);
+    const latestEpisodesProjection = val(settled[15], null);
+    const latestStructuredPromotion = val(settled[16], null);
+    const latestProceduresProjection = val(settled[17], null);
+    const latestRetrievalSafe = val(settled[18], null) as {
       status?: string;
       hitSources?: string[];
     } | null;
-    const latestEvent = val(settled[14], null) as { timestamp?: Date } | null;
-    const latestEpisode = val(settled[15], null) as { updatedAt?: Date } | null;
+    const latestEvent = val(settled[19], null) as { timestamp?: Date } | null;
+    const latestEpisode = val(settled[20], null) as { updatedAt?: Date } | null;
+    const latestProcedure = val(settled[21], null) as { updatedAt?: Date } | null;
 
     const canonicalIngest = classifyCanonicalIngestHealth(latestIngest);
     const retrievalHealth = classifyRetrievalHealth({
-      status: latestRetrieval?.status,
-      hitSources: latestRetrieval?.hitSources,
+      status: latestRetrievalSafe?.status,
+      hitSources: latestRetrievalSafe?.hitSources,
     });
     const derivedProducts = {
       chunks: classifyProjectionHealth({
@@ -2716,6 +3112,14 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
       episodes: classifyProjectionHealth({
         latestRun: latestEpisodesProjection,
         lagSeconds: episodesLag,
+      }),
+      "structured-promotion": classifyProjectionHealth({
+        latestRun: latestStructuredPromotion,
+        lagSeconds: structuredPromotionLag,
+      }),
+      procedures: classifyProjectionHealth({
+        latestRun: latestProceduresProjection,
+        lagSeconds: proceduresLag,
       }),
     };
     const diagnostics = [
@@ -2739,7 +3143,12 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
     const overall = computeOverallV2Health({
       retrieval: retrievalHealth.state,
       canonicalIngest,
-      derivedProducts: Object.values(derivedProducts),
+      derivedProducts: [
+        derivedProducts.chunks,
+        derivedProducts.entities,
+        derivedProducts.relations,
+        derivedProducts.episodes,
+      ],
     });
 
     // Log any individual failures for diagnostics
@@ -2760,11 +3169,17 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
         count: episodeCount,
         latestTimestamp: latestEpisode?.updatedAt,
       },
+      procedures: {
+        count: procedureCount,
+        latestTimestamp: latestProcedure?.updatedAt,
+      },
       projectionLag: {
         chunks: chunksLag,
         entities: entitiesLag,
         relations: relationsLag,
         episodes: episodesLag,
+        "structured-promotion": structuredPromotionLag,
+        procedures: proceduresLag,
       },
       health: {
         overall,
@@ -2774,7 +3189,16 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
         derivedProducts,
         diagnostics,
       },
-      retrievalPaths: ["structured", "raw-window", "graph", "hybrid", "kb", "episodic"],
+      retrievalPaths: [
+        "active-critical",
+        "structured",
+        "raw-window",
+        "graph",
+        "hybrid",
+        "kb",
+        "episodic",
+        "procedural",
+      ],
     };
   } catch (err) {
     log.error("getV2Status failed", { error: err });

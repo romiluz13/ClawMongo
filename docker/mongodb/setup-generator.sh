@@ -11,9 +11,12 @@ mongot_password="${MONGOT_PASSWORD:-mongotPassword}"
 admin_password="${ADMIN_PASSWORD:-admin}"
 query_key="${VOYAGE_API_QUERY_KEY:-${VOYAGE_API_KEY:-}}"
 indexing_key="${VOYAGE_API_INDEXING_KEY:-${VOYAGE_API_KEY:-}}"
+mongo_uid="${MONGODB_UID:-1000}"
+mongo_gid="${MONGODB_GID:-1000}"
 
 echo 'Setting up ClawMongo security files...'
 mkdir -p "$auth_dir"
+chmod 700 "$auth_dir" 2>/dev/null || true
 
 ensure_openssl() {
   if command -v openssl >/dev/null 2>&1; then
@@ -28,19 +31,21 @@ ensure_openssl() {
 }
 
 safe_chown() {
-  chown 101:101 "$1" 2>/dev/null || true
+  chown "$mongo_uid:$mongo_gid" "$1" 2>/dev/null || true
 }
+
+safe_chown "$auth_dir"
 
 if [ ! -f "$auth_dir/keyfile" ]; then
   echo 'Generating keyfile...'
   ensure_openssl
   openssl rand -base64 756 > "$auth_dir/keyfile"
-  chmod 400 "$auth_dir/keyfile"
-  safe_chown "$auth_dir/keyfile"
   echo 'Keyfile generated successfully'
 else
   echo 'Keyfile already exists, skipping'
 fi
+chmod 400 "$auth_dir/keyfile"
+safe_chown "$auth_dir/keyfile"
 
 printf '%s' "$mongot_password" > "$auth_dir/passwordFile"
 chmod 600 "$auth_dir/passwordFile"

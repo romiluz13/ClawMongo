@@ -84,7 +84,9 @@ function resolveTriggeredEpisodeWindow(params: {
     return events;
   }
   if (triggerReason === "event_count" && events.length > maxEventsWithoutEpisode) {
-    return events.slice(0, maxEventsWithoutEpisode);
+    // The trigger fires when we exceed the backlog threshold, so the episode
+    // window needs to include the event that crossed the threshold as well.
+    return events.slice(0, Math.max(2, maxEventsWithoutEpisode + 1));
   }
   return events;
 }

@@ -20,6 +20,8 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     expect(prompt).toContain("memory_search");
     expect(prompt).toContain("primary runtime recall tool");
     expect(prompt).toContain("imported documentation or explicit reference material");
+    expect(prompt).toContain("current situation");
+    expect(prompt).toContain("active high-priority runtime memory");
   });
 
   it("includes decision tree header section", () => {
@@ -106,6 +108,8 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     expect(prompt).toContain("memory_write");
     expect(prompt).toContain("kb_search");
     expect(prompt).toContain("MEMORY.md is retrieval guidance only");
+    expect(prompt).toContain("current situation");
+    expect(prompt).toContain("active constraints");
 
     // Bridge must appear AFTER the context files content (AGENTS.md/SOUL.md)
     const bridgeIndex = prompt.indexOf("## MongoDB Memory Integration");

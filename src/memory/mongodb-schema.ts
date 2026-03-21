@@ -65,6 +65,14 @@ export function structuredMemRevisionsCollection(db: Db, prefix: string): Collec
   return col(db, prefix, "structured_mem_revisions");
 }
 
+export function proceduresCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "procedures");
+}
+
+export function procedureRevisionsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "procedure_revisions");
+}
+
 export function relevanceRunsCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "relevance_runs");
 }
@@ -181,7 +189,32 @@ const STRUCTURED_MEM_SCHEMA: Document = {
       },
       scopeRef: { bsonType: "string", description: "Resolved concrete namespace for the scope" },
       revision: { bsonType: "number", minimum: 1 },
+      state: {
+        enum: ["active", "invalidated", "conflicted"],
+        description: "Current truth state for this structured memory record",
+      },
+      salience: {
+        enum: ["critical", "high", "normal", "low"],
+        description: "Current runtime importance of this memory record",
+      },
+      temporalScope: {
+        enum: ["ongoing", "bounded", "permanent", "transient"],
+        description: "Expected lifetime semantics for this memory record",
+      },
+      provenance: { bsonType: "object" },
+      sourceEventIds: { bsonType: "array", items: { bsonType: "string" } },
+      sourceReliability: { bsonType: "number", minimum: 0, maximum: 1 },
+      reinforcementCount: { bsonType: "number", minimum: 0 },
+      openedCount: { bsonType: "number", minimum: 0 },
       validFrom: { bsonType: "date" },
+      validTo: { bsonType: "date" },
+      reviewAt: { bsonType: "date" },
+      lastConfirmedAt: { bsonType: "date" },
+      openedAt: { bsonType: "date" },
+      lastUsedAt: { bsonType: "date" },
+      supersedes: { bsonType: "object" },
+      invalidatedBy: { bsonType: "object" },
+      conflictsWith: { bsonType: "array", items: { bsonType: "object" } },
       createdAt: { bsonType: "date" },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
@@ -220,6 +253,114 @@ const STRUCTURED_MEM_REVISIONS_SCHEMA: Document = {
         description: "Memory scope (v2)",
       },
       scopeRef: { bsonType: "string" },
+      revision: { bsonType: "number", minimum: 1 },
+      state: {
+        enum: ["active", "invalidated", "conflicted"],
+        description: "Historical truth state for this structured memory revision",
+      },
+      salience: {
+        enum: ["critical", "high", "normal", "low"],
+      },
+      temporalScope: {
+        enum: ["ongoing", "bounded", "permanent", "transient"],
+      },
+      provenance: { bsonType: "object" },
+      sourceEventIds: { bsonType: "array", items: { bsonType: "string" } },
+      sourceReliability: { bsonType: "number", minimum: 0, maximum: 1 },
+      reinforcementCount: { bsonType: "number", minimum: 0 },
+      validFrom: { bsonType: "date" },
+      validTo: { bsonType: "date" },
+      supersededAt: { bsonType: "date" },
+      reviewAt: { bsonType: "date" },
+      lastConfirmedAt: { bsonType: "date" },
+      supersedes: { bsonType: "object" },
+      invalidatedBy: { bsonType: "object" },
+      conflictsWith: { bsonType: "array", items: { bsonType: "object" } },
+      createdAt: { bsonType: "date" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const PROCEDURES_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "procedureId",
+      "agentId",
+      "scope",
+      "scopeRef",
+      "name",
+      "steps",
+      "searchText",
+      "state",
+      "updatedAt",
+    ],
+    properties: {
+      procedureId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      scope: {
+        enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+      },
+      scopeRef: { bsonType: "string" },
+      name: { bsonType: "string" },
+      intentTags: { bsonType: "array", items: { bsonType: "string" } },
+      triggerQueries: { bsonType: "array", items: { bsonType: "string" } },
+      steps: { bsonType: "array", items: { bsonType: "string" } },
+      successSignals: { bsonType: "array", items: { bsonType: "string" } },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
+      state: {
+        enum: ["active", "invalidated", "conflicted"],
+      },
+      provenance: { bsonType: "object" },
+      sourceEventIds: { bsonType: "array", items: { bsonType: "string" } },
+      searchText: { bsonType: "string" },
+      openedAt: { bsonType: "date" },
+      openedCount: { bsonType: "number", minimum: 0 },
+      lastUsedAt: { bsonType: "date" },
+      createdAt: { bsonType: "date" },
+      updatedAt: { bsonType: "date" },
+    },
+  },
+};
+
+const PROCEDURE_REVISIONS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "procedureId",
+      "agentId",
+      "scope",
+      "scopeRef",
+      "name",
+      "steps",
+      "searchText",
+      "state",
+      "revision",
+      "validFrom",
+      "validTo",
+      "supersededAt",
+      "updatedAt",
+    ],
+    properties: {
+      procedureId: { bsonType: "string" },
+      agentId: { bsonType: "string" },
+      scope: {
+        enum: ["session", "user", "agent", "workspace", "tenant", "global"],
+      },
+      scopeRef: { bsonType: "string" },
+      name: { bsonType: "string" },
+      intentTags: { bsonType: "array", items: { bsonType: "string" } },
+      triggerQueries: { bsonType: "array", items: { bsonType: "string" } },
+      steps: { bsonType: "array", items: { bsonType: "string" } },
+      successSignals: { bsonType: "array", items: { bsonType: "string" } },
+      confidence: { bsonType: "number", minimum: 0, maximum: 1 },
+      state: {
+        enum: ["active", "invalidated", "conflicted"],
+      },
+      provenance: { bsonType: "object" },
+      sourceEventIds: { bsonType: "array", items: { bsonType: "string" } },
+      searchText: { bsonType: "string" },
       revision: { bsonType: "number", minimum: 1 },
       validFrom: { bsonType: "date" },
       validTo: { bsonType: "date" },
@@ -501,7 +642,9 @@ const PROJECTION_RUNS_SCHEMA: Document = {
     properties: {
       runId: { bsonType: "string" },
       agentId: { bsonType: "string" },
-      projectionType: { enum: ["chunks", "entities", "relations", "episodes"] },
+      projectionType: {
+        enum: ["chunks", "entities", "relations", "episodes", "structured-promotion", "procedures"],
+      },
       status: { enum: ["ok", "partial", "failed"] },
       itemsProjected: { bsonType: "number" },
       durationMs: { bsonType: "number" },
@@ -516,6 +659,8 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   kb_chunks: KB_CHUNKS_SCHEMA,
   structured_mem: STRUCTURED_MEM_SCHEMA,
   structured_mem_revisions: STRUCTURED_MEM_REVISIONS_SCHEMA,
+  procedures: PROCEDURES_SCHEMA,
+  procedure_revisions: PROCEDURE_REVISIONS_SCHEMA,
   relevance_runs: RELEVANCE_RUNS_SCHEMA,
   relevance_artifacts: RELEVANCE_ARTIFACTS_SCHEMA,
   relevance_regressions: RELEVANCE_REGRESSIONS_SCHEMA,
@@ -544,6 +689,8 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "kb_chunks",
     "structured_mem",
     "structured_mem_revisions",
+    "procedures",
+    "procedure_revisions",
     "relevance_runs",
     "relevance_artifacts",
     "relevance_regressions",
@@ -744,6 +891,11 @@ export async function ensureStandardIndexes(
   applied++;
   await structured.createIndex({ tags: 1 }, { name: "idx_structured_tags" });
   applied++;
+  await structured.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, state: 1, salience: 1, updatedAt: -1 },
+    { name: "idx_structured_scope_state_salience_updated" },
+  );
+  applied++;
   // $text index on structured_mem for text search fallback
   await structured.createIndex({ value: "text", context: "text" }, { name: "idx_structured_text" });
   applied++;
@@ -933,6 +1085,32 @@ export async function ensureStandardIndexes(
   );
   applied++;
 
+  const procedures = proceduresCollection(db, prefix);
+  await procedures.createIndex(
+    { procedureId: 1, agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "uq_procedures_identity", unique: true },
+  );
+  applied++;
+  await procedures.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, state: 1, updatedAt: -1 },
+    { name: "idx_procedures_scope_state_updated" },
+  );
+  applied++;
+  await procedures.createIndex({ intentTags: 1 }, { name: "idx_procedures_intent_tags" });
+  applied++;
+  await procedures.createIndex(
+    { searchText: "text", name: "text" },
+    { name: "idx_procedures_text" },
+  );
+  applied++;
+
+  const procedureRevisions = procedureRevisionsCollection(db, prefix);
+  await procedureRevisions.createIndex(
+    { procedureId: 1, agentId: 1, scope: 1, scopeRef: 1, revision: -1 },
+    { name: "idx_procedure_revisions_identity_revision" },
+  );
+  applied++;
+
   log.info(`ensured ${applied} standard indexes`);
   return applied;
 }
@@ -976,10 +1154,10 @@ export async function ensureSearchIndexes(
   void quantization;
   void numDimensions;
 
-  // 6 search indexes total: chunks (text + vector), kb_chunks (text + vector),
-  // structured_mem (text + vector). ClawMongo ships one self-managed profile,
+  // 8 search indexes total: chunks, kb_chunks, structured_mem, and procedures
+  // each get text + vector indexes. ClawMongo ships one self-managed profile,
   // but we keep the budget helper for explicit reporting.
-  const budget = assertIndexBudget(profile, 6);
+  const budget = assertIndexBudget(profile, 8);
   const reducedBudget =
     !budget.withinBudget && typeof budget.budget === "number" && budget.budget >= 2;
   if (!budget.withinBudget && !reducedBudget) {
@@ -990,7 +1168,7 @@ export async function ensureSearchIndexes(
   }
   if (reducedBudget) {
     log.warn(
-      `search index budget tight (${budget.budget}/${budget.plannedSearchIndexes}): creating core chunks indexes only, skipping KB and structured memory search indexes`,
+      `search index budget tight (${budget.budget}/${budget.plannedSearchIndexes}): creating core chunks indexes only, skipping KB, structured memory, and procedure search indexes`,
     );
   }
 
@@ -1151,6 +1329,8 @@ export async function ensureSearchIndexes(
           agentId: { type: "token" },
           scope: { type: "token" },
           scopeRef: { type: "token" },
+          state: { type: "token" },
+          salience: { type: "token" },
           updatedAt: { type: "date" },
         },
       },
@@ -1178,6 +1358,8 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "agentId" },
       { type: "filter", path: "scope" },
       { type: "filter", path: "scopeRef" },
+      { type: "filter", path: "state" },
+      { type: "filter", path: "salience" },
     ];
 
     const structVectorDef: Document = {
@@ -1200,6 +1382,67 @@ export async function ensureSearchIndexes(
     }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`structured_mem vector search index creation failed: ${msg}`);
+    }
+  }
+
+  const procedures = proceduresCollection(db, prefix);
+  try {
+    const procedureTextDef: Document = {
+      mappings: {
+        dynamic: false,
+        fields: {
+          name: { type: "string", analyzer: "lucene.standard" },
+          searchText: { type: "string", analyzer: "lucene.standard" },
+          intentTags: { type: "token" },
+          agentId: { type: "token" },
+          scope: { type: "token" },
+          scopeRef: { type: "token" },
+          state: { type: "token" },
+          updatedAt: { type: "date" },
+        },
+      },
+    };
+    await procedures.createSearchIndex({
+      name: `${prefix}procedures_text`,
+      type: "search",
+      definition: procedureTextDef,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
+    if (!msg.includes("already exists") && !msg.includes("duplicate")) {
+      log.warn(`procedures text search index creation failed: ${msg}`);
+    }
+  }
+
+  try {
+    const procedureVectorDef: Document = {
+      fields: [
+        { type: "autoEmbed", modality: "text", path: "searchText", model: "voyage-4-large" },
+        { type: "filter", path: "intentTags" },
+        { type: "filter", path: "agentId" },
+        { type: "filter", path: "scope" },
+        { type: "filter", path: "scopeRef" },
+        { type: "filter", path: "state" },
+      ],
+    };
+
+    await procedures.createSearchIndex({
+      name: `${prefix}procedures_vector`,
+      type: "vectorSearch",
+      definition: procedureVectorDef,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
+    if (!msg.includes("already exists") && !msg.includes("duplicate")) {
+      log.warn(`procedures vector search index creation failed: ${msg}`);
     }
   }
 

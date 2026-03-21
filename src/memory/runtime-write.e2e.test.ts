@@ -9,7 +9,8 @@ import { guardSessionManager } from "../agents/session-tool-result-guard-wrapper
 import type { OpenClawConfig } from "../config/config.js";
 import { materializeEpisode } from "./mongodb-episodes.js";
 import { getEventsBySession, writeEvent } from "./mongodb-events.js";
-import { chunksCollection } from "./mongodb-schema.js";
+import { upsertEntity, upsertRelation } from "./mongodb-graph.js";
+import { chunksCollection, episodesCollection, proceduresCollection } from "./mongodb-schema.js";
 import { closeAllMemorySearchManagers, getMemorySearchManager } from "./search-manager.js";
 
 type AppendMessage = Parameters<SessionManager["appendMessage"]>[0];
@@ -20,6 +21,21 @@ const TEST_URI =
 const TEST_DB = "clawmongo_runtime_e2e";
 
 const asAppendMessage = (message: unknown) => message as AppendMessage;
+
+async function waitForCondition<T>(
+  producer: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  timeoutMs = 12_000,
+  pollMs = 250,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue = await producer();
+  while (!predicate(lastValue) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    lastValue = await producer();
+  }
+  return lastValue;
+}
 
 describe("MongoDB runtime write e2e", () => {
   let client: MongoClient;
@@ -187,6 +203,114 @@ describe("MongoDB runtime write e2e", () => {
       .catch(() => false);
     expect(transcriptExists).toBe(false);
   }, 45_000);
+
+  it("promotes derived structured facts and procedures and auto-materializes episodes on the live write path", async () => {
+    const sessionId = `runtime-derived-${randomUUID().slice(0, 8)}`;
+    const derivedAgentId = `runtime-derived-${randomUUID().slice(0, 6)}`;
+    const derivedPrefix = `runtime_${randomUUID().slice(0, 8)}_`;
+    const baseMongoConfig = cfg.memory?.mongodb;
+    if (!baseMongoConfig) {
+      throw new Error("expected MongoDB memory config");
+    }
+
+    const derivedCfg: OpenClawConfig = {
+      ...cfg,
+      memory: {
+        ...cfg.memory,
+        mongodb: {
+          ...baseMongoConfig,
+          collectionPrefix: derivedPrefix,
+          episodes: { enabled: true, minEventsForEpisode: 2 },
+        },
+      },
+    };
+
+    const { manager, error } = await getMemorySearchManager({
+      cfg: derivedCfg,
+      agentId: derivedAgentId,
+    });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    const sessionManager = guardSessionManager(SessionManager.inMemory(), {
+      cfg: derivedCfg,
+      agentId: derivedAgentId,
+      sessionId,
+    });
+
+    sessionManager.appendMessage(
+      asAppendMessage({
+        role: "user",
+        content:
+          "Remember this clearly: there is war in Israel right now, and it is critical current context.",
+        timestamp: Date.now(),
+      }),
+    );
+    sessionManager.appendMessage(
+      asAppendMessage({
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "For incident response:",
+              "1. Check the current status page.",
+              "2. Notify the on-call owner.",
+              "3. Escalate if customer impact continues.",
+            ].join("\n"),
+          },
+        ],
+        timestamp: Date.now(),
+        stopReason: "stop",
+      }),
+    );
+    await sessionManager.flushPendingPersistedWrites?.();
+
+    const promotedResults = await waitForCondition(
+      async () =>
+        manager.search("what is the situation in Israel right now?", {
+          maxResults: 5,
+          minScore: 0,
+        }),
+      (results) =>
+        results.some((result) => result.path.startsWith("structured:fact:active-context-")),
+    );
+    const promotedFact = promotedResults.find((result) =>
+      result.path.startsWith("structured:fact:active-context-"),
+    );
+    expect(promotedFact?.snippet.toLowerCase()).toContain("war in israel");
+
+    const episodes = await waitForCondition(
+      async () => episodesCollection(db, derivedPrefix).find({ agentId: derivedAgentId }).toArray(),
+      (docs) => docs.length >= 1,
+    );
+    expect(episodes[0]?.type).toBe("thread");
+
+    const procedures = await waitForCondition(
+      async () =>
+        proceduresCollection(db, derivedPrefix).find({ agentId: derivedAgentId }).toArray(),
+      (docs) => docs.length >= 1,
+    );
+    expect(procedures).toHaveLength(1);
+    expect(procedures[0]?.steps).toEqual([
+      "Check the current status page.",
+      "Notify the on-call owner.",
+      "Escalate if customer impact continues.",
+    ]);
+    const procedureRead = await manager.readFile({
+      relPath: `procedure:${String(procedures[0]?.procedureId ?? "")}`,
+    });
+    expect(procedureRead.text).toContain("incident response");
+
+    const procedureResults = await waitForCondition(
+      async () => manager.search("incident response", { maxResults: 5, minScore: 0 }),
+      (results) => results.some((result) => result.path.startsWith("procedure:")),
+    );
+    expect(procedureResults.some((result) => result.path.startsWith("procedure:"))).toBe(true);
+  }, 60_000);
 
   it("preserves event chunks across bridge-note sync and supports exact bridge reads", async () => {
     const localWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "clawmongo-bridge-sync-"));
@@ -586,4 +710,57 @@ describe("MongoDB runtime write e2e", () => {
 
     await fs.rm(localWorkspace, { recursive: true, force: true }).catch(() => {});
   }, 45_000);
+
+  it("reopens relation locators for graph-style exact reads", async () => {
+    const { manager, error } = await getMemorySearchManager({ cfg, agentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    await upsertEntity({
+      db,
+      prefix,
+      entity: {
+        entityId: "ent-alice",
+        name: "Alice",
+        type: "person",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+      },
+    });
+    await upsertEntity({
+      db,
+      prefix,
+      entity: {
+        entityId: "ent-phoenix",
+        name: "Phoenix",
+        type: "project",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+      },
+    });
+    await upsertRelation({
+      db,
+      prefix,
+      relation: {
+        fromEntityId: "ent-alice",
+        toEntityId: "ent-phoenix",
+        type: "works_on",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(),
+        weight: 0.9,
+      },
+    });
+
+    const result = await manager.readFile({ relPath: "relation:ent-alice-ent-phoenix" });
+    expect(result.path).toBe("relation:ent-alice-ent-phoenix");
+    expect(result.text).toContain("type: works_on");
+    expect(result.text).toContain("fromEntityId: ent-alice");
+    expect(result.text).toContain("toEntityId: ent-phoenix");
+  });
 });

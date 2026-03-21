@@ -11,7 +11,13 @@ const log = createSubsystemLogger("memory:mongodb:ops");
 
 export type IngestSource = "file-sync" | "session-sync" | "kb-import" | "manual" | "event-write";
 export type RunStatus = "ok" | "partial" | "failed";
-export type ProjectionType = "chunks" | "entities" | "relations" | "episodes";
+export type ProjectionType =
+  | "chunks"
+  | "entities"
+  | "relations"
+  | "episodes"
+  | "structured-promotion"
+  | "procedures";
 
 export type IngestRun = {
   runId: string;
