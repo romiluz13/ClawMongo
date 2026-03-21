@@ -209,6 +209,94 @@ describe("config cli", () => {
         apiKey: "ollama-local", // pragma: allowlist secret
       });
     });
+
+    it("drops gateway.auth.password when switching mode to token", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: {
+          auth: {
+            mode: "password",
+            token: "token-keep",
+            password: "password-drop", // pragma: allowlist secret
+            allowTailscale: true,
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand(["config", "set", "gateway.auth.mode", "token"]);
+
+      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+      const written = mockWriteConfigFile.mock.calls[0]?.[0];
+      expect(written.gateway?.auth).toEqual({
+        mode: "token",
+        token: "token-keep",
+        allowTailscale: true,
+      });
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Removed inactive gateway.auth.password for gateway.auth.mode=token",
+        ),
+      );
+    });
+
+    it("drops gateway.auth.token when switching mode to password", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: {
+          auth: {
+            mode: "token",
+            token: "token-drop",
+            password: "password-keep", // pragma: allowlist secret
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand(["config", "set", "gateway.auth.mode", "password"]);
+
+      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+      const written = mockWriteConfigFile.mock.calls[0]?.[0];
+      expect(written.gateway?.auth).toEqual({
+        mode: "password",
+        password: "password-keep", // pragma: allowlist secret
+      });
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Removed inactive gateway.auth.token for gateway.auth.mode=password",
+        ),
+      );
+    });
+
+    it("applies mode-based credential cleanup using the final batch result", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: {
+          auth: {
+            mode: "password",
+            token: "token-keep",
+            password: "password-drop", // pragma: allowlist secret
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "--batch-json",
+        '[{"path":"gateway.auth.password","value":"password-updated"},{"path":"gateway.auth.mode","value":"token"}]',
+      ]);
+
+      expect(mockWriteConfigFile).toHaveBeenCalledTimes(1);
+      const written = mockWriteConfigFile.mock.calls[0]?.[0];
+      expect(written.gateway?.auth).toEqual({
+        mode: "token",
+        token: "token-keep",
+      });
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Removed inactive gateway.auth.password for gateway.auth.mode=token",
+        ),
+      );
+    });
   });
 
   describe("config get", () => {
@@ -397,6 +485,7 @@ describe("config cli", () => {
       expect(helpText).toContain("--provider-source");
       expect(helpText).toContain("--batch-json");
       expect(helpText).toContain("--dry-run");
+      expect(helpText).toContain("--allow-exec");
       expect(helpText).toContain("openclaw config set gateway.port 19001 --strict-json");
       expect(helpText).toContain(
         "openclaw config set channels.discord.token --ref-provider default --ref-source",
@@ -524,6 +613,26 @@ describe("config cli", () => {
       );
     });
 
+    it("logs a dry-run note when value mode performs no validation checks", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand(["config", "set", "gateway.port", "19001", "--dry-run"]);
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      expect(mockResolveSecretRefValue).not.toHaveBeenCalled();
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Dry run note: value mode does not run schema/resolvability checks.",
+        ),
+      );
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining("Dry run successful: 1 update(s) validated"),
+      );
+    });
+
     it("supports batch mode for refs/providers in dry-run", async () => {
       const resolved: OpenClawConfig = {
         gateway: { port: 18789 },
@@ -545,6 +654,169 @@ describe("config cli", () => {
 
       expect(mockWriteConfigFile).not.toHaveBeenCalled();
       expect(mockResolveSecretRefValue).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips exec SecretRef resolvability checks in dry-run by default", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {
+            runner: {
+              source: "exec",
+              command: "/usr/bin/env",
+              allowInsecurePath: true,
+            },
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "channels.discord.token",
+        "--ref-provider",
+        "runner",
+        "--ref-source",
+        "exec",
+        "--ref-id",
+        "openai",
+        "--dry-run",
+      ]);
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      expect(mockResolveSecretRefValue).not.toHaveBeenCalled();
+      expect(mockLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Dry run note: skipped 1 exec SecretRef resolvability check(s). Re-run with --allow-exec",
+        ),
+      );
+    });
+
+    it("allows exec SecretRef resolvability checks in dry-run when --allow-exec is set", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {
+            runner: {
+              source: "exec",
+              command: "/usr/bin/env",
+              allowInsecurePath: true,
+            },
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "channels.discord.token",
+        "--ref-provider",
+        "runner",
+        "--ref-source",
+        "exec",
+        "--ref-id",
+        "openai",
+        "--dry-run",
+        "--allow-exec",
+      ]);
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      expect(mockResolveSecretRefValue).toHaveBeenCalledTimes(1);
+      expect(mockResolveSecretRefValue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "exec",
+          provider: "runner",
+          id: "openai",
+        }),
+        expect.any(Object),
+      );
+      expect(mockLog).not.toHaveBeenCalledWith(
+        expect.stringContaining("Dry run note: skipped 1 exec SecretRef resolvability check(s)."),
+      );
+    });
+
+    it("rejects --allow-exec without --dry-run", async () => {
+      const nonexistentBatchPath = path.join(
+        os.tmpdir(),
+        `openclaw-config-batch-nonexistent-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+      );
+      await expect(
+        runConfigCommand(["config", "set", "--batch-file", nonexistentBatchPath, "--allow-exec"]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockWriteConfigFile).not.toHaveBeenCalled();
+      expect(mockResolveSecretRefValue).not.toHaveBeenCalled();
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining("config set mode error: --allow-exec requires --dry-run."),
+      );
+    });
+
+    it("fails dry-run when skipped exec refs use an unconfigured provider", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {},
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await expect(
+        runConfigCommand([
+          "config",
+          "set",
+          "channels.discord.token",
+          "--ref-provider",
+          "runner",
+          "--ref-source",
+          "exec",
+          "--ref-id",
+          "openai",
+          "--dry-run",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockResolveSecretRefValue).not.toHaveBeenCalled();
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('Secret provider "runner" is not configured'),
+      );
+    });
+
+    it("fails dry-run when skipped exec refs use a provider with mismatched source", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {
+            runner: {
+              source: "env",
+            },
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await expect(
+        runConfigCommand([
+          "config",
+          "set",
+          "channels.discord.token",
+          "--ref-provider",
+          "runner",
+          "--ref-source",
+          "exec",
+          "--ref-id",
+          "openai",
+          "--dry-run",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockResolveSecretRefValue).not.toHaveBeenCalled();
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Secret provider "runner" has source "env" but ref requests "exec".',
+        ),
+      );
     });
 
     it("writes sibling SecretRef paths when target uses sibling-ref shape", async () => {
@@ -740,17 +1012,64 @@ describe("config cli", () => {
       expect(typeof raw).toBe("string");
       const payload = JSON.parse(String(raw)) as {
         ok: boolean;
-        checks: { schema: boolean; resolvability: boolean };
+        checks: { schema: boolean; resolvability: boolean; resolvabilityComplete: boolean };
         refsChecked: number;
+        skippedExecRefs: number;
         operations: number;
       };
       expect(payload.ok).toBe(true);
       expect(payload.operations).toBe(1);
       expect(payload.refsChecked).toBe(1);
+      expect(payload.skippedExecRefs).toBe(0);
       expect(payload.checks).toEqual({
         schema: false,
         resolvability: true,
+        resolvabilityComplete: true,
       });
+    });
+
+    it("emits skipped exec metadata for --dry-run --json success", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {
+            runner: {
+              source: "exec",
+              command: "/usr/bin/env",
+              allowInsecurePath: true,
+            },
+          },
+        },
+      };
+      setSnapshot(resolved, resolved);
+
+      await runConfigCommand([
+        "config",
+        "set",
+        "channels.discord.token",
+        "--ref-provider",
+        "runner",
+        "--ref-source",
+        "exec",
+        "--ref-id",
+        "openai",
+        "--dry-run",
+        "--json",
+      ]);
+
+      const raw = mockLog.mock.calls.at(-1)?.[0];
+      expect(typeof raw).toBe("string");
+      const payload = JSON.parse(String(raw)) as {
+        ok: boolean;
+        checks: { resolvability: boolean; resolvabilityComplete: boolean };
+        refsChecked: number;
+        skippedExecRefs: number;
+      };
+      expect(payload.ok).toBe(true);
+      expect(payload.checks.resolvability).toBe(true);
+      expect(payload.checks.resolvabilityComplete).toBe(false);
+      expect(payload.refsChecked).toBe(0);
+      expect(payload.skippedExecRefs).toBe(1);
     });
 
     it("emits structured JSON for --dry-run --json failure", async () => {
@@ -868,6 +1187,56 @@ describe("config cli", () => {
         ]),
       ).rejects.toThrow("__exit__:1");
 
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining("Dry run failed: 1 SecretRef assignment(s) could not be resolved."),
+      );
+      expect(mockError).toHaveBeenCalledWith(expect.stringContaining("provider mismatch"));
+    });
+
+    it("fails dry-run for nested provider edits that make existing refs unresolvable", async () => {
+      const resolved: OpenClawConfig = {
+        gateway: { port: 18789 },
+        secrets: {
+          providers: {
+            vaultfile: { source: "file", path: "/tmp/secrets.json", mode: "json" },
+          },
+        },
+        tools: {
+          web: {
+            search: {
+              enabled: true,
+              apiKey: {
+                source: "file",
+                provider: "vaultfile",
+                id: "/providers/search/apiKey",
+              },
+            },
+          },
+        } as never,
+      };
+      setSnapshot(resolved, resolved);
+      mockResolveSecretRefValue.mockImplementationOnce(async () => {
+        throw new Error("provider mismatch");
+      });
+
+      await expect(
+        runConfigCommand([
+          "config",
+          "set",
+          "secrets.providers.vaultfile.path",
+          '"/tmp/other-secrets.json"',
+          "--strict-json",
+          "--dry-run",
+        ]),
+      ).rejects.toThrow("__exit__:1");
+
+      expect(mockResolveSecretRefValue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "vaultfile",
+          id: "/providers/search/apiKey",
+        }),
+        expect.any(Object),
+      );
       expect(mockError).toHaveBeenCalledWith(
         expect.stringContaining("Dry run failed: 1 SecretRef assignment(s) could not be resolved."),
       );

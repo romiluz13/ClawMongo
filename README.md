@@ -236,7 +236,7 @@ Model note: while many providers/models are supported, for the best experience a
 
 ## Install (recommended)
 
-Runtime: **Node ≥22**.
+Runtime: **Node 24 (recommended) or Node 22.16+**.
 
 ```bash
 npm install -g @romiluz/clawmongo@latest
@@ -249,7 +249,7 @@ OpenClaw Onboard installs the Gateway daemon (launchd/systemd user service) so i
 
 ## Quick start (TL;DR)
 
-Runtime: **Node ≥22**.
+Runtime: **Node 24 (recommended) or Node 22.16+**.
 
 Full beginner guide (auth, pairing, channels): [Getting started](https://docs.openclaw.ai/start/getting-started)
 
@@ -530,7 +530,7 @@ If you plan to build/run companion apps, follow the platform runbooks below.
 - WebChat + debug tools.
 - Remote gateway control over SSH.
 
-Note: signed builds required for macOS permissions to stick across rebuilds (see `docs/mac/permissions.md`).
+Note: signed builds required for macOS permissions to stick across rebuilds (see [macOS Permissions](https://docs.openclaw.ai/platforms/mac/permissions)).
 
 ### iOS node (optional)
 

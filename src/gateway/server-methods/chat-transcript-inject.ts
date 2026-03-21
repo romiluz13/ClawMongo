@@ -1,6 +1,4 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import { guardSessionManager } from "../../agents/session-tool-result-guard-wrapper.js";
-import type { OpenClawConfig } from "../../config/config.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 
 type AppendMessageArg = Parameters<SessionManager["appendMessage"]>[0];
@@ -19,10 +17,6 @@ export type GatewayInjectedTranscriptAppendResult = {
 };
 
 export function appendInjectedAssistantMessageToTranscript(params: {
-  cfg?: OpenClawConfig;
-  agentId?: string;
-  sessionId?: string;
-  sessionKey?: string;
   transcriptPath: string;
   message: string;
   label?: string;
@@ -73,17 +67,10 @@ export function appendInjectedAssistantMessageToTranscript(params: {
   try {
     // IMPORTANT: Use SessionManager so the entry is attached to the current leaf via parentId.
     // Raw jsonl appends break the parent chain and can hide compaction summaries from context.
-    const sessionManager = guardSessionManager(SessionManager.open(params.transcriptPath), {
-      cfg: params.cfg,
-      agentId: params.agentId,
-      sessionId: params.sessionId,
-      sessionKey: params.sessionKey,
-    });
+    const sessionManager = SessionManager.open(params.transcriptPath);
     const messageId = sessionManager.appendMessage(messageBody);
-    void sessionManager.flushPendingPersistedWrites?.();
     emitSessionTranscriptUpdate({
       sessionFile: params.transcriptPath,
-      sessionKey: params.sessionKey,
       message: messageBody,
       messageId,
     });

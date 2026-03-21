@@ -1,6 +1,8 @@
-import { auditTelegramGroupMembership as auditTelegramGroupMembershipImpl } from "../../../extensions/telegram/runtime-api.js";
-import { monitorTelegramProvider as monitorTelegramProviderImpl } from "../../../extensions/telegram/runtime-api.js";
-import { probeTelegram as probeTelegramImpl } from "../../../extensions/telegram/runtime-api.js";
+import {
+  auditTelegramGroupMembership as auditTelegramGroupMembershipImpl,
+  monitorTelegramProvider as monitorTelegramProviderImpl,
+  probeTelegram as probeTelegramImpl,
+} from "../../../extensions/telegram/runtime-api.js";
 import {
   deleteMessageTelegram as deleteMessageTelegramImpl,
   editMessageReplyMarkupTelegram as editMessageReplyMarkupTelegramImpl,

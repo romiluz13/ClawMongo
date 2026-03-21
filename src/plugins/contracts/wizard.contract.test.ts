@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  buildProviderPluginMethodChoice,
+  resolveProviderModelPickerEntries,
+  resolveProviderPluginChoice,
+  resolveProviderWizardOptions,
+} from "../provider-wizard.js";
 import type { ProviderPlugin } from "../types.js";
 import { providerContractPluginIds, uniqueProviderContractProviders } from "./registry.js";
 
@@ -7,23 +13,6 @@ const resolvePluginProvidersMock = vi.fn();
 vi.mock("../providers.js", () => ({
   resolvePluginProviders: (...args: unknown[]) => resolvePluginProvidersMock(...args),
 }));
-
-let buildProviderPluginMethodChoice: typeof import("../provider-wizard.js").buildProviderPluginMethodChoice;
-let resolveProviderModelPickerEntries: typeof import("../provider-wizard.js").resolveProviderModelPickerEntries;
-let resolveProviderPluginChoice: typeof import("../provider-wizard.js").resolveProviderPluginChoice;
-let resolveProviderWizardOptions: typeof import("../provider-wizard.js").resolveProviderWizardOptions;
-
-function createBundledProviderConfig() {
-  return {
-    plugins: {
-      enabled: true,
-      allow: providerContractPluginIds,
-      slots: {
-        memory: "none",
-      },
-    },
-  };
-}
 
 function resolveExpectedWizardChoiceValues(providers: ProviderPlugin[]) {
   const values: string[] = [];
@@ -82,21 +71,22 @@ function resolveExpectedModelPickerValues(providers: ProviderPlugin[]) {
 }
 
 describe("provider wizard contract", () => {
-  beforeEach(async () => {
-    vi.resetModules();
-    ({
-      buildProviderPluginMethodChoice,
-      resolveProviderModelPickerEntries,
-      resolveProviderPluginChoice,
-      resolveProviderWizardOptions,
-    } = await import("../provider-wizard.js"));
+  beforeEach(() => {
     resolvePluginProvidersMock.mockReset();
     resolvePluginProvidersMock.mockReturnValue(uniqueProviderContractProviders);
   });
 
   it("exposes every registered provider setup choice through the shared wizard layer", () => {
     const options = resolveProviderWizardOptions({
-      config: createBundledProviderConfig(),
+      config: {
+        plugins: {
+          enabled: true,
+          allow: providerContractPluginIds,
+          slots: {
+            memory: "none",
+          },
+        },
+      },
       env: process.env,
     });
 
@@ -109,10 +99,7 @@ describe("provider wizard contract", () => {
   });
 
   it("round-trips every shared wizard choice back to its provider and auth method", () => {
-    for (const option of resolveProviderWizardOptions({
-      config: createBundledProviderConfig(),
-      env: process.env,
-    })) {
+    for (const option of resolveProviderWizardOptions({ config: {}, env: process.env })) {
       const resolved = resolveProviderPluginChoice({
         providers: uniqueProviderContractProviders,
         choice: option.value,
@@ -124,10 +111,7 @@ describe("provider wizard contract", () => {
   });
 
   it("exposes every registered model-picker entry through the shared wizard layer", () => {
-    const entries = resolveProviderModelPickerEntries({
-      config: createBundledProviderConfig(),
-      env: process.env,
-    });
+    const entries = resolveProviderModelPickerEntries({ config: {}, env: process.env });
 
     expect(
       entries.map((entry) => entry.value).toSorted((left, right) => left.localeCompare(right)),

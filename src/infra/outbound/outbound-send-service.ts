@@ -108,7 +108,6 @@ export async function executeSendAction(params: {
         params.mediaUrls ??
         (params.mediaUrl ? [params.mediaUrl] : undefined);
       await appendAssistantMessageToSessionTranscript({
-        cfg: params.ctx.cfg,
         agentId: params.ctx.mirror.agentId,
         sessionKey: params.ctx.mirror.sessionKey,
         text: mirrorText,

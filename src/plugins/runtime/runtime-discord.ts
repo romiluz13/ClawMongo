@@ -1,5 +1,5 @@
-import { discordMessageActions } from "../../../extensions/discord/runtime-api.js";
 import {
+  discordMessageActions,
   getThreadBindingManager,
   resolveThreadBindingIdleTimeoutMs,
   resolveThreadBindingInactivityExpiresAt,

@@ -1,9 +1,7 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-
 export type SessionTranscriptUpdate = {
   sessionFile: string;
   sessionKey?: string;
-  message?: AgentMessage;
+  message?: unknown;
   messageId?: string;
 };
 
@@ -32,7 +30,16 @@ export function emitSessionTranscriptUpdate(update: string | SessionTranscriptUp
   if (!trimmed) {
     return;
   }
-  const nextUpdate = { ...normalized, sessionFile: trimmed };
+  const nextUpdate: SessionTranscriptUpdate = {
+    sessionFile: trimmed,
+    ...(typeof normalized.sessionKey === "string" && normalized.sessionKey.trim()
+      ? { sessionKey: normalized.sessionKey.trim() }
+      : {}),
+    ...(normalized.message !== undefined ? { message: normalized.message } : {}),
+    ...(typeof normalized.messageId === "string" && normalized.messageId.trim()
+      ? { messageId: normalized.messageId.trim() }
+      : {}),
+  };
   for (const listener of SESSION_TRANSCRIPT_LISTENERS) {
     try {
       listener(nextUpdate);

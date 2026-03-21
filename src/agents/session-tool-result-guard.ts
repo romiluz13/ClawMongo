@@ -16,6 +16,11 @@ import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-
 const GUARD_TRUNCATION_SUFFIX =
   "\n\n⚠️ [Content truncated during persistence — original exceeded size limit. " +
   "Use offset/limit parameters or request specific sections for large content.]";
+const RAW_APPEND_MESSAGE = Symbol("openclaw.session.rawAppendMessage");
+
+type SessionManagerWithRawAppend = SessionManager & {
+  [RAW_APPEND_MESSAGE]?: SessionManager["appendMessage"];
+};
 
 /**
  * Truncate oversized text content blocks in a tool result message.
@@ -66,6 +71,13 @@ function normalizePersistedToolResultName(
     return { ...toolResult, toolName: "unknown" };
   }
   return toolResult;
+}
+
+export function getRawSessionAppendMessage(
+  sessionManager: SessionManager,
+): SessionManager["appendMessage"] {
+  const rawAppend = (sessionManager as SessionManagerWithRawAppend)[RAW_APPEND_MESSAGE];
+  return rawAppend ?? sessionManager.appendMessage.bind(sessionManager);
 }
 
 export function installSessionToolResultGuard(
@@ -119,7 +131,8 @@ export function installSessionToolResultGuard(
   getPendingIds: () => string[];
   flushPendingPersistedWrites: () => Promise<void>;
 } {
-  const originalAppend = sessionManager.appendMessage.bind(sessionManager);
+  const originalAppend = getRawSessionAppendMessage(sessionManager);
+  (sessionManager as SessionManagerWithRawAppend)[RAW_APPEND_MESSAGE] = originalAppend;
   const pendingState = createPendingToolCallState();
   const pendingPersistedWrites = new Set<Promise<void>>();
   const persistMessage = (message: AgentMessage) => {
@@ -142,6 +155,7 @@ export function installSessionToolResultGuard(
   const trackPersistedMessage = (
     message: AgentMessage,
     meta?: { toolCallId?: string; toolName?: string; isSynthetic?: boolean },
+    messageId?: string,
   ) => {
     const sessionFile = (
       sessionManager as { getSessionFile?: () => string | null }
@@ -151,6 +165,7 @@ export function installSessionToolResultGuard(
         sessionFile,
         sessionKey: opts?.sessionKey,
         message,
+        messageId,
       });
     }
     if (!afterPersisted) {
@@ -175,7 +190,8 @@ export function installSessionToolResultGuard(
     meta?: { toolCallId?: string; toolName?: string; isSynthetic?: boolean },
   ) => {
     const result = originalAppend(message as never);
-    trackPersistedMessage(message, meta);
+    const messageId = typeof result === "string" ? result : undefined;
+    trackPersistedMessage(message, meta, messageId);
     return result;
   };
 

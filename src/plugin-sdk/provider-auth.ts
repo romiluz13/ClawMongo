@@ -5,7 +5,6 @@ export type { SecretInput } from "../config/types.secrets.js";
 export type { ProviderAuthResult } from "../plugins/types.js";
 export type { ProviderAuthContext } from "../plugins/types.js";
 export type { AuthProfileStore, OAuthCredential } from "../agents/auth-profiles/types.js";
-export { buildOauthProviderAuthResult } from "./provider-auth-result.js";
 
 export {
   CLAUDE_CLI_PROFILE_ID,
@@ -36,9 +35,6 @@ export {
   validateAnthropicSetupToken,
 } from "../plugins/provider-auth-token.js";
 export { applyAuthProfileConfig, buildApiKeyCredential } from "../plugins/provider-auth-helpers.js";
-export { githubCopilotLoginCommand } from "../providers/github-copilot-auth.js";
-export { loginChutes } from "../commands/chutes-oauth.js";
-export { loginOpenAICodexOAuth } from "../plugins/provider-openai-codex-oauth.js";
 export { createProviderApiKeyAuthMethod } from "../plugins/provider-api-key-auth.js";
 export { coerceSecretRef } from "../config/types.secrets.js";
 export { resolveDefaultSecretProviderAlias } from "../secrets/ref-contract.js";
@@ -47,3 +43,9 @@ export {
   normalizeOptionalSecretInput,
   normalizeSecretInput,
 } from "../utils/normalize-secret-input.js";
+export {
+  listKnownProviderAuthEnvVarNames,
+  omitEnvKeysCaseInsensitive,
+} from "../secrets/provider-env-vars.js";
+export { buildOauthProviderAuthResult } from "./provider-auth-result.js";
+export { generatePkceVerifierChallenge, toFormUrlEncoded } from "./oauth-utils.js";

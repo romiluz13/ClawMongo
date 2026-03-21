@@ -406,7 +406,6 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
       const deliver = deliverRequested && Boolean(channel && to);
       const deliveryChannel = deliver ? channel : undefined;
       const deliveryTo = deliver ? to : undefined;
-
       if (deliverRequested && !deliver) {
         ctx.logGateway.warn(
           `agent delivery disabled node=${nodeId}: missing session delivery route (channel=${channel ?? "-"} to=${to ?? "-"})`,

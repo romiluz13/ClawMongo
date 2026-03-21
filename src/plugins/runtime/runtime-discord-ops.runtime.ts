@@ -1,12 +1,12 @@
-import { auditDiscordChannelPermissions as auditDiscordChannelPermissionsImpl } from "../../../extensions/discord/runtime-api.js";
 import {
+  auditDiscordChannelPermissions as auditDiscordChannelPermissionsImpl,
   listDiscordDirectoryGroupsLive as listDiscordDirectoryGroupsLiveImpl,
   listDiscordDirectoryPeersLive as listDiscordDirectoryPeersLiveImpl,
+  monitorDiscordProvider as monitorDiscordProviderImpl,
+  probeDiscord as probeDiscordImpl,
+  resolveDiscordChannelAllowlist as resolveDiscordChannelAllowlistImpl,
+  resolveDiscordUserAllowlist as resolveDiscordUserAllowlistImpl,
 } from "../../../extensions/discord/runtime-api.js";
-import { monitorDiscordProvider as monitorDiscordProviderImpl } from "../../../extensions/discord/runtime-api.js";
-import { probeDiscord as probeDiscordImpl } from "../../../extensions/discord/runtime-api.js";
-import { resolveDiscordChannelAllowlist as resolveDiscordChannelAllowlistImpl } from "../../../extensions/discord/runtime-api.js";
-import { resolveDiscordUserAllowlist as resolveDiscordUserAllowlistImpl } from "../../../extensions/discord/runtime-api.js";
 import {
   createThreadDiscord as createThreadDiscordImpl,
   deleteMessageDiscord as deleteMessageDiscordImpl,

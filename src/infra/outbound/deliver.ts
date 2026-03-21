@@ -1,4 +1,8 @@
 import {
+  resolveSendableOutboundReplyParts,
+  sendMediaWithLeadingCaption,
+} from "openclaw/plugin-sdk/reply-payload";
+import {
   chunkByParagraph,
   chunkMarkdownTextWithMode,
   resolveChunkMode,
@@ -23,10 +27,9 @@ import {
   toPluginMessageContext,
   toPluginMessageSentEvent,
 } from "../../hooks/message-hook-mappers.js";
-import { hasReplyChannelData, hasReplyContent } from "../../interactive/payload.js";
+import { hasReplyPayloadContent } from "../../interactive/payload.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
-import { sendMediaWithLeadingCaption } from "../../plugin-sdk/reply-payload.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { throwIfAborted } from "./abort.js";
 import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
@@ -281,17 +284,8 @@ type MessageSentEvent = {
 
 function normalizeEmptyPayloadForDelivery(payload: ReplyPayload): ReplyPayload | null {
   const text = typeof payload.text === "string" ? payload.text : "";
-  const hasChannelData = hasReplyChannelData(payload.channelData);
   if (!text.trim()) {
-    if (
-      !hasReplyContent({
-        text,
-        mediaUrl: payload.mediaUrl,
-        mediaUrls: payload.mediaUrls,
-        interactive: payload.interactive,
-        hasChannelData,
-      })
-    ) {
+    if (!hasReplyPayloadContent({ ...payload, text })) {
       return null;
     }
     if (text) {
@@ -337,9 +331,10 @@ function normalizePayloadsForChannelDelivery(
 }
 
 function buildPayloadSummary(payload: ReplyPayload): NormalizedOutboundPayload {
+  const parts = resolveSendableOutboundReplyParts(payload);
   return {
-    text: payload.text ?? "",
-    mediaUrls: payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []),
+    text: parts.text,
+    mediaUrls: parts.mediaUrls,
     interactive: payload.interactive,
     channelData: payload.channelData,
   };
@@ -666,10 +661,10 @@ async function deliverOutboundPayloadsCore(
       };
       if (
         handler.sendPayload &&
-        (effectivePayload.channelData ||
-          hasReplyContent({
-            interactive: effectivePayload.interactive,
-          }))
+        hasReplyPayloadContent({
+          interactive: effectivePayload.interactive,
+          channelData: effectivePayload.channelData,
+        })
       ) {
         const delivery = await handler.sendPayload(effectivePayload, sendOverrides);
         results.push(delivery);
@@ -767,7 +762,6 @@ async function deliverOutboundPayloadsCore(
     });
     if (mirrorText) {
       await appendAssistantMessageToSessionTranscript({
-        cfg: params.cfg,
         agentId: params.mirror.agentId,
         sessionKey: params.mirror.sessionKey,
         text: mirrorText,

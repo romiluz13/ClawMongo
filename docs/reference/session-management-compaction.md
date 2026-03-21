@@ -280,7 +280,7 @@ As of `2026.1.10`, OpenClaw also suppresses **draft/typing streaming** when a pa
 
 ---
 
-## Pre-compaction “memory flush” (implemented)
+## Pre-compaction "memory flush" (implemented)
 
 Goal: before auto-compaction happens, run a silent agentic turn that writes durable
 state to MongoDB so compaction can’t
