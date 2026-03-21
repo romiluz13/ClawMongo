@@ -1,11 +1,10 @@
 ---
 title: "Memory configuration reference"
-summary: "Full configuration reference for OpenClaw memory search, embedding providers, QMD backend, hybrid search, and multimodal memory"
+summary: "Full configuration reference for ClawMongo MongoDB-first memory: embedding providers, hybrid search, vector search, and retrieval tuning"
 read_when:
   - You want to configure memory search providers or embedding models
-  - You want to set up the QMD backend
-  - You want to tune hybrid search, MMR, or temporal decay
-  - You want to enable multimodal memory indexing
+  - You want to tune hybrid search, vector search, or temporal decay
+  - You want to understand the MongoDB memory backend configuration
 ---
 
 # Memory configuration reference
@@ -356,16 +355,18 @@ agents: {
 
 ## How the memory tools work
 
-- `memory_search` semantically searches Markdown chunks (~400 token target, 80-token overlap) from `MEMORY.md` + `memory/**/*.md`. It returns snippet text (capped ~700 chars), file path, line range, score, provider/model, and whether we fell back from local to remote embeddings. No full file payload is returned.
-- `memory_get` reads a specific memory Markdown file (workspace-relative), optionally from a starting line and for N lines. Paths outside `MEMORY.md` / `memory/` are rejected.
-- Both tools are enabled only when `memorySearch.enabled` resolves true for the agent.
+- `memory_search` is the primary runtime recall entrypoint. It searches across active MongoDB-backed recall sources (conversation events, structured memory, KB, episodes, graph). Results include snippet text, locators, scores, and source type. The retrieval planner selects which paths to execute based on the query.
+- `memory_get` reopens exact locators returned by recall tools. Supports MongoDB-backed locators for events, episodes, relations, procedures, KB, and structured memory.
+- `kb_search` is a dedicated search for imported docs and reference material.
+- `memory_write` persists durable structured facts (decisions, preferences, todos, people, projects) with salience, temporal validity, provenance, and supersession metadata.
+- All tools are enabled only when the MongoDB memory backend is configured.
 
 ## What gets indexed (and when)
 
-- File type: Markdown only (`MEMORY.md`, `memory/**/*.md`).
-- Index storage: per-agent SQLite at `~/.openclaw/memory/<agentId>.sqlite` (configurable via `agents.defaults.memorySearch.store.path`, supports `{agentId}` token).
-- Freshness: watcher on `MEMORY.md` + `memory/` marks the index dirty (debounce 1.5s). Sync is scheduled on session start, on search, or on an interval and runs asynchronously. Session transcripts use delta thresholds to trigger background sync.
-- Reindex triggers: the index stores the embedding **provider/model + endpoint fingerprint + chunking params**. If any of those change, OpenClaw automatically resets and reindexes the entire store.
+- **Canonical events**: Written directly to MongoDB on the runtime write path. No disk intermediary.
+- **Bridge sync**: Markdown files (`MEMORY.md`, `memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval. Watcher marks dirty (debounce 1.5s), sync runs asynchronously.
+- **Chunk projection**: Canonical events are projected into searchable chunks for retrieval.
+- **Reindex triggers**: The index stores the embedding **provider/model + endpoint fingerprint + chunking params**. If any change, ClawMongo automatically resets and reindexes.
 
 ## Hybrid search (BM25 + vector)
 
@@ -603,30 +604,16 @@ agents: {
 }
 ```
 
-## Session memory search (experimental)
+## Session memory in ClawMongo
 
-You can optionally index **session transcripts** and surface them via `memory_search`.
-This is gated behind an experimental flag.
+In ClawMongo, session conversation events are persisted directly to MongoDB as canonical events on the runtime write path. There is no need for opt-in session indexing -- conversation events are the primary write target and are immediately available for retrieval.
 
-```json5
-agents: {
-  defaults: {
-    memorySearch: {
-      experimental: { sessionMemory: true },
-      sources: ["memory", "sessions"]
-    }
-  }
-}
-```
+- Conversation events are written to the `events` collection via `persistConversationMessageToMongo`.
+- Chunk projection derives searchable chunks from canonical events.
+- Episode materialization groups related events into navigable summaries.
+- Structured memory promotion extracts durable facts from the event stream.
 
-Notes:
-
-- Session indexing is **opt-in** (off by default).
-- Session updates are debounced and **indexed asynchronously** once they cross delta thresholds (best-effort).
-- `memory_search` never blocks on indexing; results can be slightly stale until background sync finishes.
-- Results still include snippets only; `memory_get` remains limited to memory files.
-- Session indexing is isolated per agent (only that agent's session logs are indexed).
-- Session logs live on disk (`~/.openclaw/agents/<agentId>/sessions/*.jsonl`). Any process/user with filesystem access can read them, so treat disk access as the trust boundary. For stricter isolation, run agents under separate OS users or hosts.
+**Architecture boundary**: Delivery mirrors (outbound message confirmations in the session transcript) are transcript-level bookkeeping and are intentionally NOT written to the canonical MongoDB event stream. This prevents duplicate entries and keeps the event timeline clean. The canonical persistence path fires only for agent conversation turns through `guardSessionManager`.
 
 Delta thresholds (defaults shown):
 

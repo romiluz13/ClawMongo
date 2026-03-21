@@ -1065,7 +1065,9 @@ describe("E2E: Analytics (getMemoryStats)", () => {
     expect(stats.totalChunks).toBeGreaterThanOrEqual(2);
     expect(stats.sources.length).toBeGreaterThan(0);
 
-    const memorySrc = stats.sources.find((s) => s.source === "conversation" || s.source === "memory");
+    const memorySrc = stats.sources.find(
+      (s) => s.source === "conversation" || s.source === "memory",
+    );
     expect(memorySrc).toBeDefined();
     expect(memorySrc!.fileCount).toBe(2);
     expect(memorySrc!.chunkCount).toBeGreaterThanOrEqual(2);

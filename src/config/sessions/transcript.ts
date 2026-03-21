@@ -212,6 +212,11 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     timestamp: Date.now(),
     ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
   } as Parameters<SessionManager["appendMessage"]>[0];
+  // Architecture boundary: delivery mirrors are transcript-level bookkeeping, NOT canonical
+  // conversation events. They intentionally bypass the MongoDB persistence hook
+  // (guardSessionManager → persistConversationMessageToMongo) to avoid polluting the
+  // canonical event stream with delivery artifacts. The original agent response already
+  // persists via the guardSessionManager path in attempt.ts/compact.ts.
   const sessionManager = SessionManager.open(sessionFile);
   const messageId = sessionManager.appendMessage(message);
 

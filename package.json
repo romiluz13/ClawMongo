@@ -586,7 +586,10 @@
     "tui:dev": "OPENCLAW_PROFILE=dev CLAWDBOT_PROFILE=dev node scripts/run-node.mjs --dev tui",
     "ui:build": "node scripts/ui.js build",
     "ui:dev": "node scripts/ui.js dev",
-    "ui:install": "node scripts/ui.js install"
+    "ui:install": "node scripts/ui.js install",
+    "upstream:analyze": "bash scripts/sync-upstream.sh --ref origin/main --fail-if-outside-allowlist --fail-if-excluded-present && node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
+    "upstream:report": "node --import tsx scripts/upstream-sync-report.ts --base origin/main --target upstream/main",
+    "upstream:steady": "bash scripts/upstream-steady-state.sh"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.16.1",

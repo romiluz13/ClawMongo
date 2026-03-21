@@ -67,6 +67,9 @@ export function appendInjectedAssistantMessageToTranscript(params: {
   try {
     // IMPORTANT: Use SessionManager so the entry is attached to the current leaf via parentId.
     // Raw jsonl appends break the parent chain and can hide compaction summaries from context.
+    // Architecture boundary: injected transcript entries (abort markers, system notes) are
+    // transcript-level bookkeeping and intentionally bypass MongoDB canonical persistence.
+    // Canonical conversation events persist via guardSessionManager in attempt.ts/compact.ts.
     const sessionManager = SessionManager.open(params.transcriptPath);
     const messageId = sessionManager.appendMessage(messageBody);
     emitSessionTranscriptUpdate({
