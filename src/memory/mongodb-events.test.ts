@@ -80,6 +80,7 @@ describe("writeEvent", () => {
         role: "user",
         body: "Hello world",
         scope: "agent",
+        scopeRef: "agent:agent-1",
       },
     });
 
@@ -123,6 +124,7 @@ describe("writeEvent", () => {
         role: "user",
         body: "Hello world",
         scope: "agent",
+        scopeRef: "agent:agent-1",
       },
     });
 
@@ -162,6 +164,7 @@ describe("writeEvent", () => {
         role: "user",
         body: "Hello",
         scope: "session",
+        scopeRef: "session:sess-1",
         sessionId: "sess-123",
         channel: "discord",
         metadata: { key: "value" },
@@ -195,6 +198,7 @@ describe("getEventsByTimeRange", () => {
         role: "user",
         body: "First",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: earlier,
       },
       {
@@ -203,6 +207,7 @@ describe("getEventsByTimeRange", () => {
         role: "assistant",
         body: "Second",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: now,
       },
     ];
@@ -256,12 +261,14 @@ describe("getEventsByTimeRange", () => {
       start,
       end,
       scope: "session",
+      scopeRef: "session:sess-1",
     });
 
     expect(findFn).toHaveBeenCalledWith({
       agentId: "agent-1",
       timestamp: { $gte: start, $lte: end },
       scope: "session",
+      scopeRef: "session:sess-1",
     });
   });
 });
@@ -284,6 +291,7 @@ describe("getEventsBySession", () => {
         role: "user",
         body: "Hello",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -327,6 +335,7 @@ describe("getUnprojectedEvents", () => {
         role: "user",
         body: "Unprojected",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -421,6 +430,7 @@ describe("projectChunksFromEvents", () => {
         role: "user",
         body: "Hello world",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
       {
@@ -429,6 +439,7 @@ describe("projectChunksFromEvents", () => {
         role: "assistant",
         body: "Hi there",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -523,6 +534,7 @@ describe("projectChunksFromEvents", () => {
         role: "user",
         body: "Test content",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -574,6 +586,7 @@ describe("projectChunksFromEvents", () => {
         role: "user",
         body: "New event",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
       {
@@ -582,6 +595,7 @@ describe("projectChunksFromEvents", () => {
         role: "assistant",
         body: "Duplicate event",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -704,6 +718,7 @@ describe("getUnconsolidatedEvents", () => {
         role: "user",
         body: "Unconsolidated",
         scope: "agent",
+        scopeRef: "agent:agent-1",
         timestamp: new Date(),
       },
     ];
@@ -744,12 +759,14 @@ describe("getUnconsolidatedEvents", () => {
       prefix: "test_",
       agentId: "agent-1",
       scope: "session",
+      scopeRef: "session:sess-1",
     });
 
     expect(findFn).toHaveBeenCalledWith({
       agentId: "agent-1",
       consolidatedAt: { $exists: false },
       scope: "session",
+      scopeRef: "session:sess-1",
     });
   });
 

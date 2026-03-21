@@ -164,7 +164,7 @@ describe("mongodb relevance runtime", () => {
             endLine: 1,
             snippet: "ok",
             score: 0.9,
-            source: "memory",
+            source: "conversation",
           },
         ],
         undefined,

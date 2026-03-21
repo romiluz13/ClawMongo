@@ -119,6 +119,7 @@ export type StatusScanResult = {
   channels: Awaited<ReturnType<typeof buildChannelsTableFn>>;
   summary: Awaited<ReturnType<typeof getStatusSummary>>;
   memory: MemoryStatusSnapshot | null;
+  memoryError?: unknown;
   memoryPlugin: MemoryPluginStatus;
   pluginCompatibility: PluginCompatibilityNotice[];
 };

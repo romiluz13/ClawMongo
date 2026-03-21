@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildPluginSdkPackageExports } from "./entrypoints.js";
+import { buildPluginSdkPackageExports, pluginSdkEntrypoints } from "./entrypoints.js";
 import * as sdk from "./index.js";
 
 describe("plugin-sdk exports", () => {

@@ -74,7 +74,7 @@ describe("mongodb-procedures", () => {
       toArray: vi.fn(async () => [
         { procedureId: "rotate-auth", searchText: "Rotate auth keys", score: 0.92 },
       ]),
-    } as ReturnType<typeof col.aggregate>);
+    } as unknown as ReturnType<typeof col.aggregate>);
 
     const results = await searchProcedures(col, "rotate auth", null, {
       maxResults: 5,

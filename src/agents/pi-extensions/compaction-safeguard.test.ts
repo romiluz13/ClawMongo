@@ -437,7 +437,8 @@ describe("compaction-safeguard runtime registry", () => {
 
     buildEmbeddedExtensionFactories({
       cfg,
-      sessionManager,
+      sessionManager:
+        sessionManager as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
       provider: "anthropic",
       modelId: "claude-3-opus",
       model: {

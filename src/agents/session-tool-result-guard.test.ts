@@ -148,7 +148,12 @@ describe("installSessionToolResultGuard", () => {
   it("emits transcript updates with the session key when a session file exists", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-guard-events-"));
     const sessionFile = path.join(dir, "session.jsonl");
-    const updates: Array<{ sessionFile: string; sessionKey?: string; message?: AgentMessage }> = [];
+    const updates: Array<{
+      sessionFile: string;
+      sessionKey?: string;
+      message?: unknown;
+      messageId?: string;
+    }> = [];
     const cleanup = onSessionTranscriptUpdate((update) => {
       updates.push(update);
     });
@@ -172,7 +177,7 @@ describe("installSessionToolResultGuard", () => {
         sessionFile,
         sessionKey: "agent:main:test",
       });
-      expect(updates[0]?.message?.role).toBe("assistant");
+      expect((updates[0]?.message as { role?: string } | undefined)?.role).toBe("assistant");
     } finally {
       cleanup();
       fs.rmSync(dir, { recursive: true, force: true });

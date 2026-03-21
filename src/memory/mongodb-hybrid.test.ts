@@ -155,7 +155,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 5,
         score: 0.95,
         snippet: "vector hit A",
-        source: "memory",
+        source: "conversation",
       },
       {
         path: "b.md",
@@ -163,7 +163,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 5,
         score: 0.8,
         snippet: "vector hit B",
-        source: "memory",
+        source: "conversation",
       },
     ];
     const keywordResults: MemorySearchResult[] = [
@@ -173,7 +173,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 5,
         score: 5.2,
         snippet: "keyword hit A",
-        source: "memory",
+        source: "conversation",
       },
       {
         path: "c.md",
@@ -181,7 +181,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 20,
         score: 3.1,
         snippet: "keyword hit C",
-        source: "memory",
+        source: "conversation",
       },
     ];
 
@@ -204,7 +204,7 @@ describe("mergeHybridResultsMongoDB", () => {
 
   it("handles empty vector results", () => {
     const keywordResults: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 5, score: 5.0, snippet: "kw", source: "memory" },
+      { path: "a.md", startLine: 1, endLine: 5, score: 5.0, snippet: "kw", source: "conversation" },
     ];
     const merged = mergeHybridResultsMongoDB({
       vector: [],
@@ -217,7 +217,14 @@ describe("mergeHybridResultsMongoDB", () => {
 
   it("handles empty keyword results", () => {
     const vectorResults: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 5, score: 0.9, snippet: "vec", source: "memory" },
+      {
+        path: "a.md",
+        startLine: 1,
+        endLine: 5,
+        score: 0.9,
+        snippet: "vec",
+        source: "conversation",
+      },
     ];
     const merged = mergeHybridResultsMongoDB({
       vector: vectorResults,
@@ -244,7 +251,7 @@ describe("mergeHybridResultsMongoDB", () => {
       endLine: 2,
       score: 0.9 - i * 0.01,
       snippet: "t",
-      source: "memory" as const,
+      source: "conversation" as const,
     }));
     const merged = mergeHybridResultsMongoDB({
       vector: vectorResults,
@@ -256,12 +263,19 @@ describe("mergeHybridResultsMongoDB", () => {
 
   it("sorts by combined RRF score descending", () => {
     const vectorResults: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 2, score: 0.9, snippet: "a", source: "memory" },
-      { path: "b.md", startLine: 1, endLine: 2, score: 0.5, snippet: "b", source: "memory" },
+      { path: "a.md", startLine: 1, endLine: 2, score: 0.9, snippet: "a", source: "conversation" },
+      { path: "b.md", startLine: 1, endLine: 2, score: 0.5, snippet: "b", source: "conversation" },
     ];
     const keywordResults: MemorySearchResult[] = [
-      { path: "b.md", startLine: 1, endLine: 2, score: 8.0, snippet: "b-kw", source: "memory" },
-      { path: "c.md", startLine: 1, endLine: 2, score: 2.0, snippet: "c", source: "memory" },
+      {
+        path: "b.md",
+        startLine: 1,
+        endLine: 2,
+        score: 8.0,
+        snippet: "b-kw",
+        source: "conversation",
+      },
+      { path: "c.md", startLine: 1, endLine: 2, score: 2.0, snippet: "c", source: "conversation" },
     ];
 
     const merged = mergeHybridResultsMongoDB({
@@ -288,7 +302,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 5,
         score: 0.9,
         snippet: "vector text",
-        source: "memory",
+        source: "conversation",
       },
     ];
     const keywordResults: MemorySearchResult[] = [
@@ -298,7 +312,7 @@ describe("mergeHybridResultsMongoDB", () => {
         endLine: 5,
         score: 5.0,
         snippet: "keyword text",
-        source: "memory",
+        source: "conversation",
       },
     ];
     const merged = mergeHybridResultsMongoDB({
@@ -318,7 +332,7 @@ describe("mergeHybridResultsMongoDB", () => {
 describe("normalizeSearchResults", () => {
   it("normalizes vector scores (cosine [0,1])", () => {
     const results: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 2, score: 0.85, snippet: "t", source: "memory" },
+      { path: "a.md", startLine: 1, endLine: 2, score: 0.85, snippet: "t", source: "conversation" },
     ];
     const normalized = normalizeSearchResults(results, "vector");
     expect(normalized[0].score).toBeCloseTo(0.85, 2);
@@ -326,7 +340,7 @@ describe("normalizeSearchResults", () => {
 
   it("normalizes BM25 text scores to [0,1]", () => {
     const results: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 2, score: 15.5, snippet: "t", source: "memory" },
+      { path: "a.md", startLine: 1, endLine: 2, score: 15.5, snippet: "t", source: "conversation" },
     ];
     const normalized = normalizeSearchResults(results, "text");
     expect(normalized[0].score).toBeGreaterThan(0);
@@ -335,7 +349,14 @@ describe("normalizeSearchResults", () => {
 
   it("normalizes hybrid/RRF scores", () => {
     const results: MemorySearchResult[] = [
-      { path: "a.md", startLine: 1, endLine: 2, score: 0.015, snippet: "t", source: "memory" },
+      {
+        path: "a.md",
+        startLine: 1,
+        endLine: 2,
+        score: 0.015,
+        snippet: "t",
+        source: "conversation",
+      },
     ];
     const normalized = normalizeSearchResults(results, "hybrid");
     expect(normalized[0].score).toBeGreaterThanOrEqual(0);
@@ -360,7 +381,7 @@ describe("normalizeSearchResults", () => {
 
   it("handles kb search method", () => {
     const results: MemorySearchResult[] = [
-      { path: "kb-doc", startLine: 1, endLine: 5, score: 0.8, snippet: "t", source: "kb" },
+      { path: "kb-doc", startLine: 1, endLine: 5, score: 0.8, snippet: "t", source: "reference" },
     ];
     const normalized = normalizeSearchResults(results, "kb");
     expect(normalized[0].score).toBeCloseTo(0.8, 2);
@@ -378,7 +399,7 @@ describe("normalizeSearchResults", () => {
         endLine: 10,
         score: 0.9,
         snippet: "hello",
-        source: "memory",
+        source: "conversation",
       },
     ];
     const normalized = normalizeSearchResults(results, "vector");
@@ -386,17 +407,31 @@ describe("normalizeSearchResults", () => {
     expect(normalized[0].startLine).toBe(5);
     expect(normalized[0].endLine).toBe(10);
     expect(normalized[0].snippet).toBe("hello");
-    expect(normalized[0].source).toBe("memory");
+    expect(normalized[0].source).toBe("conversation");
   });
 
   it("ensures cross-source merge ranking is correct", () => {
     // Simulate: vector result with score 0.85, BM25 result with raw score 15.0
     // After normalization, both should be comparable in [0,1]
     const vectorResults: MemorySearchResult[] = [
-      { path: "vec.md", startLine: 1, endLine: 2, score: 0.85, snippet: "t", source: "memory" },
+      {
+        path: "vec.md",
+        startLine: 1,
+        endLine: 2,
+        score: 0.85,
+        snippet: "t",
+        source: "conversation",
+      },
     ];
     const textResults: MemorySearchResult[] = [
-      { path: "text.md", startLine: 1, endLine: 2, score: 15.0, snippet: "t", source: "memory" },
+      {
+        path: "text.md",
+        startLine: 1,
+        endLine: 2,
+        score: 15.0,
+        snippet: "t",
+        source: "conversation",
+      },
     ];
     const normalizedVec = normalizeSearchResults(vectorResults, "vector");
     const normalizedText = normalizeSearchResults(textResults, "text");

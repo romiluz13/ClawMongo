@@ -391,7 +391,7 @@ export async function statusCommand(
         return `enabled (${slot})`;
       }
       if (memoryError) {
-        return warn(`degraded (${shortenText(memoryError, 96)})`);
+        return warn(`degraded (${shortenText(String(memoryError), 96)})`);
       }
       return muted(`enabled (${slot}) · unavailable`);
     }

@@ -1,13 +1,12 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/memory-core";
 import { describe, expect, it, vi } from "vitest";
-import { createPluginRuntimeMock } from "../test-utils/plugin-runtime-mock.js";
+import { createPluginRuntimeMock } from "../../test/helpers/extensions/plugin-runtime-mock.js";
 import plugin from "./index.js";
 
 function createApi() {
   const runtime = createPluginRuntimeMock();
   const registerTool = vi.fn();
   const registerCli = vi.fn();
-  const api: OpenClawPluginApi = {
+  const api = {
     id: "memory-core",
     name: "Memory (Core)",
     description: "Memory (Core)",
@@ -45,7 +44,7 @@ describe("memory-core plugin", () => {
     vi.mocked(runtime.tools.createKBSearchTool).mockReturnValue(kbSearchTool as never);
     vi.mocked(runtime.tools.createMemoryWriteTool).mockReturnValue(memoryWriteTool as never);
 
-    plugin.register(api);
+    plugin.register(api as never);
 
     expect(registerTool).toHaveBeenCalledTimes(3);
     const [searchFactory, kbFactory, writeFactory] = registerTool.mock.calls.map(

@@ -29,7 +29,9 @@ export async function backfillEventsFromChunks(params: {
   const scopeRef = resolveScopeRef({ scope, agentId });
 
   // Read all conversation chunks
-  const allChunks = await chunks.find({ source: { $in: ["memory", "sessions"] } }).toArray();
+  const allChunks = await chunks
+    .find({ source: { $in: ["conversation", "memory", "sessions"] } })
+    .toArray();
 
   let chunksProcessed = 0;
   let skipped = 0;

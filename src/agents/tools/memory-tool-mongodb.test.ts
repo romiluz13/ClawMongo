@@ -68,8 +68,11 @@ describe("createKBSearchTool direct searchKB path", () => {
         searchKB: searchKBMock,
         search: searchMock,
         status: () => ({ backend: "mongodb", provider: "test" }),
+        readFile: vi.fn().mockResolvedValue(null),
+        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
+        probeVectorAvailability: vi.fn().mockResolvedValue(true),
       },
-      error: null,
+      error: undefined,
     });
 
     const cfg = {
@@ -104,8 +107,11 @@ describe("createKBSearchTool direct searchKB path", () => {
         searchKB: searchKBMock,
         search: vi.fn(),
         status: () => ({ backend: "mongodb", provider: "test" }),
+        readFile: vi.fn().mockResolvedValue(null),
+        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
+        probeVectorAvailability: vi.fn().mockResolvedValue(true),
       },
-      error: null,
+      error: undefined,
     });
 
     const cfg = {
@@ -162,8 +168,11 @@ describe("createKBSearchTool direct searchKB path", () => {
         // No searchKB method — should fall back
         search: searchMock,
         status: () => ({ backend: "mongodb", provider: "test" }),
+        readFile: vi.fn().mockResolvedValue(null),
+        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
+        probeVectorAvailability: vi.fn().mockResolvedValue(true),
       },
-      error: null,
+      error: undefined,
     });
 
     const cfg = {

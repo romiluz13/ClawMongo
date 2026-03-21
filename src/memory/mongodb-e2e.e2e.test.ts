@@ -578,7 +578,7 @@ describe("E2E: $text Search fallback", () => {
     const col = chunksCollection(db, TEST_PREFIX);
     const docs = await col
       .find(
-        { $text: { $search: "TypeScript" }, source: "memory" },
+        { $text: { $search: "TypeScript" }, source: "conversation" },
         {
           projection: {
             path: 1,
@@ -595,7 +595,7 @@ describe("E2E: $text Search fallback", () => {
 
     expect(docs.length).toBeGreaterThan(0);
     for (const doc of docs) {
-      expect(doc.source).toBe("memory");
+      expect(doc.source).toBe("conversation");
     }
   });
 });
@@ -916,7 +916,7 @@ describe("E2E: Transactions (replica set)", () => {
               path: "txn-retry-test",
               text: "transaction test",
               hash: "txn-retry-test-hash",
-              source: "memory",
+              source: "conversation",
               startLine: 1,
               endLine: 5,
               model: "none",
@@ -1139,7 +1139,7 @@ describe("E2E: Change Streams", () => {
       path: "cs-test",
       text: "change stream test",
       hash: "cs-test-hash",
-      source: "memory",
+      source: "conversation",
       startLine: 1,
       endLine: 5,
       model: "none",
@@ -1593,7 +1593,7 @@ describe("E2E v2: migration backfill", () => {
         path: "memory/notes.md",
         text: "Project notes about ClawMongo v1 architecture",
         hash: "abc123hash",
-        source: "memory",
+        source: "conversation",
         startLine: 1,
         endLine: 5,
         model: "none",
@@ -1606,7 +1606,7 @@ describe("E2E v2: migration backfill", () => {
         path: "memory/decisions.md",
         text: "Decision to use MongoDB-only backend",
         hash: "def456hash",
-        source: "memory",
+        source: "conversation",
         startLine: 1,
         endLine: 3,
         model: "none",

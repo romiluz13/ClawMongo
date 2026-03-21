@@ -359,23 +359,6 @@ function createPluginSdkAliasFixture(params?: {
   return { root, srcFile, distFile };
 }
 
-function createExtensionApiAliasFixture(params?: { srcBody?: string; distBody?: string }) {
-  const root = makeTempDir();
-  const srcFile = path.join(root, "src", "extensionAPI.ts");
-  const distFile = path.join(root, "dist", "extensionAPI.js");
-  mkdirSafe(path.dirname(srcFile));
-  mkdirSafe(path.dirname(distFile));
-  fs.writeFileSync(
-    path.join(root, "package.json"),
-    JSON.stringify({ name: "openclaw", type: "module" }, null, 2),
-    "utf-8",
-  );
-  fs.writeFileSync(path.join(root, "openclaw.mjs"), "export {};\n", "utf-8");
-  fs.writeFileSync(srcFile, params?.srcBody ?? "export {};\n", "utf-8");
-  fs.writeFileSync(distFile, params?.distBody ?? "export {};\n", "utf-8");
-  return { root, srcFile, distFile };
-}
-
 function createPluginRuntimeAliasFixture(params?: { srcBody?: string; distBody?: string }) {
   const root = makeTempDir();
   const srcFile = path.join(root, "src", "plugins", "runtime", "index.ts");

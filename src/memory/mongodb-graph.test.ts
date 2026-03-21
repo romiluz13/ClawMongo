@@ -945,7 +945,7 @@ describe("mongodb-graph", () => {
       const linkCalls = (entityLinksCol.updateOne as ReturnType<typeof vi.fn>).mock.calls;
       expect(linkCalls.length).toBeGreaterThan(0);
       const candidateCall = linkCalls.find(
-        ([filter]: [Record<string, unknown>]) => filter.linkType === "candidate_same",
+        (call: unknown[]) => (call[0] as Record<string, unknown>).linkType === "candidate_same",
       );
       expect(candidateCall).toBeDefined();
       expect(candidateCall?.[1].$set.status).toBe("active");

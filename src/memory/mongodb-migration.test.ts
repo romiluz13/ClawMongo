@@ -55,7 +55,7 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Hello from chunk",
         hash: "abc123",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
       {
@@ -112,7 +112,7 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Hello",
         hash: "abc123",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
     ];
@@ -166,7 +166,9 @@ describe("backfillEventsFromChunks", () => {
       agentId: "agent-1",
     });
 
-    const ops2 = vi.mocked(eventsCol.bulkWrite).mock.calls[0][0] as Array<Record<string, unknown>>;
+    const ops2 = [...vi.mocked(eventsCol.bulkWrite).mock.calls[0][0]] as Array<
+      Record<string, unknown>
+    >;
     const secondOp = ops2[0] as { updateOne: { filter: { eventId: string } } };
     expect(secondOp.updateOne.filter.eventId).toBe(eventId1);
   });
@@ -177,7 +179,7 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Preserved text content here",
         hash: "hash1",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
     ];
@@ -207,7 +209,7 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Test",
         hash: "hash1",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
     ];
@@ -237,7 +239,7 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Good chunk",
         hash: "hash1",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
       {
@@ -250,7 +252,7 @@ describe("backfillEventsFromChunks", () => {
       {
         path: "sessions/msg-3",
         hash: "hash3",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-03"),
       },
     ];
@@ -286,21 +288,21 @@ describe("backfillEventsFromChunks", () => {
         path: "sessions/msg-1",
         text: "Valid chunk",
         hash: "hash1",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-01"),
       },
       {
         // missing path entirely
         text: "No path chunk",
         hash: "hash2",
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-02"),
       },
       {
         path: "sessions/msg-3",
         text: "No hash chunk",
         // missing hash entirely
-        source: "memory",
+        source: "conversation",
         updatedAt: new Date("2025-06-03"),
       },
       {

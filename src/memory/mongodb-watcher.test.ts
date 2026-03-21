@@ -390,7 +390,7 @@ describe("MongoDBMemoryManager file watcher", () => {
         conversation: { enabled: true },
         reference: { enabled: false },
         structured: { enabled: false },
-      } as ResolvedMemoryBackendConfig["mongodb"]["sources"],
+      } as NonNullable<ResolvedMemoryBackendConfig["mongodb"]>["sources"],
     });
 
     vi.mocked(syncToMongoDB).mockClear();

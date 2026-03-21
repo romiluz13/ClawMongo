@@ -55,7 +55,7 @@ const SAMPLE_DOCS: Document[] = [
     startLine: 1,
     endLine: 10,
     text: "hello world test content",
-    source: "memory",
+    source: "conversation",
     score: 0.95,
   },
   {
@@ -63,7 +63,7 @@ const SAMPLE_DOCS: Document[] = [
     startLine: 5,
     endLine: 15,
     text: "another test document",
-    source: "memory",
+    source: "conversation",
     score: 0.8,
   },
 ];
@@ -142,8 +142,8 @@ describe("vectorSearch", () => {
 
   it("filters results below minScore", async () => {
     const col = mockCollectionWithResults([
-      { path: "a.md", startLine: 1, endLine: 2, text: "t", source: "memory", score: 0.9 },
-      { path: "b.md", startLine: 1, endLine: 2, text: "t", source: "memory", score: 0.05 },
+      { path: "a.md", startLine: 1, endLine: 2, text: "t", source: "conversation", score: 0.9 },
+      { path: "b.md", startLine: 1, endLine: 2, text: "t", source: "conversation", score: 0.05 },
     ]);
     const results = await vectorSearch(col, null, {
       maxResults: 10,
@@ -169,7 +169,7 @@ describe("vectorSearch", () => {
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const vsStage = pipeline[0].$vectorSearch;
-    expect(vsStage.filter).toEqual({ source: "memory" });
+    expect(vsStage.filter).toEqual({ source: "conversation" });
   });
 
   it("caps numCandidates at 10000 when maxResults would exceed it", async () => {
@@ -364,7 +364,7 @@ describe("hybridSearchJSFallback", () => {
         endLine: 2,
         score: 0.9,
         snippet: "vec",
-        source: "memory" as const,
+        source: "conversation" as const,
       },
     ];
     const kwResults = [
@@ -374,7 +374,7 @@ describe("hybridSearchJSFallback", () => {
         endLine: 4,
         score: 0.8,
         snippet: "kw",
-        source: "memory" as const,
+        source: "conversation" as const,
       },
     ];
 
@@ -394,7 +394,7 @@ describe("hybridSearchJSFallback", () => {
       endLine: 2,
       score: 0.9 - i * 0.01,
       snippet: "t",
-      source: "memory" as const,
+      source: "conversation" as const,
     }));
 
     const merged = hybridSearchJSFallback(vecResults, [], {

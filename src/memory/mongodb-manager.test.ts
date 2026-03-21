@@ -89,9 +89,9 @@ describe("deduplicateSearchResults", () => {
 
   it("removes duplicate results by content, keeping the highest-scoring one", () => {
     const results: MemorySearchResult[] = [
-      makeResult("/a.md", "same content here", 0.9, "memory"),
-      makeResult("/b.md", "same content here", 0.7, "kb"),
-      makeResult("/c.md", "different content", 0.8, "sessions"),
+      makeResult("/a.md", "same content here", 0.9, "conversation"),
+      makeResult("/b.md", "same content here", 0.7, "reference"),
+      makeResult("/c.md", "different content", 0.8, "structured"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -109,9 +109,9 @@ describe("deduplicateSearchResults", () => {
 
   it("keeps all results when no duplicates exist", () => {
     const results: MemorySearchResult[] = [
-      makeResult("/a.md", "first content", 0.9, "memory"),
-      makeResult("/b.md", "second content", 0.7, "kb"),
-      makeResult("/c.md", "third content", 0.5, "sessions"),
+      makeResult("/a.md", "first content", 0.9, "conversation"),
+      makeResult("/b.md", "second content", 0.7, "reference"),
+      makeResult("/c.md", "third content", 0.5, "structured"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -120,11 +120,11 @@ describe("deduplicateSearchResults", () => {
 
   it("handles multiple duplicates correctly", () => {
     const results: MemorySearchResult[] = [
-      makeResult("/a.md", "alpha content", 0.3, "memory"),
-      makeResult("/b.md", "alpha content", 0.9, "kb"),
+      makeResult("/a.md", "alpha content", 0.3, "conversation"),
+      makeResult("/b.md", "alpha content", 0.9, "reference"),
       makeResult("/c.md", "alpha content", 0.5, "structured"),
-      makeResult("/d.md", "beta content", 0.8, "memory"),
-      makeResult("/e.md", "beta content", 0.6, "sessions"),
+      makeResult("/d.md", "beta content", 0.8, "conversation"),
+      makeResult("/e.md", "beta content", 0.6, "structured"),
     ];
 
     const deduped = deduplicateSearchResults(results);
@@ -137,8 +137,8 @@ describe("deduplicateSearchResults", () => {
 
   it("returns dedupCount in the result when logging is needed", () => {
     const results: MemorySearchResult[] = [
-      makeResult("/a.md", "dup content", 0.9, "memory"),
-      makeResult("/b.md", "dup content", 0.7, "kb"),
+      makeResult("/a.md", "dup content", 0.9, "conversation"),
+      makeResult("/b.md", "dup content", 0.7, "reference"),
     ];
 
     // The function should return deduped results — the count of removed duplicates
@@ -466,7 +466,18 @@ describe.skip("searchV2", () => {
     });
 
     vi.mocked(searchEpisodes).mockResolvedValue([
-      { episodeId: "ep-1", title: "Morning standup", summary: "Discussed sprint goals" },
+      {
+        episodeId: "ep-1",
+        title: "Morning standup",
+        summary: "Discussed sprint goals",
+        type: "daily",
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        timeRange: { start: new Date(), end: new Date() },
+        sourceEventCount: 1,
+        updatedAt: new Date(),
+      },
     ]);
 
     const result = await searchV2(fakeDb, fakePrefix, "summarize today", "agent-1", {
@@ -492,7 +503,15 @@ describe.skip("searchV2", () => {
 
     // Raw-window succeeds
     vi.mocked(getEventsByTimeRange).mockResolvedValue([
-      { eventId: "e-1", body: "recent event", role: "user", timestamp: new Date() },
+      {
+        eventId: "e-1",
+        body: "recent event",
+        role: "user",
+        timestamp: new Date(),
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+      },
     ]);
 
     const result = await searchV2(fakeDb, fakePrefix, "what happened recently", "agent-1", {
@@ -513,14 +532,42 @@ describe.skip("searchV2", () => {
     });
 
     vi.mocked(findEntitiesByName).mockResolvedValue([
-      { entityId: "ent-1", name: "Alice", type: "person" },
+      {
+        entityId: "ent-1",
+        name: "Alice",
+        type: "person",
+        agentId: "agent-1",
+        scope: "agent",
+        updatedAt: new Date(),
+      },
     ]);
     vi.mocked(expandGraph).mockResolvedValue({
-      rootEntity: { entityId: "ent-1", name: "Alice" },
+      rootEntity: {
+        entityId: "ent-1",
+        name: "Alice",
+        type: "person",
+        agentId: "agent-1",
+        scope: "agent",
+        updatedAt: new Date(),
+      },
       connections: [
         {
-          entity: { entityId: "ent-2", name: "ProjectX" },
-          relation: { fromEntityId: "ent-1", toEntityId: "ent-2", type: "works_on" },
+          entity: {
+            entityId: "ent-2",
+            name: "ProjectX",
+            type: "project",
+            agentId: "agent-1",
+            scope: "agent",
+            updatedAt: new Date(),
+          },
+          relation: {
+            fromEntityId: "ent-1",
+            toEntityId: "ent-2",
+            type: "works_on",
+            agentId: "agent-1",
+            scope: "agent",
+            updatedAt: new Date(),
+          },
           depth: 0,
         },
       ],
@@ -622,7 +669,7 @@ describe.skip("getV2Status", () => {
     const mockCol = {
       countDocuments: mockCountDocuments,
       findOne: mockFindOne,
-    };
+    } as unknown as import("mongodb").Collection<import("mongodb").Document>;
 
     vi.mocked(eventsCollection).mockReturnValue(mockCol);
     vi.mocked(entitiesCollection).mockReturnValue(mockCol);
@@ -656,11 +703,11 @@ describe.skip("getV2Status", () => {
     const workingCol = {
       countDocuments: vi.fn().mockResolvedValue(10),
       findOne: vi.fn().mockResolvedValue({ timestamp: new Date("2026-03-15T12:00:00Z") }),
-    };
+    } as unknown as import("mongodb").Collection<import("mongodb").Document>;
     const failingCol = {
       countDocuments: vi.fn().mockRejectedValue(new Error("connection lost")),
       findOne: vi.fn().mockRejectedValue(new Error("connection lost")),
-    };
+    } as unknown as import("mongodb").Collection<import("mongodb").Document>;
 
     vi.mocked(eventsCollection).mockReturnValue(workingCol);
     vi.mocked(entitiesCollection).mockReturnValue(failingCol);

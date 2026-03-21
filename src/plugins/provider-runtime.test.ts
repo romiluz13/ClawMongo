@@ -277,11 +277,11 @@ describe("provider-runtime", () => {
         modelId: MODEL.id,
         streamFn: async function* () {
           yield "ok";
-        },
+        } as unknown as import("@mariozechner/pi-agent-core").StreamFn,
       },
     });
     const chunks: string[] = [];
-    for await (const chunk of wrapped()) {
+    for await (const chunk of (wrapped as unknown as () => AsyncIterable<unknown>)()) {
       chunks.push(chunk as string);
     }
     expect(chunks).toEqual(["ok"]);
@@ -322,7 +322,10 @@ describe("provider-runtime", () => {
         provider: "demo",
         context: {
           type: "oauth",
+          provider: "demo",
           access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 3600000,
         },
       }),
     ).toMatchObject({
@@ -367,7 +370,10 @@ describe("provider-runtime", () => {
         provider: "demo",
         context: {
           type: "oauth",
+          provider: "demo",
           access: "access-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 3600000,
         },
       }),
     ).toBe('{"token":"access-token"}');

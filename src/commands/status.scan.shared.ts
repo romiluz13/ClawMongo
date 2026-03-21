@@ -109,7 +109,7 @@ export async function resolveSharedMemoryStatusSnapshot(params: {
   resolveMemoryConfig: (
     cfg: OpenClawConfig,
     agentId: string,
-  ) => { store?: { path?: string } } | null;
+  ) => ({ store?: { path?: string } } & Record<string, unknown>) | null;
   getMemorySearchManager: (params: {
     cfg: OpenClawConfig;
     agentId: string;
