@@ -26,7 +26,7 @@ automatic flush), see [Memory](/concepts/memory).
   4. `voyage` if a Voyage key can be resolved.
   5. `mistral` if a Mistral key can be resolved.
   6. Otherwise memory search stays disabled until configured.
-- Local mode uses node-llama-cpp and may require `pnpm approve-builds`.
+- ClawMongo uses Voyage AI automated embeddings through mongot (no local embedding setup needed).
 - In ClawMongo, vector search is handled by MongoDB Atlas Search (mongot) with automated embeddings.
 - `memorySearch.provider = "ollama"` is also supported for local/self-hosted
   Ollama embeddings (`/api/embeddings`), but it is not auto-selected.
@@ -551,12 +551,15 @@ automatically via `ensureSearchIndexes()`.
 - Fallback: when vector search is unavailable (e.g., standalone without
   mongot), ClawMongo falls back to `$text` search (BM25).
 
-## Local embedding auto-download
+## Automated embeddings (Voyage AI)
 
-- Default local embedding model: `hf:ggml-org/embeddinggemma-300m-qat-q8_0-GGUF/embeddinggemma-300m-qat-Q8_0.gguf` (~0.6 GB).
-- When `memorySearch.provider = "local"`, `node-llama-cpp` resolves `modelPath`; if the GGUF is missing it **auto-downloads** to the cache (or `local.modelCacheDir` if set), then loads it. Downloads resume on retry.
-- Native build requirement: run `pnpm approve-builds`, pick `node-llama-cpp`, then `pnpm rebuild node-llama-cpp`.
-- Fallback: if local setup fails and `memorySearch.fallback = "openai"`, we automatically switch to remote embeddings (`openai/text-embedding-3-small` unless overridden) and record the reason.
+ClawMongo uses MongoDB's automated embedding feature with Voyage AI:
+
+- **Index-time**: mongot generates embeddings when documents are inserted/updated, using the Voyage AI endpoint configured in the mongot config.
+- **Query-time**: `$vectorSearch` with `queryText` triggers automated embedding for the search query.
+- **Models**: `voyage-4-large` (recommended for high accuracy) or `voyage-4` (faster, smaller).
+- **Key separation**: MongoDB recommends separate Voyage API keys for indexing and querying. Configure via `VOYAGE_API_INDEXING_KEY` and `VOYAGE_API_QUERY_KEY` in the Docker setup.
+- **No local embedding needed**: Unlike upstream OpenClaw which uses node-llama-cpp / GGUF models, ClawMongo delegates all embedding to Voyage AI through mongot.
 
 ## Custom OpenAI-compatible endpoint example
 
