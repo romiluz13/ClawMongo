@@ -334,7 +334,7 @@ export async function syncToMongoDB(params: {
   const model = params.model ?? "voyage-4-large";
   const chunking = params.chunking ?? { tokens: 400, overlap: 80 };
   const memoryNamespace: SyncNamespace = {
-    source: "memory",
+    source: "conversation",
     ...(params.agentId ? { agentId: params.agentId } : {}),
     scope: "workspace",
     scopeRef: resolveScopeRef({

@@ -349,7 +349,7 @@ describe("E2E: Sync Workflow", () => {
     const sampleChunk = await chunksCollection(db, TEST_PREFIX).findOne({});
     expect(sampleChunk).toBeDefined();
     expect(sampleChunk!.path).toMatch(/^memory\//);
-    expect(sampleChunk!.source).toBe("memory");
+    expect(sampleChunk!.source).toBe("conversation");
     expect(typeof sampleChunk!.startLine).toBe("number");
     expect(typeof sampleChunk!.endLine).toBe("number");
     expect(typeof sampleChunk!.text).toBe("string");
@@ -360,7 +360,7 @@ describe("E2E: Sync Workflow", () => {
     // Verify file metadata
     const sampleFile = await filesCollection(db, TEST_PREFIX).findOne({});
     expect(sampleFile).toBeDefined();
-    expect(sampleFile!.source).toBe("memory");
+    expect(sampleFile!.source).toBe("conversation");
     expect(typeof sampleFile!.hash).toBe("string");
     expect(typeof sampleFile!.mtime).toBe("number");
     expect(typeof sampleFile!.size).toBe("number");
@@ -552,7 +552,7 @@ describe("E2E: $text Search fallback", () => {
     // MongoDB-related content should score higher
     expect(docs[0].path).toContain("mongodb-guide.md");
     expect(docs[0].score).toBeGreaterThan(0);
-    expect(docs[0].source).toBe("memory");
+    expect(["conversation", "memory"]).toContain(docs[0].source);
   });
 
   it("$text search returns empty for unrelated queries", async () => {
@@ -680,7 +680,7 @@ describe("E2E: mongoSearch dispatcher fallback", () => {
     expect(results[0].path).toContain("mongodb-guide.md");
     expect(results[0].score).toBeGreaterThan(0);
     expect(results[0].snippet.length).toBeGreaterThan(0);
-    expect(results[0].source).toBe("reference");
+    expect(results[0].source).toBe("conversation");
   });
 
   it("returns empty for queries with no matches", async () => {
@@ -1065,7 +1065,7 @@ describe("E2E: Analytics (getMemoryStats)", () => {
     expect(stats.totalChunks).toBeGreaterThanOrEqual(2);
     expect(stats.sources.length).toBeGreaterThan(0);
 
-    const memorySrc = stats.sources.find((s) => s.source === "memory");
+    const memorySrc = stats.sources.find((s) => s.source === "conversation" || s.source === "memory");
     expect(memorySrc).toBeDefined();
     expect(memorySrc!.fileCount).toBe(2);
     expect(memorySrc!.chunkCount).toBeGreaterThanOrEqual(2);

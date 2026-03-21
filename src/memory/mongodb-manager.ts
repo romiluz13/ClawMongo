@@ -510,7 +510,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
   private buildBridgeChunkFilter(): Document {
     return {
-      source: "memory",
+      source: { $in: ["conversation", "memory"] },
       agentId: this.agentId,
       scope: "workspace",
       scopeRef: this.workspaceScopeRef,
@@ -1662,7 +1662,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const docs = await chunksCollection(this.db, this.prefix)
       .find({
         path: rawPath,
-        source: "memory",
+        source: { $in: ["conversation", "memory"] },
         agentId: this.agentId,
         scope: "workspace",
         scopeRef: this.workspaceScopeRef,
