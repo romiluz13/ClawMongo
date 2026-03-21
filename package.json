@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.21",
+  "version": "2026.3.22",
   "description": "MongoDB-first multi-channel agent runtime built on OpenClaw",
   "keywords": [],
   "homepage": "https://github.com/romiluz13/ClawMongo#readme",
