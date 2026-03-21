@@ -27,7 +27,7 @@ automatic flush), see [Memory](/concepts/memory).
   5. `mistral` if a Mistral key can be resolved.
   6. Otherwise memory search stays disabled until configured.
 - Local mode uses node-llama-cpp and may require `pnpm approve-builds`.
-- Uses sqlite-vec (when available) to accelerate vector search inside SQLite.
+- In ClawMongo, vector search is handled by MongoDB Atlas Search (mongot) with automated embeddings.
 - `memorySearch.provider = "ollama"` is also supported for local/self-hosted
   Ollama embeddings (`/api/embeddings`), but it is not auto-selected.
 
@@ -43,146 +43,52 @@ local policy).
 When using a custom OpenAI-compatible endpoint,
 set `memorySearch.remote.apiKey` (and optional `memorySearch.remote.headers`).
 
-## QMD backend (experimental)
+## MongoDB backend (ClawMongo)
 
-Set `memory.backend = "qmd"` to swap the built-in SQLite indexer for
-[QMD](https://github.com/tobi/qmd): a local-first search sidecar that combines
-BM25 + vectors + reranking. Markdown stays the source of truth; OpenClaw shells
-out to QMD for retrieval. Key points:
+ClawMongo uses MongoDB as the **only** canonical runtime memory backend.
+Set `memory.backend = "mongodb"` (this is the default and only valid value).
 
 ### Prerequisites
 
-- Disabled by default. Opt in per-config (`memory.backend = "qmd"`).
-- Install the QMD CLI separately (`bun install -g https://github.com/tobi/qmd` or grab
-  a release) and make sure the `qmd` binary is on the gateway's `PATH`.
-- QMD needs an SQLite build that allows extensions (`brew install sqlite` on
-  macOS).
-- QMD runs fully locally via Bun + `node-llama-cpp` and auto-downloads GGUF
-  models from HuggingFace on first use (no separate Ollama daemon required).
-- The gateway runs QMD in a self-contained XDG home under
-  `~/.openclaw/agents/<agentId>/qmd/` by setting `XDG_CONFIG_HOME` and
-  `XDG_CACHE_HOME`.
-- OS support: macOS and Linux work out of the box once Bun + SQLite are
-  installed. Windows is best supported via WSL2.
+- A MongoDB 7+ instance (Community or Atlas). Replica set required for transactions and change streams.
+- For vector search: mongot (Atlas Search) running alongside mongod.
+- For automated embeddings: Voyage AI API key (`VOYAGE_API_KEY`).
+- See `docker/mongodb/` for the Docker Compose setup with all three tiers (standalone, replicaset, fullstack).
 
-### How the sidecar runs
+### How MongoDB memory works
 
-- The gateway writes a self-contained QMD home under
-  `~/.openclaw/agents/<agentId>/qmd/` (config + cache + sqlite DB).
-- Collections are created via `qmd collection add` from `memory.qmd.paths`
-  (plus default workspace memory files), then `qmd update` + `qmd embed` run
-  on boot and on a configurable interval (`memory.qmd.update.interval`,
-  default 5 m).
-- The gateway now initializes the QMD manager on startup, so periodic update
-  timers are armed even before the first `memory_search` call.
-- Boot refresh now runs in the background by default so chat startup is not
-  blocked; set `memory.qmd.update.waitForBootSync = true` to keep the previous
-  blocking behavior.
-- Searches run via `memory.qmd.searchMode` (default `qmd search --json`; also
-  supports `vsearch` and `query`). If the selected mode rejects flags on your
-  QMD build, OpenClaw retries with `qmd query`. If QMD fails or the binary is
-  missing, OpenClaw automatically falls back to the builtin SQLite manager so
-  memory tools keep working.
-- OpenClaw does not expose QMD embed batch-size tuning today; batch behavior is
-  controlled by QMD itself.
-- **First search may be slow**: QMD may download local GGUF models (reranker/query
-  expansion) on the first `qmd query` run.
-  - OpenClaw sets `XDG_CONFIG_HOME`/`XDG_CACHE_HOME` automatically when it runs QMD.
-  - If you want to pre-download models manually (and warm the same index OpenClaw
-    uses), run a one-off query with the agent's XDG dirs.
+- **Canonical events**: Conversation turns persist directly to the `events` collection via `persistConversationMessageToMongo`. No disk intermediary.
+- **Chunk projection**: Events are projected into searchable chunks in the `chunks` collection.
+- **Bridge sync**: Workspace Markdown files (`MEMORY.md`, `memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval.
+- **Vector search**: Handled by mongot (Atlas Search) with `$vectorSearch`. Automated embeddings via Voyage AI generate vectors at index-time and query-time.
+- **Text search**: `$text` indexes provide BM25 keyword search as a fallback when vector search is unavailable.
+- **Hybrid search**: `$rankFusion` / `$scoreFusion` combine vector and keyword results when both are available.
+- **Graph**: Entity/relation storage with `$graphLookup` for bounded graph expansion.
+- **Episodes**: Auto-materialized from event streams for navigable conversation summaries.
+- **Structured memory**: Durable facts with salience, temporal validity, provenance, and supersession tracking.
 
-    OpenClaw's QMD state lives under your **state dir** (defaults to `~/.openclaw`).
-    You can point `qmd` at the exact same index by exporting the same XDG vars
-    OpenClaw uses:
+### Config surface (`memory.mongodb.*`)
 
-    ```bash
-    # Pick the same state dir OpenClaw uses
-    STATE_DIR="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+- `uri`: MongoDB connection string (e.g., `mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0`).
+- `database`: Database name (default: derived from connection string).
+- `prefix`: Collection prefix for namespace isolation (default: agent-scoped).
 
-    export XDG_CONFIG_HOME="$STATE_DIR/agents/main/qmd/xdg-config"
-    export XDG_CACHE_HOME="$STATE_DIR/agents/main/qmd/xdg-cache"
-
-    # (Optional) force an index refresh + embeddings
-    qmd update
-    qmd embed
-
-    # Warm up / trigger first-time model downloads
-    qmd query "test" -c memory-root --json >/dev/null 2>&1
-    ```
-
-### Config surface (`memory.qmd.*`)
-
-- `command` (default `qmd`): override the executable path.
-- `searchMode` (default `search`): pick which QMD command backs
-  `memory_search` (`search`, `vsearch`, `query`).
-- `includeDefaultMemory` (default `true`): auto-index `MEMORY.md` + `memory/**/*.md`.
-- `paths[]`: add extra directories/files (`path`, optional `pattern`, optional
-  stable `name`).
-- `sessions`: opt into session JSONL indexing (`enabled`, `retentionDays`,
-  `exportDir`).
-- `update`: controls refresh cadence and maintenance execution:
-  (`interval`, `debounceMs`, `onBoot`, `waitForBootSync`, `embedInterval`,
-  `commandTimeoutMs`, `updateTimeoutMs`, `embedTimeoutMs`).
-- `limits`: clamp recall payload (`maxResults`, `maxSnippetChars`,
-  `maxInjectedChars`, `timeoutMs`).
-- `scope`: same schema as [`session.sendPolicy`](/gateway/configuration-reference#session).
-  Default is DM-only (`deny` all, `allow` direct chats); loosen it to surface QMD
-  hits in groups/channels.
-  - `match.keyPrefix` matches the **normalized** session key (lowercased, with any
-    leading `agent:<id>:` stripped). Example: `discord:channel:`.
-  - `match.rawKeyPrefix` matches the **raw** session key (lowercased), including
-    `agent:<id>:`. Example: `agent:main:discord:`.
-  - Legacy: `match.keyPrefix: "agent:..."` is still treated as a raw-key prefix,
-    but prefer `rawKeyPrefix` for clarity.
-- When `scope` denies a search, OpenClaw logs a warning with the derived
-  `channel`/`chatType` so empty results are easier to debug.
-- Snippets sourced outside the workspace show up as
-  `qmd/<collection>/<relative-path>` in `memory_search` results; `memory_get`
-  understands that prefix and reads from the configured QMD collection root.
-- When `memory.qmd.sessions.enabled = true`, OpenClaw exports sanitized session
-  transcripts (User/Assistant turns) into a dedicated QMD collection under
-  `~/.openclaw/agents/<id>/qmd/sessions/`, so `memory_search` can recall recent
-  conversations without touching the builtin SQLite index.
-- `memory_search` snippets now include a `Source: <path#line>` footer when
-  `memory.citations` is `auto`/`on`; set `memory.citations = "off"` to keep
-  the path metadata internal (the agent still receives the path for
-  `memory_get`, but the snippet text omits the footer and the system prompt
-  warns the agent not to cite it).
-
-### QMD example
+### MongoDB example
 
 ```json5
 memory: {
-  backend: "qmd",
+  backend: "mongodb",
   citations: "auto",
-  qmd: {
-    includeDefaultMemory: true,
-    update: { interval: "5m", debounceMs: 15000 },
-    limits: { maxResults: 6, timeoutMs: 4000 },
-    scope: {
-      default: "deny",
-      rules: [
-        { action: "allow", match: { chatType: "direct" } },
-        // Normalized session-key prefix (strips `agent:<id>:`).
-        { action: "deny", match: { keyPrefix: "discord:channel:" } },
-        // Raw session-key prefix (includes `agent:<id>:`).
-        { action: "deny", match: { rawKeyPrefix: "agent:main:discord:" } },
-      ]
-    },
-    paths: [
-      { name: "docs", path: "~/notes", pattern: "**/*.md" }
-    ]
+  mongodb: {
+    uri: "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true"
   }
 }
 ```
 
-### Citations and fallback
+### Citations
 
-- `memory.citations` applies regardless of backend (`auto`/`on`/`off`).
-- When `qmd` runs, we tag `status().backend = "qmd"` so diagnostics show which
-  engine served the results. If the QMD subprocess exits or JSON output can't be
-  parsed, the search manager logs a warning and returns the builtin provider
-  (existing Markdown embeddings) until QMD recovers.
+- `memory.citations` controls citation visibility (`auto`/`on`/`off`).
+- `status().backend = "mongodb"` in diagnostics confirms the MongoDB backend is active.
 
 ## Additional memory paths
 
@@ -632,37 +538,18 @@ agents: {
 }
 ```
 
-## SQLite vector acceleration (sqlite-vec)
+## Vector search (MongoDB Atlas Search)
 
-When the sqlite-vec extension is available, OpenClaw stores embeddings in a
-SQLite virtual table (`vec0`) and performs vector distance queries in the
-database. This keeps search fast without loading every embedding into JS.
+ClawMongo uses MongoDB Atlas Search (mongot) for vector similarity queries.
+Vector indexes are defined in `src/memory/mongodb-schema.ts` and created
+automatically via `ensureSearchIndexes()`.
 
-Configuration (optional):
-
-```json5
-agents: {
-  defaults: {
-    memorySearch: {
-      store: {
-        vector: {
-          enabled: true,
-          extensionPath: "/path/to/sqlite-vec"
-        }
-      }
-    }
-  }
-}
-```
-
-Notes:
-
-- `enabled` defaults to true; when disabled, search falls back to in-process
-  cosine similarity over stored embeddings.
-- If the sqlite-vec extension is missing or fails to load, OpenClaw logs the
-  error and continues with the JS fallback (no vector table).
-- `extensionPath` overrides the bundled sqlite-vec path (useful for custom builds
-  or non-standard install locations).
+- Automated embeddings: mongot generates vectors at index-time using
+  the configured Voyage AI endpoint. No separate embedding step needed.
+- Query-time embeddings: `$vectorSearch` with `queryText` triggers
+  automated embedding at query time.
+- Fallback: when vector search is unavailable (e.g., standalone without
+  mongot), ClawMongo falls back to `$text` search (BM25).
 
 ## Local embedding auto-download
 
