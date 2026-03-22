@@ -75,6 +75,17 @@ export type MemoryMongoDBConfig = {
     /** Max depth for $graphLookup. Default: 2 */
     maxGraphDepth?: number;
   };
+  /** Semantic query cache configuration */
+  cache?: {
+    /** Enable query caching. Default: true */
+    enabled?: boolean;
+    /** TTL for conversation scope cache entries in seconds. Default: 300 (5 min) */
+    conversationTtlSec?: number;
+    /** TTL for KB scope cache entries in seconds. Default: 3600 (1 hour) */
+    kbTtlSec?: number;
+    /** Cosine similarity threshold for semantic cache hits. Default: 0.95 */
+    similarityThreshold?: number;
+  };
   /** Explain-driven relevance settings */
   relevance?: {
     /** Master switch for relevance diagnostics + telemetry. Default: true */

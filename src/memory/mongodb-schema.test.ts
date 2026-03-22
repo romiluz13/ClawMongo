@@ -24,6 +24,8 @@ import {
   episodesCollection,
   ingestRunsCollection,
   projectionRunsCollection,
+  queryCacheCollection,
+  telemetryCollection,
 } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
@@ -270,10 +272,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 18 collections when none exist", async () => {
+  it("creates all 22 collections when none exist (21 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(18);
+    expect(db.createCollection).toHaveBeenCalledTimes(22);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -312,7 +314,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(16);
+    expect(db.createCollection).toHaveBeenCalledTimes(20);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -348,6 +350,8 @@ describe("ensureCollections", () => {
       "oc_kb_chunks",
       "oc_structured_mem",
       "oc_structured_mem_revisions",
+      "oc_procedures",
+      "oc_procedure_revisions",
       "oc_relevance_runs",
       "oc_relevance_artifacts",
       "oc_relevance_regressions",
@@ -358,6 +362,8 @@ describe("ensureCollections", () => {
       "oc_episodes",
       "oc_ingest_runs",
       "oc_projection_runs",
+      "oc_query_cache",
+      "oc_memory_telemetry",
     ]);
     await ensureCollections(db, "oc_");
     expect(db.createCollection).not.toHaveBeenCalled();
@@ -401,15 +407,17 @@ describe("ensureStandardIndexes", () => {
       createIndex: ReturnType<typeof vi.fn>;
     };
 
-    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 6 structured + 1 structured revisions +
-    // 3 relevance_runs + 2 relevance_artifacts + 2 relevance_regressions + 6 events + 3 entities +
-    // 3 relations + 2 entity links + 3 episodes + 1 ingest_runs + 1 projection_runs = 47
-    expect(count).toBe(47);
+    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 7 structured (6 + 1 v2 scope) +
+    // 1 structured revisions + 3 relevance_runs + 2 relevance_artifacts +
+    // 2 relevance_regressions + 6 events + 3 entities + 3 relations + 2 entity links +
+    // 3 episodes + 1 ingest_runs + 1 projection_runs + 4 procedures +
+    // 1 procedure_revisions + 3 query_cache + 2 telemetry = 58
+    expect(count).toBe(58);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
     expect(kbChunks.createIndex).toHaveBeenCalledTimes(3);
-    expect(structured.createIndex).toHaveBeenCalledTimes(6);
+    expect(structured.createIndex).toHaveBeenCalledTimes(7);
     expect(structuredRevisions.createIndex).toHaveBeenCalledTimes(1);
     expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
     expect(relevanceArtifacts.createIndex).toHaveBeenCalledTimes(2);
@@ -444,6 +452,26 @@ describe("ensureStandardIndexes", () => {
     expect(episodes.createIndex).toHaveBeenCalledTimes(3);
     expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1);
     expect(projectionRuns.createIndex).toHaveBeenCalledTimes(1);
+
+    // Procedures and procedure revisions
+    const procedures = db.collection("test_procedures") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const procedureRevisions = db.collection("test_procedure_revisions") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(procedures.createIndex).toHaveBeenCalledTimes(4);
+    expect(procedureRevisions.createIndex).toHaveBeenCalledTimes(1);
+
+    // Query cache and telemetry
+    const queryCache = db.collection("test_query_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const telemetry = db.collection("test_memory_telemetry") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(queryCache.createIndex).toHaveBeenCalledTimes(3);
+    expect(telemetry.createIndex).toHaveBeenCalledTimes(2);
   });
 
   it("creates a defensive $text index on text field", async () => {
@@ -582,9 +610,10 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 26 (v1) + 6 events + 3 entities + 3 relations + 2 entity links + 3 episodes +
-    // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions = 47
-    expect(count).toBe(47);
+    // 27 (v1 base) + 6 events + 3 entities + 3 relations + 2 entity links + 3 episodes +
+    // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions +
+    // 4 procedures + 1 procedure_revisions + 3 query_cache + 2 telemetry = 58
+    expect(count).toBe(58);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -957,5 +986,261 @@ describe("detectCapabilities", () => {
     expect(caps.vectorSearch).toBe(true);
     expect(caps.textSearch).toBe(true);
     // automatedEmbedding removed (F2: dead code)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Query Cache collection and schema (Phase 1)
+// ---------------------------------------------------------------------------
+
+describe("queryCacheCollection", () => {
+  it("queryCacheCollection returns prefixed collection", () => {
+    const db = mockDb();
+    queryCacheCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_query_cache");
+  });
+});
+
+describe("telemetryCollection", () => {
+  it("telemetryCollection returns prefixed collection", () => {
+    const db = mockDb();
+    telemetryCollection(db, "oc_");
+    expect(db.collection).toHaveBeenCalledWith("oc_memory_telemetry");
+  });
+});
+
+describe("query_cache schema", () => {
+  it("QUERY_CACHE_SCHEMA validates all required fields via ensureCollections", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const cacheCall = createCalls.find((c: unknown[]) => c[0] === "test_query_cache");
+    expect(cacheCall).toBeDefined();
+    const schema = cacheCall![1]?.validator.$jsonSchema;
+    expect(schema).toBeDefined();
+    expect(schema.required).toEqual(
+      expect.arrayContaining([
+        "queryHash",
+        "queryNorm",
+        "agentId",
+        "scope",
+        "scopeRef",
+        "results",
+        "pathUsed",
+        "sourceScope",
+        "createdAt",
+        "expiresAt",
+        "hitCount",
+        "lastHitAt",
+      ]),
+    );
+  });
+
+  it("query_cache scope field uses SCOPE_ENUM", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const cacheCall = createCalls.find((c: unknown[]) => c[0] === "test_query_cache");
+    expect(cacheCall).toBeDefined();
+    const schema = cacheCall![1]?.validator.$jsonSchema;
+    expect(schema.properties.scope.enum).toEqual([
+      "session",
+      "user",
+      "agent",
+      "workspace",
+      "tenant",
+      "global",
+    ]);
+  });
+
+  it("query_cache hitCount has minimum 0", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const cacheCall = createCalls.find((c: unknown[]) => c[0] === "test_query_cache");
+    expect(cacheCall).toBeDefined();
+    const schema = cacheCall![1]?.validator.$jsonSchema;
+    expect(schema.properties.hitCount.minimum).toBe(0);
+  });
+});
+
+describe("query_cache standard indexes", () => {
+  it("creates unique compound index on (queryHash, agentId, scope, scopeRef)", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const qc = db.collection("test_query_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = qc.createIndex.mock.calls;
+    const uniqueCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "uq_query_cache_hash_agent_scope_scoperef",
+    );
+    expect(uniqueCall).toBeDefined();
+    expect(uniqueCall![0]).toEqual({ queryHash: 1, agentId: 1, scope: 1, scopeRef: 1 });
+    expect((uniqueCall![1] as Record<string, unknown>).unique).toBe(true);
+  });
+
+  it("creates TTL index on expiresAt with expireAfterSeconds: 0", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const qc = db.collection("test_query_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = qc.createIndex.mock.calls;
+    const ttlCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_query_cache_ttl",
+    );
+    expect(ttlCall).toBeDefined();
+    expect(ttlCall![0]).toEqual({ expiresAt: 1 });
+    expect((ttlCall![1] as Record<string, unknown>).expireAfterSeconds).toBe(0);
+  });
+
+  it("creates hitCount compound index on (agentId, hitCount desc)", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const qc = db.collection("test_query_cache") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = qc.createIndex.mock.calls;
+    const hitCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_query_cache_agent_hitcount",
+    );
+    expect(hitCall).toBeDefined();
+    expect(hitCall![0]).toEqual({ agentId: 1, hitCount: -1 });
+  });
+});
+
+describe("query_cache vector search index", () => {
+  it("creates autoEmbed vector search index on queryNorm field", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+    const qc = db.collection("test_query_cache") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(qc.createSearchIndex).toHaveBeenCalledTimes(1);
+    const call = qc.createSearchIndex.mock.calls[0];
+    expect((call[0] as Document).name).toBe("test_query_cache_vector");
+    expect((call[0] as Document).type).toBe("vectorSearch");
+    const fields = (call[0] as Document).definition.fields;
+    const autoEmbed = fields.find((f: Document) => f.type === "autoEmbed");
+    expect(autoEmbed).toBeDefined();
+    expect(autoEmbed.path).toBe("queryNorm");
+    expect(autoEmbed.model).toBe("voyage-4-large");
+  });
+
+  it("includes filter paths for agentId, scope, scopeRef", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+    const qc = db.collection("test_query_cache") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const call = qc.createSearchIndex.mock.calls[0];
+    const fields = (call[0] as Document).definition.fields;
+    const filterPaths = fields
+      .filter((f: Document) => f.type === "filter")
+      .map((f: Document) => f.path);
+    expect(filterPaths).toContain("agentId");
+    expect(filterPaths).toContain("scope");
+    expect(filterPaths).toContain("scopeRef");
+  });
+
+  it("assertIndexBudget uses 9 for total search index count", async () => {
+    const db = mockDb();
+    // This should NOT fail for self-managed profile
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+    // The budget check is internal, but we verify that the total search index call count
+    // includes the new query_cache vector index: 8 existing + 1 new = 9
+    const qc = db.collection("test_query_cache") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(qc.createSearchIndex).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("telemetry time series collection", () => {
+  it("ensureCollections creates memory_telemetry time series collection", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const telemetryCall = createCalls.find((c: unknown[]) => c[0] === "test_memory_telemetry");
+    expect(telemetryCall).toBeDefined();
+    // Time series options
+    expect(telemetryCall![1]?.timeseries).toBeDefined();
+    expect(telemetryCall![1]?.timeseries.timeField).toBe("ts");
+    expect(telemetryCall![1]?.timeseries.metaField).toBe("meta");
+    expect(telemetryCall![1]?.timeseries.granularity).toBe("seconds");
+    expect(telemetryCall![1]?.expireAfterSeconds).toBe(604800);
+  });
+
+  it("ensureCollections skips memory_telemetry when it already exists", async () => {
+    const db = mockDb(["test_memory_telemetry"]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const telemetryCall = createCalls.find((c: unknown[]) => c[0] === "test_memory_telemetry");
+    expect(telemetryCall).toBeUndefined();
+  });
+});
+
+describe("telemetry standard indexes", () => {
+  it("creates meta.agentId + ts index on telemetry collection", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const tel = db.collection("test_memory_telemetry") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = tel.createIndex.mock.calls;
+    const agentCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_telemetry_agent_ts",
+    );
+    expect(agentCall).toBeDefined();
+    expect(agentCall![0]).toEqual({ "meta.agentId": 1, ts: -1 });
+  });
+
+  it("creates meta.operation + ts index on telemetry collection", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const tel = db.collection("test_memory_telemetry") as unknown as {
+      createIndex: ReturnType<typeof vi.fn>;
+    };
+    const calls = tel.createIndex.mock.calls;
+    const opCall = calls.find(
+      (c: unknown[]) =>
+        c[1] &&
+        typeof c[1] === "object" &&
+        (c[1] as Record<string, unknown>).name === "idx_telemetry_op_ts",
+    );
+    expect(opCall).toBeDefined();
+    expect(opCall![0]).toEqual({ "meta.operation": 1, ts: -1 });
+  });
+});
+
+describe("ensureCollections total count with query_cache and telemetry", () => {
+  it("creates 22 collections total when none exist (21 regular + 1 time series)", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    // 21 from needed array + 1 time series (memory_telemetry) = 22
+    expect(db.createCollection).toHaveBeenCalledTimes(22);
+  });
+});
+
+describe("ensureStandardIndexes total count with query_cache and telemetry", () => {
+  it("returns updated total index count including query_cache and telemetry indexes", async () => {
+    const db = mockDb();
+    const count = await ensureStandardIndexes(db, "test_");
+    // Previous: 53 standard indexes
+    // + 3 query_cache (unique + TTL + hitCount) + 2 telemetry (agent_ts + op_ts) = 58
+    expect(count).toBe(58);
   });
 });

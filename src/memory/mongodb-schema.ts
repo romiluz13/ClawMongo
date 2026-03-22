@@ -115,6 +115,14 @@ export function projectionRunsCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "projection_runs");
 }
 
+export function queryCacheCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "query_cache");
+}
+
+export function telemetryCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "memory_telemetry");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -653,6 +661,40 @@ const PROJECTION_RUNS_SCHEMA: Document = {
   },
 };
 
+const QUERY_CACHE_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: [
+      "queryHash",
+      "queryNorm",
+      "agentId",
+      "scope",
+      "scopeRef",
+      "results",
+      "pathUsed",
+      "sourceScope",
+      "createdAt",
+      "expiresAt",
+      "hitCount",
+      "lastHitAt",
+    ],
+    properties: {
+      queryHash: { bsonType: "string", description: "SHA-256 of normalized query" },
+      queryNorm: { bsonType: "string", description: "Normalized query text (autoEmbed source)" },
+      agentId: { bsonType: "string", description: "Agent that generated this cache entry" },
+      scope: { enum: SCOPE_ENUM, description: "Memory scope" },
+      scopeRef: { bsonType: "string", description: "Resolved scope namespace" },
+      results: { bsonType: "array", description: "Cached MemorySearchResult[]" },
+      pathUsed: { bsonType: "string", description: "Retrieval path that produced results" },
+      sourceScope: { bsonType: "string", description: "Source scope for cache partitioning" },
+      createdAt: { bsonType: "date" },
+      expiresAt: { bsonType: "date", description: "Per-document TTL expiry" },
+      hitCount: { bsonType: "number", minimum: 0 },
+      lastHitAt: { bsonType: "date" },
+    },
+  },
+};
+
 const VALIDATED_COLLECTIONS: Record<string, Document> = {
   chunks: CHUNKS_SCHEMA,
   knowledge_base: KB_SCHEMA,
@@ -671,6 +713,7 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   episodes: EPISODES_SCHEMA,
   ingest_runs: INGEST_RUNS_SCHEMA,
   projection_runs: PROJECTION_RUNS_SCHEMA,
+  query_cache: QUERY_CACHE_SCHEMA,
 };
 
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
@@ -701,6 +744,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "episodes",
     "ingest_runs",
     "projection_runs",
+    "query_cache",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -719,6 +763,28 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
       log.info(`created collection ${name}`);
     }
   }
+  // Time series collection — created separately (no $jsonSchema support)
+  const telemetryName = `${prefix}memory_telemetry`;
+  if (!existing.has(telemetryName)) {
+    try {
+      await db.createCollection(telemetryName, {
+        timeseries: {
+          timeField: "ts",
+          metaField: "meta",
+          granularity: "seconds",
+        },
+        expireAfterSeconds: 604800, // 7 days
+      });
+      log.info(`created time series collection ${telemetryName}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Collection may already exist or time series not supported
+      if (!msg.includes("already exists") && !msg.includes("Collection already exists")) {
+        log.warn(`time series collection creation failed: ${msg}`);
+      }
+    }
+  }
+
   await ensureSchemaValidation(db, prefix);
 }
 
@@ -1111,6 +1177,37 @@ export async function ensureStandardIndexes(
   );
   applied++;
 
+  // Query Cache indexes
+  const queryCache = queryCacheCollection(db, prefix);
+  await queryCache.createIndex(
+    { queryHash: 1, agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "uq_query_cache_hash_agent_scope_scoperef", unique: true },
+  );
+  applied++;
+  await queryCache.createIndex(
+    { expiresAt: 1 },
+    { name: "idx_query_cache_ttl", expireAfterSeconds: 0 },
+  );
+  applied++;
+  await queryCache.createIndex(
+    { agentId: 1, hitCount: -1 },
+    { name: "idx_query_cache_agent_hitcount" },
+  );
+  applied++;
+
+  // Telemetry indexes (time series collection — meta field compound indexes)
+  const telemetry = telemetryCollection(db, prefix);
+  try {
+    await telemetry.createIndex({ "meta.agentId": 1, ts: -1 }, { name: "idx_telemetry_agent_ts" });
+    applied++;
+    await telemetry.createIndex({ "meta.operation": 1, ts: -1 }, { name: "idx_telemetry_op_ts" });
+    applied++;
+  } catch (err) {
+    // Time series collection may not exist (creation failed in ensureCollections)
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`telemetry index creation skipped: ${msg}`);
+  }
+
   log.info(`ensured ${applied} standard indexes`);
   return applied;
 }
@@ -1154,10 +1251,11 @@ export async function ensureSearchIndexes(
   void quantization;
   void numDimensions;
 
-  // 8 search indexes total: chunks, kb_chunks, structured_mem, and procedures
-  // each get text + vector indexes. ClawMongo ships one self-managed profile,
-  // but we keep the budget helper for explicit reporting.
-  const budget = assertIndexBudget(profile, 8);
+  // 9 search indexes total: chunks, kb_chunks, structured_mem, and procedures
+  // each get text + vector indexes, plus query_cache gets 1 vector index.
+  // ClawMongo ships one self-managed profile, but we keep the budget helper
+  // for explicit reporting.
+  const budget = assertIndexBudget(profile, 9);
   const reducedBudget =
     !budget.withinBudget && typeof budget.budget === "number" && budget.budget >= 2;
   if (!budget.withinBudget && !reducedBudget) {
@@ -1443,6 +1541,33 @@ export async function ensureSearchIndexes(
     }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`procedures vector search index creation failed: ${msg}`);
+    }
+  }
+
+  // Query Cache search index (autoEmbed on queryNorm)
+  const queryCache = queryCacheCollection(db, prefix);
+  try {
+    const cacheVectorDef: Document = {
+      fields: [
+        { type: "autoEmbed", modality: "text", path: "queryNorm", model: "voyage-4-large" },
+        { type: "filter", path: "agentId" },
+        { type: "filter", path: "scope" },
+        { type: "filter", path: "scopeRef" },
+      ],
+    };
+    await queryCache.createSearchIndex({
+      name: `${prefix}query_cache_vector`,
+      type: "vectorSearch",
+      definition: cacheVectorDef,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
+    if (!msg.includes("already exists") && !msg.includes("duplicate")) {
+      log.warn(`query_cache vector search index creation failed: ${msg}`);
     }
   }
 

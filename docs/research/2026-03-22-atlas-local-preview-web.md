@@ -1,11 +1,13 @@
 # Web Research: MongoDB Atlas Local (Preview) — mongod + mongot bundled Docker image
 
 ## Execution
+
 - Preferred backend: websearch+webfetch
 - Allowed fallbacks: websearch-only, webfetch-only
 - Research round: 1 (understanding Atlas Local and why it supersedes separate mongod + mongot)
 
 ## Sources Used
+
 - WebFetch on `raw.githubusercontent.com/mongodb/docs-atlas-cli/master/source/atlas-cli-deploy-docker.txt` — official Atlas CLI Docker deployment docs (verbatim RST source)
 - WebFetch on `raw.githubusercontent.com/mongodb/docs-atlas-cli/master/source/atlas-cli-deploy-local.txt` — official Atlas CLI local deployment docs (verbatim RST source)
 - WebFetch on `raw.githubusercontent.com/mongodb/docs-atlas-cli/master/source/atlas-cli-deploy-fts.txt` — Atlas CLI FTS + AVS docs
@@ -16,6 +18,7 @@
 **Bright Data:** Not available; fell back to WebFetch + curl for raw sources.
 
 ## Research Quality
+
 - Status: COMPLETE
 - Quality level: high
 - Backend mode: websearch+webfetch
@@ -38,13 +41,13 @@ mongodb/mongodb-atlas-local
 
 Confirmed from the Docker Hub API (as of 2026-03-20, the latest rebuild date):
 
-| Tag pattern | Purpose |
-|---|---|
-| `latest` | Current stable release (maps to latest MongoDB 8.x + mongot) |
-| `8.2`, `8.2.6`, `8.2.6-20260320T081259Z` | Stable MongoDB 8.2.x + mongot |
-| `8.0`, `8.0.20`, etc. | Stable MongoDB 8.0.x + mongot |
-| `7.0`, `7.0.31`, etc. | Stable MongoDB 7.0.x + mongot |
-| `preview` | **Pre-release channel** — currently tracks MongoDB 8.2 + mongot with auto-embedding (Voyage AI) enabled. Separate from `latest`; ~70 MB smaller per arch than `latest` as of 2026-03-20 |
+| Tag pattern                              | Purpose                                                                                                                                                                                 |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `latest`                                 | Current stable release (maps to latest MongoDB 8.x + mongot)                                                                                                                            |
+| `8.2`, `8.2.6`, `8.2.6-20260320T081259Z` | Stable MongoDB 8.2.x + mongot                                                                                                                                                           |
+| `8.0`, `8.0.20`, etc.                    | Stable MongoDB 8.0.x + mongot                                                                                                                                                           |
+| `7.0`, `7.0.31`, etc.                    | Stable MongoDB 7.0.x + mongot                                                                                                                                                           |
+| `preview`                                | **Pre-release channel** — currently tracks MongoDB 8.2 + mongot with auto-embedding (Voyage AI) enabled. Separate from `latest`; ~70 MB smaller per arch than `latest` as of 2026-03-20 |
 
 The `preview` digest as of 2026-03-20: `sha256:4f4c43e8711ce31660b931bd96e76e679b311702a0cc49e03c926615aaf4c868`
 
@@ -73,6 +76,7 @@ Both support `linux/amd64` and `linux/arm64`.
 ### Before Atlas Local
 
 Running Atlas Search + Vector Search locally required:
+
 1. Install MongoDB Community or Enterprise Edition (`mongod`)
 2. Separately download, install, and configure `mongot` (the search process)
 3. Configure `mongot` to bind to `mongod` via keyfile / keyfile path
@@ -83,11 +87,13 @@ Running Atlas Search + Vector Search locally required:
 ### With Atlas Local
 
 Single command replaces all of the above:
+
 ```sh
 docker run -p 27017:27017 mongodb/mongodb-atlas-local
 ```
 
 Or with Docker Compose:
+
 ```yaml
 services:
   mongodb:
@@ -106,6 +112,7 @@ volumes:
 ```
 
 Key advantages:
+
 - **Single container, single pull** — one image contains everything
 - **Correct startup sequencing** — the entrypoint ensures mongot starts in the right order relative to mongod; do not override the `command` in Docker Compose or it breaks this
 - **Built-in health check** — poll `docker inspect .State.Health.Status` to know when to connect; no custom scripts needed
@@ -123,6 +130,7 @@ Key advantages:
 "Automated Embedding" is a Preview feature available in MongoDB Community Edition **v8.2 and later**, delivered via the `preview` Docker tag.
 
 Official statement from the docs:
+
 > "Automated embedding is available as a Preview feature only for MongoDB Community Edition v8.2 and later. The feature and the corresponding documentation might change at any time during the Preview period."
 
 ### How It Works
@@ -155,29 +163,30 @@ The generated embeddings are stored in a **separate system collection** on the s
 ```js
 db.collection.aggregate([
   {
-    "$vectorSearch": {
-      "index": "myVectorIndex",
-      "path": "summary",
-      "query": { "text": "properties near amusement parks" },
-      "numCandidates": 100,
-      "limit": 10
-    }
-  }
-])
+    $vectorSearch: {
+      index: "myVectorIndex",
+      path: "summary",
+      query: { text: "properties near amusement parks" },
+      numCandidates: 100,
+      limit: 10,
+    },
+  },
+]);
 ```
 
 ### Supported Voyage AI Embedding Models
 
-| Model | Use Case |
-|---|---|
-| `voyage-4-lite` | High-volume, cost-sensitive applications |
-| `voyage-4` (recommended) | General text search, balanced performance |
-| `voyage-4-large` | Maximum accuracy for complex semantic relationships |
-| `voyage-code-3` | Code search and technical documentation |
+| Model                    | Use Case                                            |
+| ------------------------ | --------------------------------------------------- |
+| `voyage-4-lite`          | High-volume, cost-sensitive applications            |
+| `voyage-4` (recommended) | General text search, balanced performance           |
+| `voyage-4-large`         | Maximum accuracy for complex semantic relationships |
+| `voyage-code-3`          | Code search and technical documentation             |
 
 ### API Key Recommendation
 
 MongoDB recommends two separate Voyage AI API keys:
+
 - One for **indexing operations** (higher throughput, tolerant of delays)
 - One for **query operations** (low-latency, user-facing)
 
@@ -186,6 +195,7 @@ Keys can be generated via Atlas UI (which also provides monitoring + rate limiti
 ### Why This Matters for ClawMongo
 
 ClawMongo v2 currently calls the Voyage AI API externally from application code (via the `mongodb-search.ts` / hybrid pipeline). With auto-embedding in the `preview` image:
+
 - No application code needed to call Voyage AI at index time or query time
 - mongot handles embedding generation and sync automatically
 - `$vectorSearch` queries can use plain text (`query.text`) instead of pre-computed vectors
@@ -222,15 +232,15 @@ From the official auto-embedding docs (as of 2026-03-22):
 
 ## 7. Comparison: mongod Standalone vs Atlas Local vs Preview
 
-| Aspect | `mongo:8.0` (raw mongod) | `mongodb/mongodb-atlas-local` (stable) | `mongodb/mongodb-atlas-local:preview` |
-|---|---|---|---|
-| Atlas Search ($search) | No | Yes | Yes |
-| Atlas Vector Search ($vectorSearch) | No | Yes | Yes |
-| Auto-embeddings (Voyage AI) | No | No | Yes (Preview) |
-| Built-in health check | No | Yes | Yes |
-| Single container | Yes | Yes | Yes |
-| Production-safe | Yes | Dev/test only | No (Preview) |
-| Min MongoDB version | Any | 7.0+ | 8.2+ |
+| Aspect                              | `mongo:8.0` (raw mongod) | `mongodb/mongodb-atlas-local` (stable) | `mongodb/mongodb-atlas-local:preview` |
+| ----------------------------------- | ------------------------ | -------------------------------------- | ------------------------------------- |
+| Atlas Search ($search)              | No                       | Yes                                    | Yes                                   |
+| Atlas Vector Search ($vectorSearch) | No                       | Yes                                    | Yes                                   |
+| Auto-embeddings (Voyage AI)         | No                       | No                                     | Yes (Preview)                         |
+| Built-in health check               | No                       | Yes                                    | Yes                                   |
+| Single container                    | Yes                      | Yes                                    | Yes                                   |
+| Production-safe                     | Yes                      | Dev/test only                          | No (Preview)                          |
+| Min MongoDB version                 | Any                      | 7.0+                                   | 8.2+                                  |
 
 ---
 

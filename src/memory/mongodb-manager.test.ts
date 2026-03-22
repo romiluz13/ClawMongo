@@ -14,6 +14,7 @@ import {
   getV2Status,
   rerankResults,
 } from "./mongodb-manager.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ vi.mock("./mongodb-episodes.js", () => ({
 vi.mock("./mongodb-graph.js", () => ({
   findEntitiesByName: vi.fn(),
   expandGraph: vi.fn(),
+  extractAndUpsertEntities: vi.fn(),
 }));
 
 vi.mock("./mongodb-schema.js", () => ({
@@ -65,6 +67,15 @@ vi.mock("./mongodb-schema.js", () => ({
   ensureSchemaValidation: vi.fn(),
   ensureSearchIndexes: vi.fn(),
   ensureStandardIndexes: vi.fn(),
+}));
+
+vi.mock("./mongodb-query-cache.js", () => ({
+  checkCache: vi.fn(),
+  writeCache: vi.fn(),
+}));
+
+vi.mock("./mongodb-telemetry.js", () => ({
+  emitTelemetry: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -803,5 +814,51 @@ describe("rerankResults", () => {
     const originalOrder = results.map((r) => r.path);
     rerankResults(results, "query");
     expect(results.map((r) => r.path)).toEqual(originalOrder);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Telemetry emission from writeEventAndProject
+// ---------------------------------------------------------------------------
+
+describe("writeEventAndProject telemetry emission", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("emits event-write telemetry after successful write", async () => {
+    const { writeEvent } = await import("./mongodb-events.js");
+    const { projectEventChunk } = await import("./mongodb-events.js");
+    const { recordIngestRun } = await import("./mongodb-ops.js");
+    const { extractAndUpsertEntities } = await import("./mongodb-graph.js");
+
+    vi.mocked(writeEvent).mockResolvedValue({
+      eventId: "evt-1",
+      timestamp: new Date("2026-03-16T00:00:00.000Z"),
+      scopeRef: "agent:agent-1",
+    });
+    vi.mocked(projectEventChunk).mockResolvedValue({ chunkCreated: true });
+    vi.mocked(recordIngestRun).mockResolvedValue("run-1");
+    vi.mocked(extractAndUpsertEntities).mockResolvedValue({ entities: [], relationsCreated: 0 });
+
+    const fakeDb = { collection: vi.fn() } as unknown as import("mongodb").Db;
+    await writeEventAndProject(fakeDb, "test_", {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(emitTelemetry).toHaveBeenCalledWith(
+      fakeDb,
+      "test_",
+      expect.objectContaining({
+        meta: { agentId: "agent-1", operation: "event-write" },
+        ok: true,
+        eventType: "user",
+        projectionTriggered: true,
+        durationMs: expect.any(Number),
+      }),
+    );
   });
 });

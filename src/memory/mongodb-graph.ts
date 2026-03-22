@@ -9,6 +9,7 @@ import {
   relationsCollection,
 } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 
 const log = createSubsystemLogger("memory:mongodb:graph");
 
@@ -529,6 +530,7 @@ export async function expandGraph(params: {
     bidirectional,
     maxConnections,
   } = params;
+  const graphStart = Date.now();
   try {
     const entCol = entitiesCollection(db, prefix);
     const relCol = relationsCollection(db, prefix);
@@ -740,6 +742,13 @@ export async function expandGraph(params: {
         `expandGraph: truncated ${connections.length} connections to maxConnections=${connectionLimit} for entity=${entityId}`,
       );
     }
+
+    emitTelemetry(db, prefix, {
+      meta: { agentId, operation: "graph-expansion" },
+      durationMs: Date.now() - graphStart,
+      ok: true,
+      resultCount: limitedConnections.length,
+    });
 
     return { rootEntity, connections: limitedConnections };
   } catch (err) {

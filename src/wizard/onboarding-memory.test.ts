@@ -190,7 +190,7 @@ describe("setupMemoryBackend", () => {
           call[0] !== null &&
           "message" in call[0] &&
           typeof (call[0] as Record<string, unknown>).message === "string" &&
-          ((call[0] as Record<string, string>).message).includes("Voyage AI"),
+          (call[0] as Record<string, string>).message.includes("Voyage AI"),
       );
       expect(voyageCalls).toHaveLength(0);
     } finally {

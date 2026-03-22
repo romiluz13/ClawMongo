@@ -48,6 +48,7 @@ function makeConfig(overrides?: Partial<ResolvedMongoDBConfig>): ResolvedMongoDB
     },
     episodes: { enabled: false, minEventsForEpisode: 10 },
     graph: { enabled: false, maxGraphDepth: 2 },
+    cache: { enabled: true, conversationTtlSec: 300, kbTtlSec: 3600, similarityThreshold: 0.95 },
     sources: {
       reference: { enabled: true },
       conversation: { enabled: true },

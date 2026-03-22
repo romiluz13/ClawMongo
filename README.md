@@ -42,7 +42,7 @@ ClawMongo is **not** a memory library. It is a complete personal AI assistant wi
 
 MongoDB is uniquely suited for agent memory because it combines document flexibility, vector search, full-text search, graph traversal, and operational guarantees in a single platform. No other database offers all of these without bolting on external services.
 
-ClawMongo uses 12 MongoDB capabilities. Each one solves a specific agent memory problem:
+ClawMongo uses 14 MongoDB capabilities. Each one solves a specific agent memory problem:
 
 | #   | Capability                 | Why It Matters                                                                 | How It Works                                                                                         |
 | --- | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -58,6 +58,8 @@ ClawMongo uses 12 MongoDB capabilities. Each one solves a specific agent memory 
 | 10  | **Multi-Tenant Isolation** | One database, many agents, zero data leakage                                   | Compound indexes with `agentId` prefix + `$graphLookup` `restrictSearchWithMatch`                    |
 | 11  | **Idempotent Upserts**     | Network retries and replays must not corrupt memory                            | `$setOnInsert` for creation-time fields + `$set` for mutable fields on unique compound keys          |
 | 12  | **Relevance Telemetry**    | You cannot improve retrieval quality without measuring it                      | `explain`-driven diagnostics across `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
+| 13  | **Semantic Query Cache**   | Identical or near-identical queries skip the full retrieval pipeline           | SHA-256 exact match + `$vectorSearch` cosine >= 0.95, per-document TTL, fire-and-forget writes       |
+| 14  | **Time Series Telemetry**  | Operational visibility into every memory operation with automatic retention    | Time series collection with `granularity: "seconds"`, P50/P95/P99 latency, cache hit rates           |
 
 For the full technical deep-dive on each capability with code examples: [MongoDB Capabilities in ClawMongo](docs/reference/mongodb-capabilities.md)
 
@@ -65,23 +67,24 @@ For the full technical deep-dive on each capability with code examples: [MongoDB
 
 ## ClawMongo vs Default OpenClaw Memory
 
-| Capability             | OpenClaw Default (QMD/SQLite)         | ClawMongo (MongoDB)                               |
-| ---------------------- | ------------------------------------- | ------------------------------------------------- |
-| Storage backend        | SQLite file + Markdown files          | MongoDB Community (replica set)                   |
-| Vector search          | sqlite-vec or LanceDB                 | mongot + Voyage AI autoEmbed                      |
-| Embedding management   | Application-side (multiple providers) | Automated via mongot (zero app code)              |
-| Full-text search       | SQLite FTS5 / BM25                    | mongot text indexes (Lucene)                      |
-| Hybrid search          | BM25 + vector with MMR                | `$rankFusion` / `$scoreFusion` + RRF              |
-| Knowledge graph        | None                                  | `$graphLookup` with entities + relations          |
-| Episodes               | None                                  | Auto-materialized from event windows              |
-| Event sourcing         | None (append-only Markdown)           | Canonical events collection                       |
-| Structured memory      | Basic key-value                       | Salience, temporal validity, state, provenance    |
-| Procedures             | None                                  | Versioned workflow artifacts                      |
-| Retrieval paths        | 1 (search)                            | 8 paths with planner-driven selection             |
-| Schema validation      | None                                  | JSON Schema on all collections                    |
-| Multi-tenant isolation | Filesystem separation                 | Compound indexes with agentId prefix              |
-| Operational visibility | Limited                               | Ingest runs, projection runs, relevance telemetry |
-| Data model             | Flat files + SQLite rows              | 20 collections, 53 indexes                        |
+| Capability             | OpenClaw Default (QMD/SQLite)         | ClawMongo (MongoDB)                                                          |
+| ---------------------- | ------------------------------------- | ---------------------------------------------------------------------------- |
+| Storage backend        | SQLite file + Markdown files          | MongoDB Community (replica set)                                              |
+| Vector search          | sqlite-vec or LanceDB                 | mongot + Voyage AI autoEmbed                                                 |
+| Embedding management   | Application-side (multiple providers) | Automated via mongot (zero app code)                                         |
+| Full-text search       | SQLite FTS5 / BM25                    | mongot text indexes (Lucene)                                                 |
+| Hybrid search          | BM25 + vector with MMR                | `$rankFusion` / `$scoreFusion` + RRF                                         |
+| Knowledge graph        | None                                  | `$graphLookup` with entities + relations                                     |
+| Episodes               | None                                  | Auto-materialized from event windows                                         |
+| Event sourcing         | None (append-only Markdown)           | Canonical events collection                                                  |
+| Structured memory      | Basic key-value                       | Salience, temporal validity, state, provenance                               |
+| Procedures             | None                                  | Versioned workflow artifacts                                                 |
+| Retrieval paths        | 1 (search)                            | 8 paths with planner-driven selection                                        |
+| Schema validation      | None                                  | JSON Schema on all collections                                               |
+| Multi-tenant isolation | Filesystem separation                 | Compound indexes with agentId prefix                                         |
+| Operational visibility | Limited                               | Ingest runs, projection runs, relevance telemetry, time series observability |
+| Query caching          | None                                  | Two-tier semantic cache (SHA-256 exact + cosine similarity)                  |
+| Data model             | Flat files + SQLite rows              | 22 collections, 58 indexes                                                   |
 
 **Decision rule:** If your workload is one user with small memory files, OpenClaw's default memory is fine. If you need retrieval quality SLOs, operational visibility, knowledge graphs, or team-scale agent memory, ClawMongo is the practical path.
 
@@ -106,7 +109,8 @@ Write Path:
                                 +-> episodes   (materialized from event windows)
 
 Retrieval Path:
-  Query -> planRetrieval() -> score 8 paths by keyword heuristics
+  Query -> checkCache() -> HIT? return cached results
+                        -> MISS -> planRetrieval() -> score 8 paths by keyword heuristics
            +-> active-critical  (high-salience recent)
            +-> structured       (facts, preferences)
            +-> episodic         (summarized threads)
@@ -115,10 +119,13 @@ Retrieval Path:
            +-> hybrid           ($rankFusion vector+text)
            +-> raw-window       (recent events)
            +-> procedural       (workflows)
-           -> rerankResults() -> deduplicate -> return to agent
+           -> rerankResults() -> deduplicate -> writeCache() -> return to agent
+
+Observability:
+  All paths emit to memory_telemetry (time series, fire-and-forget, 7-day TTL)
 ```
 
-### 20 Collections
+### 22 Collections
 
 | Group               | Collections                                                      |
 | ------------------- | ---------------------------------------------------------------- |
@@ -129,8 +136,10 @@ Retrieval Path:
 | Relevance telemetry | `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
 | v2 event system     | `events`, `entities`, `relations`, `entity_links`, `episodes`    |
 | Operational         | `ingest_runs`, `projection_runs`                                 |
+| Query cache         | `query_cache`                                                    |
+| Observability       | `memory_telemetry` (time series)                                 |
 
-All backed by **53 standard indexes** and **up to 8 MongoDB Search indexes** (4 text + 4 vector autoEmbed).
+All backed by **58 standard indexes** and **up to 9 MongoDB Search indexes** (4 text + 5 vector autoEmbed).
 
 ### 8 Retrieval Paths
 

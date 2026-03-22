@@ -72,6 +72,12 @@ export type ResolvedMongoDBConfig = {
   };
   episodes: { enabled: boolean; minEventsForEpisode: number };
   graph: { enabled: boolean; maxGraphDepth: number };
+  cache: {
+    enabled: boolean;
+    conversationTtlSec: number;
+    kbTtlSec: number;
+    similarityThreshold: number;
+  };
   sources: {
     reference: { enabled: boolean };
     conversation: { enabled: boolean };
@@ -324,6 +330,12 @@ export function resolveMemoryBackendConfig(params: {
             mongoCfg.graph.maxGraphDepth > 0
               ? Math.floor(mongoCfg.graph.maxGraphDepth)
               : 2,
+        },
+        cache: {
+          enabled: mongoCfg?.cache?.enabled !== false,
+          conversationTtlSec: mongoCfg?.cache?.conversationTtlSec ?? 300,
+          kbTtlSec: mongoCfg?.cache?.kbTtlSec ?? 3600,
+          similarityThreshold: mongoCfg?.cache?.similarityThreshold ?? 0.95,
         },
         sources: {
           reference: {

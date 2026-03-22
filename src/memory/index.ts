@@ -68,3 +68,23 @@ export {
 } from "./mongodb-procedures.js";
 export { backfillEventsFromChunks } from "./mongodb-migration.js";
 export { rerankResults, type RerankWeights } from "./mongodb-manager.js";
+export { queryCacheCollection, telemetryCollection } from "./mongodb-schema.js";
+export {
+  checkCache,
+  writeCache,
+  normalizeQuery,
+  hashQuery,
+  type QueryCacheEntry,
+  type QueryCacheConfig,
+  type CacheCheckResult,
+  DEFAULT_CACHE_CONFIG,
+} from "./mongodb-query-cache.js";
+export {
+  emitTelemetry,
+  getLatencyStats,
+  getCacheHitRate,
+  getOperationDistribution,
+  type TelemetryDocument,
+  type TelemetryOperation,
+  type TelemetryMeta,
+} from "./mongodb-telemetry.js";

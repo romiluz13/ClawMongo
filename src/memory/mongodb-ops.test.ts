@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
+vi.mock("./mongodb-telemetry.js", () => ({
+  emitTelemetry: vi.fn(),
+}));
+
 import {
   recordIngestRun,
   recordProjectionRun,
@@ -10,6 +14,7 @@ import {
   type IngestRun,
   type ProjectionRun,
 } from "./mongodb-ops.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: stub MongoDB collection
@@ -265,6 +270,61 @@ describe("mongodb-ops", () => {
       });
 
       expect(lag).toBeNull();
+    });
+  });
+
+  describe("recordProjectionRun telemetry emission", () => {
+    it("emits projection-run telemetry after insertOne", async () => {
+      vi.clearAllMocks();
+      const projCol = createMockCollection();
+      const db = createMockDb({ [`${PREFIX}projection_runs`]: projCol });
+
+      await recordProjectionRun({
+        db,
+        prefix: PREFIX,
+        run: {
+          agentId: "agent-1",
+          projectionType: "chunks",
+          status: "ok",
+          itemsProjected: 20,
+          durationMs: 3000,
+        },
+      });
+
+      expect(emitTelemetry).toHaveBeenCalledWith(
+        db,
+        PREFIX,
+        expect.objectContaining({
+          meta: { agentId: "agent-1", operation: "projection-run" },
+          durationMs: 3000,
+          ok: true,
+          itemCount: 20,
+        }),
+      );
+    });
+
+    it("does not emit telemetry when insertOne fails", async () => {
+      vi.clearAllMocks();
+      const projCol = createMockCollection({
+        insertOne: vi.fn().mockRejectedValue(new Error("DB error")),
+      });
+      const db = createMockDb({ [`${PREFIX}projection_runs`]: projCol });
+
+      await expect(
+        recordProjectionRun({
+          db,
+          prefix: PREFIX,
+          run: {
+            agentId: "agent-1",
+            projectionType: "chunks",
+            status: "ok",
+            itemsProjected: 10,
+            durationMs: 100,
+          },
+        }),
+      ).rejects.toThrow("DB error");
+
+      expect(emitTelemetry).not.toHaveBeenCalled();
     });
   });
 });

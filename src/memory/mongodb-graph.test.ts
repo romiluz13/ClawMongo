@@ -1,6 +1,11 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+vi.mock("./mongodb-telemetry.js", () => ({
+  emitTelemetry: vi.fn(),
+}));
+
 import {
   upsertEntity,
   upsertRelation,
@@ -15,6 +20,7 @@ import {
   type Entity,
   type Relation,
 } from "./mongodb-graph.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: stub MongoDB collection
@@ -950,6 +956,52 @@ describe("mongodb-graph", () => {
       expect(candidateCall).toBeDefined();
       expect(candidateCall?.[1].$set.status).toBe("active");
       expect(candidateCall?.[1].$set.provenance.heuristic).toBe("shared-name-tokens");
+    });
+  });
+
+  describe("expandGraph telemetry emission", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("emits graph-expansion telemetry after successful expansion", async () => {
+      const rootEntity = makeEntity({ entityId: "root-1", name: "Root" });
+      const entCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(rootEntity),
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([]),
+          sort: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
+          }),
+        }),
+      });
+      const relCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([]),
+        }),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entCol,
+        [`${PREFIX}relations`]: relCol,
+      });
+
+      await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "root-1",
+        agentId: "agent-1",
+      });
+
+      expect(emitTelemetry).toHaveBeenCalledWith(
+        db,
+        PREFIX,
+        expect.objectContaining({
+          meta: { agentId: "agent-1", operation: "graph-expansion" },
+          ok: true,
+          resultCount: expect.any(Number),
+          durationMs: expect.any(Number),
+        }),
+      );
     });
   });
 });

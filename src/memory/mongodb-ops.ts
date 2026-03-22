@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Db } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { ingestRunsCollection, projectionRunsCollection } from "./mongodb-schema.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 
 const log = createSubsystemLogger("memory:mongodb:ops");
 
@@ -72,6 +73,12 @@ export async function recordProjectionRun(params: {
   const doc: ProjectionRun = { ...run, runId, ts: new Date() };
   try {
     await projectionRunsCollection(db, prefix).insertOne(doc);
+    emitTelemetry(db, prefix, {
+      meta: { agentId: run.agentId, operation: "projection-run" },
+      durationMs: run.durationMs,
+      ok: run.status === "ok",
+      itemCount: run.itemsProjected,
+    });
     return runId;
   } catch (err) {
     log.error("recordProjectionRun failed", { runId, error: err });

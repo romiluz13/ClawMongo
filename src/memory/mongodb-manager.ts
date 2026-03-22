@@ -37,6 +37,7 @@ import {
 } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
 import { searchProcedures } from "./mongodb-procedures.js";
+import { checkCache, writeCache } from "./mongodb-query-cache.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -81,6 +82,7 @@ import type {
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
@@ -743,6 +745,27 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
     const availablePaths = this.buildV2AvailablePaths(activeSources);
 
+    // Cache check: BEFORE search pipeline
+    if (mongoCfg.cache.enabled) {
+      const cacheResult = await checkCache({
+        db: this.db,
+        prefix: this.prefix,
+        query: cleaned,
+        agentId: this.agentId,
+        scope: "agent",
+        scopeRef: this.agentScopeRef,
+        config: mongoCfg.cache,
+      });
+      if (cacheResult.hit) {
+        this.setLastSearchMode(`v2:cache:${cacheResult.tier}`, {
+          pathUsed: cacheResult.pathUsed,
+          sourceScope: cacheResult.sourceScope,
+        });
+        return cacheResult.results;
+      }
+    }
+
+    const searchStart = Date.now();
     try {
       const v2 = await searchV2(this.db, this.prefix, cleaned, this.agentId, {
         availablePaths,
@@ -764,6 +787,17 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         },
       });
 
+      // Emit search telemetry (fire-and-forget)
+      emitTelemetry(this.db, this.prefix, {
+        meta: { agentId: this.agentId, operation: "search" },
+        durationMs: Date.now() - searchStart,
+        ok: v2.results.length > 0,
+        pathUsed: v2.metadata.pathsExecuted.join(","),
+        resultCount: v2.results.length,
+        topScore: v2.results[0]?.score ?? 0,
+        fusionMethod: mongoCfg.fusionMethod,
+      });
+
       const v2Details = {
         plan: v2.metadata.plan.paths,
         confidence: v2.metadata.plan.confidence,
@@ -774,6 +808,24 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
       if (v2.results.length > 0) {
         this.setLastSearchMode("v2", v2Details);
+        // Fire-and-forget cache write
+        if (mongoCfg.cache.enabled) {
+          const ttlSec = mongoCfg.kb.enabled
+            ? mongoCfg.cache.kbTtlSec
+            : mongoCfg.cache.conversationTtlSec;
+          writeCache({
+            db: this.db,
+            prefix: this.prefix,
+            query: cleaned,
+            agentId: this.agentId,
+            scope: "agent",
+            scopeRef: this.agentScopeRef,
+            results: v2.results,
+            pathUsed: v2.metadata.pathsExecuted.join(","),
+            sourceScope: "conversation",
+            ttlSec,
+          });
+        }
         return v2.results;
       }
 
@@ -2375,6 +2427,15 @@ export async function writeEventAndProject(
         itemsFailed: 0,
         durationMs,
       },
+    });
+
+    // Emit event-write telemetry (fire-and-forget)
+    emitTelemetry(db, prefix, {
+      meta: { agentId: event.agentId, operation: "event-write" },
+      durationMs,
+      ok: true,
+      eventType: event.role,
+      projectionTriggered: true,
     });
 
     return { eventId: written.eventId, chunksCreated: projected.chunkCreated ? 1 : 0 };
