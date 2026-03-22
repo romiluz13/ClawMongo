@@ -17,45 +17,34 @@ ClawMongo is the MongoDB edition of OpenClaw. This guide gets you from zero to a
 
 #### Option A: Docker (Quickest)
 
-Use the MongoDB Community image with mongot. Create a `docker-compose.yml`:
+Use `mongodb/mongodb-atlas-local` -- a single Docker image that bundles mongod + mongot + Atlas Search + Vector Search as a ready-to-use replica set (~683 MB).
 
 ```yaml
-version: "3.8"
 services:
   mongodb:
-    image: mongodb/mongodb-community-server:latest
+    image: mongodb/mongodb-atlas-local:8.0
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
-    command: ["--replSet", "rs0", "--bind_ip_all"]
     environment:
-      - MONGODB_INIT_REPLICA_SET=true
-
-  mongot:
-    image: mongodb/mongodb-atlas-search:latest
-    depends_on:
-      - mongodb
-    environment:
-      - MONGOD_HOST=mongodb
-      - MONGOD_PORT=27017
       - VOYAGE_API_KEY=${VOYAGE_API_KEY}
 
 volumes:
   mongodb_data:
 ```
 
-Start the services:
+Start the service:
 
 ```bash
 export VOYAGE_API_KEY="your-voyage-ai-key"
 docker compose up -d
 ```
 
-Initialize the replica set (required for change streams):
+That's it -- no replica set init needed. The `mongodb-atlas-local` image starts as a single-node replica set with mongot, Atlas Search, and Vector Search already configured. Verify it's healthy:
 
 ```bash
-docker exec -it $(docker compose ps -q mongodb) mongosh --eval "rs.initiate()"
+docker exec -it $(docker compose ps -q mongodb) mongosh --eval "db.runCommand({ ping: 1 })"
 ```
 
 #### Option B: Local Install (macOS/Linux)

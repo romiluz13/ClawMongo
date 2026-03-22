@@ -173,7 +173,7 @@ Full channel setup guides: [docs.openclaw.ai/channels](https://docs.openclaw.ai/
 
 ### 78 Extensions
 
-- **24 channel plugins** covering every major messaging platform
+- **22 messaging channels + 2 transport plugins** (voice call, device pairing)
 - **25+ LLM provider plugins** (OpenAI, Anthropic, Google, Bedrock, Mistral, Ollama, OpenRouter, and more)
 - **Tool plugins** (Brave search, Firecrawl, Tavily, browser control)
 - **Media plugins** (ElevenLabs speech, Microsoft speech)
