@@ -17,12 +17,14 @@ ClawMongo is the MongoDB edition of OpenClaw. This guide gets you from zero to a
 
 #### Option A: Docker (Quickest)
 
-Use `mongodb/mongodb-atlas-local` -- a single Docker image that bundles mongod + mongot + Atlas Search + Vector Search as a ready-to-use replica set (~683 MB).
+Use `mongodb/mongodb-atlas-local:preview` -- a single Docker image that bundles mongod + the open-source community mongot + Atlas Search + Vector Search + **Voyage AI auto-embeddings** as a ready-to-use replica set (~584 MB).
+
+> **Important:** The `:preview` tag is required for auto-embeddings. The `:latest` and versioned tags (`:8.0`, `:8.2`) do NOT include the community mongot with Voyage AI support. See [Docker Hub](https://hub.docker.com/r/mongodb/mongodb-atlas-local) for details.
 
 ```yaml
 services:
   mongodb:
-    image: mongodb/mongodb-atlas-local:8.0
+    image: mongodb/mongodb-atlas-local:preview
     ports:
       - "27017:27017"
     volumes:
