@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.22",
+  "version": "2026.3.23",
   "description": "The MongoDB edition of OpenClaw - personal AI assistant with production-grade MongoDB memory, 22 channels, knowledge graph, episode materialization, and Voyage AI vector search",
   "keywords": [
     "mongodb",
