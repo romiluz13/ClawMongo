@@ -7,29 +7,27 @@ import type {
   MemoryMongoDBEmbeddingMode,
 } from "../config/types.memory.js";
 import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
-import type { WizardPrompter } from "./prompts.js";
+import { WizardCancelledError, type WizardPrompter } from "./prompts.js";
 
 function shouldShowNoDockerHint(reason: string): boolean {
   const lower = reason.toLowerCase();
   return lower.includes("docker") || lower.includes("compose");
 }
 
-async function showNoDockerLocalHint(prompter: WizardPrompter): Promise<void> {
+async function showDockerRequiredHint(prompter: WizardPrompter): Promise<void> {
   await prompter.note(
     [
-      "Docker is optional but recommended. The atlas-local Docker image bundles mongod + mongot in one container.",
+      "Docker is required for ClawMongo. The mongodb-atlas-local:preview Docker image bundles mongod + mongot in one container.",
       "",
-      "Recommended (atlas-local:preview — includes mongot + auto-embeddings):",
+      "Install Docker Desktop: https://docs.docker.com/get-docker/",
+      "",
+      "Then start atlas-local:",
+      "  ./docker/mongodb/start-preview.sh",
+      "",
+      "Or manually:",
       "  docker run -d -p 27017:27017 -e VOYAGE_API_KEY=$VOYAGE_API_KEY --name clawmongo-preview mongodb/mongodb-atlas-local:preview",
-      "",
-      "Without Docker (basic mongod only — no search/vector capabilities):",
-      "  mongod --dbpath ./data/db --port 27017 --replSet rs0",
-      '  mongosh --eval "rs.initiate()"',
-      "  Note: mongot (search + auto-embeddings) is NOT available this way. Use atlas-local Docker for full capabilities.",
-      "",
-      "Then continue with URI: mongodb://localhost:27017/clawmongo?directConnection=true",
     ].join("\n"),
-    "Local MongoDB (No Docker)",
+    "Docker Required",
   );
 }
 
@@ -51,6 +49,24 @@ async function setupMongoDBMemory(
   prompter: WizardPrompter,
   isClawMongo: boolean,
 ): Promise<OpenClawConfig> {
+  // --- Voyage AI Key Prompt (before Docker start) ---
+  // ClawMongo uses automated embeddings via mongot + Voyage AI.
+  // Prompt for the key early so it can be passed to the Docker container.
+  if (isClawMongo && !process.env.VOYAGE_API_KEY) {
+    const voyageKey = await prompter.text({
+      message: "Enter your Voyage AI API key (required for auto-embeddings)",
+      placeholder: "pa-...",
+      validate: (val) => (!val?.trim() ? "Voyage AI API key is required" : undefined),
+    });
+    if (typeof voyageKey === "symbol") throw new WizardCancelledError();
+    process.env.VOYAGE_API_KEY = voyageKey.trim();
+    await prompter.note(
+      "VOYAGE_API_KEY set for this session. Add it to your shell profile for persistence:\n  export VOYAGE_API_KEY=" +
+        voyageKey.trim(),
+      "Voyage AI",
+    );
+  }
+
   // --- Auto-Setup: try Docker auto-start BEFORE manual URI prompt ---
   // Only for ClawMongo; upstream openclaw skips directly to manual URI
   if (isClawMongo) {
@@ -64,7 +80,7 @@ async function setupMongoDBMemory(
       // Auto-setup failed but non-fatal - show reason and fall through to manual
       await prompter.note(autoResult.reason, "Auto-Setup");
       if (shouldShowNoDockerHint(autoResult.reason)) {
-        await showNoDockerLocalHint(prompter);
+        await showDockerRequiredHint(prompter);
       }
     } catch {
       // Auto-setup module failed to load or threw - fall through to manual

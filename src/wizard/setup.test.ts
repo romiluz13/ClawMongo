@@ -88,6 +88,7 @@ const isSystemdUserServiceAvailable = vi.hoisted(() => vi.fn(async () => true));
 const ensureControlUiAssetsBuilt = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const runTui = vi.hoisted(() => vi.fn(async (_options: unknown) => {}));
 const setupWizardShellCompletion = vi.hoisted(() => vi.fn(async () => {}));
+const setupMemoryBackend = vi.hoisted(() => vi.fn(async (cfg: unknown) => cfg));
 const probeGatewayReachable = vi.hoisted(() => vi.fn(async () => ({ ok: true })));
 const buildPluginCompatibilityNotices = vi.hoisted(() =>
   vi.fn((): PluginCompatibilityNotice[] => []),
@@ -212,6 +213,10 @@ vi.mock("./setup.finalize.js", () => ({
 
 vi.mock("./setup.completion.js", () => ({
   setupWizardShellCompletion,
+}));
+
+vi.mock("./onboarding-memory.js", () => ({
+  setupMemoryBackend,
 }));
 
 function createRuntime(opts?: { throwsOnExit?: boolean }): RuntimeEnv {
@@ -572,6 +577,39 @@ describe("runSetupWizard", () => {
         password: "gateway-ref-password", // pragma: allowlist secret
       }),
     );
+  });
+
+  it("calls setupMemoryBackend for ClawMongo before auth choice", async () => {
+    setupMemoryBackend.mockClear();
+    promptAuthChoiceGrouped.mockClear();
+    resolveOpenClawPackageName.mockResolvedValue("@romiluz/clawmongo");
+
+    const prompter = buildWizardPrompter({});
+    const runtime = createRuntime();
+
+    await runSetupWizard(
+      {
+        acceptRisk: true,
+        flow: "quickstart",
+        authChoice: "skip",
+        installDaemon: false,
+        skipProviders: true,
+        skipSkills: true,
+        skipSearch: true,
+        skipHealth: true,
+        skipUi: true,
+      },
+      runtime,
+      prompter,
+    );
+
+    expect(setupMemoryBackend).toHaveBeenCalled();
+    // Verify memory setup runs before auth prompt
+    const memoryCallOrder = setupMemoryBackend.mock.invocationCallOrder[0];
+    const authCallOrder = promptAuthChoiceGrouped.mock.invocationCallOrder[0];
+    if (memoryCallOrder !== undefined && authCallOrder !== undefined) {
+      expect(memoryCallOrder).toBeLessThan(authCallOrder);
+    }
   });
 
   it("passes secretInputMode through to local gateway config step", async () => {

@@ -94,16 +94,28 @@ Full comparison with migration guidance: [ClawMongo vs Default Memory](docs/refe
 ClawMongo uses a canonical-truth-first architecture where **events are the single source of truth**. Everything else -- chunks, entities, relations, episodes, procedures -- is derived.
 
 ```text
-Inbound message / tool output
-  -> writeEventAndProject()
-       |
-       +-- events collection          (canonical, append-only)
-       +-- chunks collection          (projected from events, searchable)
-       +-- ingest_runs collection     (operational audit trail)
-       |
-       +-- extractAndUpsertEntities() (fire-and-forget)
-            +-- entities collection    (@mentions, #tags, URLs, paths, quoted names)
-            +-- relations collection   (links between entities, weighted, typed)
+Write Path:
+  Message / tool output -> writeEventAndProject()
+                           +-> events       (canonical, append-only)
+                           +-> chunks       (projected, searchable)
+                           +-> ingest_runs  (audit trail)
+                           +-> extractAndUpsertEntities()
+                                +-> entities   (@mentions, #tags, URLs, quoted names)
+                                +-> relations  (links between entities, weighted)
+                           +-> checkAutoEpisodeTriggers()
+                                +-> episodes   (materialized from event windows)
+
+Retrieval Path:
+  Query -> planRetrieval() -> score 8 paths by keyword heuristics
+           +-> active-critical  (high-salience recent)
+           +-> structured       (facts, preferences)
+           +-> episodic         (summarized threads)
+           +-> graph            ($graphLookup traversal)
+           +-> kb               (knowledge base docs)
+           +-> hybrid           ($rankFusion vector+text)
+           +-> raw-window       (recent events)
+           +-> procedural       (workflows)
+           -> rerankResults() -> deduplicate -> return to agent
 ```
 
 ### 20 Collections

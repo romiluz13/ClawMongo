@@ -35,12 +35,23 @@ vi.mock("../memory/backend-config.js", () => ({
   resolveMemoryBackendConfig,
 }));
 
+const mockSearchIndexes = vi.hoisted(() =>
+  vi.fn(async () => [
+    { name: "chunks_vector", type: "vectorSearch" },
+    { name: "chunks_text", type: "search" },
+  ]),
+);
 vi.mock("mongodb", () => ({
   MongoClient: class MockMongoClient {
     async connect() {}
     db() {
       return {
         command: async () => ({ ok: 1 }),
+        collection: () => ({
+          listSearchIndexes: () => ({
+            toArray: mockSearchIndexes,
+          }),
+        }),
       };
     }
     async close() {}
@@ -409,6 +420,26 @@ describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
     const mongotNote = allNotes.find((n: string) => n.includes("mongot is not reachable"));
     expect(mongotNote).toBeDefined();
     expect(mongotNote).toContain("start-preview.sh");
+  });
+
+  it("reports vector search index count when mongot present", async () => {
+    const origKey = process.env.VOYAGE_API_KEY;
+    process.env.VOYAGE_API_KEY = "pa-test-key";
+    try {
+      const { noteMongoDBBackendHealth } = await import("./doctor-memory-search.js");
+      await noteMongoDBBackendHealth(cfg);
+
+      const allNotes = note.mock.calls.map((c: unknown[]) => String(c[0]));
+      const vectorNote = allNotes.find((n: string) => n.includes("Vector search indexes:"));
+      expect(vectorNote).toBeDefined();
+      expect(vectorNote).toContain("1 found");
+    } finally {
+      if (origKey !== undefined) {
+        process.env.VOYAGE_API_KEY = origKey;
+      } else {
+        delete process.env.VOYAGE_API_KEY;
+      }
+    }
   });
 
   it("reports auto-embed not configured when VOYAGE_API_KEY missing", async () => {

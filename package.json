@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.26",
+  "version": "2026.3.27",
   "description": "OpenClaw, but it remembers. Full AI assistant (22 channels, 78 extensions, voice, apps) with MongoDB memory - vector search, knowledge graph, event-sourcing, KB, and 8 retrieval paths. Nothing is ever lost.",
   "keywords": [
     "agent-memory",

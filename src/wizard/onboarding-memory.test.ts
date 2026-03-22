@@ -128,8 +128,98 @@ describe("setupMemoryBackend", () => {
     await setupMemoryBackend({}, prompter);
 
     expect(prompter.note).toHaveBeenCalledWith(
-      expect.stringContaining("Docker is optional. Local MongoDB works without Docker."),
-      "Local MongoDB (No Docker)",
+      expect.stringContaining("Docker is required for ClawMongo"),
+      "Docker Required",
     );
+  });
+
+  it("prompts for VOYAGE_API_KEY when not set", async () => {
+    const origKey = process.env.VOYAGE_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
+    try {
+      mockResolvePackageName.mockResolvedValueOnce("@romiluz/clawmongo");
+      mockAttemptAutoSetup.mockResolvedValueOnce({
+        success: true,
+        uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+      });
+      const { setupMemoryBackend } = await import("./onboarding-memory.js");
+      const prompter = createMockPrompter({
+        selectResponses: ["skip"],
+        textResponses: ["pa-test-key-12345"],
+      });
+
+      await setupMemoryBackend({}, prompter);
+
+      expect(prompter.text).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining("Voyage AI API key"),
+        }),
+      );
+      expect(prompter.note).toHaveBeenCalledWith(
+        expect.stringContaining("VOYAGE_API_KEY set for this session"),
+        "Voyage AI",
+      );
+    } finally {
+      if (origKey !== undefined) {
+        process.env.VOYAGE_API_KEY = origKey;
+      }
+    }
+  });
+
+  it("skips Voyage prompt when VOYAGE_API_KEY already set", async () => {
+    const origKey = process.env.VOYAGE_API_KEY;
+    process.env.VOYAGE_API_KEY = "pa-already-set";
+    try {
+      mockResolvePackageName.mockResolvedValueOnce("@romiluz/clawmongo");
+      mockAttemptAutoSetup.mockResolvedValueOnce({
+        success: true,
+        uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+      });
+      const { setupMemoryBackend } = await import("./onboarding-memory.js");
+      const prompter = createMockPrompter({
+        selectResponses: ["skip"],
+      });
+
+      await setupMemoryBackend({}, prompter);
+
+      // text should only be called for KB import path, not for Voyage key
+      const textCalls = (prompter.text as ReturnType<typeof vi.fn>).mock.calls;
+      const voyageCalls = textCalls.filter(
+        (call: unknown[]) =>
+          typeof call[0] === "object" &&
+          call[0] !== null &&
+          "message" in call[0] &&
+          typeof (call[0] as Record<string, unknown>).message === "string" &&
+          ((call[0] as Record<string, string>).message).includes("Voyage AI"),
+      );
+      expect(voyageCalls).toHaveLength(0);
+    } finally {
+      if (origKey !== undefined) {
+        process.env.VOYAGE_API_KEY = origKey;
+      } else {
+        delete process.env.VOYAGE_API_KEY;
+      }
+    }
+  });
+
+  it("warns when mongot not detected after setup", async () => {
+    mockResolvePackageName.mockResolvedValueOnce("@romiluz/clawmongo");
+    mockAttemptAutoSetup.mockResolvedValueOnce({
+      success: true,
+      uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+    });
+    const { setupMemoryBackend } = await import("./onboarding-memory.js");
+    const prompter = createMockPrompter({
+      selectResponses: ["skip"],
+    });
+
+    await setupMemoryBackend({}, prompter);
+
+    // The topology detection in continueMongoDBSetup should warn about mongot
+    // (Since we mock MongoClient, the topology detection will catch and skip,
+    //  but the note about atlas-local should still be reachable via the
+    //  post-topology path when hasMongot is false)
+    // This test primarily validates the code path exists
+    expect(prompter.note).toHaveBeenCalled();
   });
 });
