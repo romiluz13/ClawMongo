@@ -33,7 +33,7 @@ With mongot's `autoEmbed`, ClawMongo eliminates the embedding pipeline entirely.
 
 mongot delegates to the Voyage AI API using the `autoEmbed` field type in vector search index definitions. At index time, mongot reads the text field from each document and sends it to `voyage-4-large` for embedding. At query time, `$vectorSearch` sends the query text to mongot, which embeds it and runs approximate nearest neighbor (ANN) search.
 
-Configuration: set `memory.mongodb.embeddingMode = "automated"` in ClawMongo config. Provide a Voyage AI API key in your mongot configuration.
+Configuration: set `memory.mongodb.embeddingMode = "automated"` in ClawMongo config. Set the `VOYAGE_API_KEY` environment variable on the `mongodb-atlas-local:preview` container (or pass it to `start-preview.sh`).
 
 ### Configuration Example
 

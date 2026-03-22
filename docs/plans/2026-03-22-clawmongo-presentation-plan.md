@@ -496,27 +496,23 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 ### Required
 
 - **Node.js 22+** (24 recommended)
-- **MongoDB 7.0+** with mongot (MongoDB Community Search)
-- **Voyage AI API key** (for automated embeddings)
+- **MongoDB** via `mongodb-atlas-local:preview` Docker image (bundles mongod + mongot + auto-embeddings)
+- **Voyage AI API key** (set as VOYAGE_API_KEY env var on the container)
 - **LLM API key** (Anthropic Claude recommended, or OpenAI, Google, etc.)
 
 ### MongoDB Setup Options
 
-#### Option A: Docker (Quickest)
+#### Option A: Docker with atlas-local:preview (Quickest)
 
-[Docker compose with mongodb + mongot, ready to go]
+[Single container: docker compose -f docker/mongodb/docker-compose.preview.yml up -d]
 
-#### Option B: Local Install
+#### Option B: Atlas CLI Local Deployment
 
-[mongod + mongot install steps for macOS/Linux]
-
-#### Option C: MongoDB Atlas
-
-[Atlas cluster with Search enabled, connection string]
+[atlas deployments setup clawmongo --type local --port 27017]
 
 ### Voyage AI Setup
 
-[Sign up at voyageai.com, get API key, configure in mongot]
+[Sign up at voyageai.com, get API key, set VOYAGE_API_KEY env var on container]
 
 ## Install ClawMongo
 

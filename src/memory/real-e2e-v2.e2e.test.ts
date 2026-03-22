@@ -1,7 +1,7 @@
 /**
  * Real E2E Test: Memory v2 Architecture — Full Capability Validation
  *
- * Tests ALL v2 capabilities against a live MongoDB (mongod + mongot)
+ * Tests ALL v2 capabilities against a live MongoDB (atlas-local:preview)
  * with realistic multi-turn AI agent simulation data.
  *
  * Run: MONGODB_TEST_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
@@ -86,7 +86,7 @@ async function waitForVectorResults(
   const deadline = Date.now() + timeoutMs;
   let lastResults: MemorySearchResult[] = [];
 
-  // mongot auto-embedding completes in background after ingest; poll until the
+  // atlas-local auto-embedding completes in background after ingest; poll until the
   // vector index starts returning semantic hits or the test timeout expires.
   while (Date.now() < deadline) {
     lastResults = await vectorSearch(chunks, null, {
@@ -1380,7 +1380,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
   // auto-generates embeddings from the "text" field via the Voyage API.
 
   describe("Phase 11: Voyage AI AutoEmbed Vector Search", () => {
-    // Allow up to 90s for mongot to finish embedding documents
+    // Allow up to 90s for atlas-local auto-embed to finish embedding documents
     const VECTOR_SEARCH_TIMEOUT = 90_000;
     const autoEmbedIt = AUTO_EMBED_ENABLED ? it : it.skip;
 

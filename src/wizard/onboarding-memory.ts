@@ -17,16 +17,17 @@ function shouldShowNoDockerHint(reason: string): boolean {
 async function showNoDockerLocalHint(prompter: WizardPrompter): Promise<void> {
   await prompter.note(
     [
-      "Docker is optional. Local MongoDB works without Docker.",
+      "Docker is optional but recommended. The atlas-local Docker image bundles mongod + mongot in one container.",
       "",
-      "Standalone (basic):",
-      "  mongod --dbpath ./data/db --port 27017",
+      "Recommended (atlas-local:preview — includes mongot + auto-embeddings):",
+      "  docker run -d -p 27017:27017 -e VOYAGE_API_KEY=$VOYAGE_API_KEY --name clawmongo-preview mongodb/mongodb-atlas-local:preview",
       "",
-      "Replica set (recommended for transactions + change streams):",
+      "Without Docker (basic mongod only — no search/vector capabilities):",
       "  mongod --dbpath ./data/db --port 27017 --replSet rs0",
       '  mongosh --eval "rs.initiate()"',
+      "  Note: mongot (search + auto-embeddings) is NOT available this way. Use atlas-local Docker for full capabilities.",
       "",
-      "Then continue with URI: mongodb://localhost:27017/openclaw",
+      "Then continue with URI: mongodb://localhost:27017/clawmongo?directConnection=true",
     ].join("\n"),
     "Local MongoDB (No Docker)",
   );

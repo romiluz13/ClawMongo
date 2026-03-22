@@ -252,7 +252,7 @@ ClawMongo falls back to BSON `$text` indexes when mongot is unavailable, but vec
 
 ### Voyage AI embedding errors
 
-Verify your Voyage AI API key is correctly configured in mongot. Test embedding generation:
+Verify the `VOYAGE_API_KEY` environment variable is set on the atlas-local container. Test embedding generation:
 
 ```bash
 curl -X POST "https://api.voyageai.com/v1/embeddings" \
