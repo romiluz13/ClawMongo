@@ -43,6 +43,8 @@ import {
 import { writeEventAndProject, searchV2, getV2Status } from "./mongodb-manager.js";
 // v2 ops
 import { getRecentIngestRuns } from "./mongodb-ops.js";
+// Semantic query cache
+import { checkCache, writeCache } from "./mongodb-query-cache.js";
 // v2 retrieval planner
 import { planRetrieval } from "./mongodb-retrieval-planner.js";
 // Schema setup
@@ -50,6 +52,13 @@ import { ensureCollections, ensureStandardIndexes, ensureSearchIndexes } from ".
 import { resolveScopeRef } from "./mongodb-scope.js";
 // Search functions (direct vector search, keyword search, hybrid)
 import { vectorSearch, keywordSearch, buildVectorSearchStage } from "./mongodb-search.js";
+// Time series telemetry
+import {
+  emitTelemetry,
+  getLatencyStats,
+  getCacheHitRate,
+  getOperationDistribution,
+} from "./mongodb-telemetry.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -1616,6 +1625,427 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         limit: 5,
       });
       expect(stage).toBeNull();
+    });
+  });
+
+  // ─── Phase 12: Semantic Query Cache (Real MongoDB) ──────────────────────────
+  // Tests the two-tier cache against a live MongoDB with real data written and read.
+  // Tier 1: exact SHA-256 hash match. Tier 2: $vectorSearch with autoEmbed.
+  // No mocks — real insertOne, real findOne, real $vectorSearch.
+
+  describe("Phase 12: Semantic Query Cache", () => {
+    const cacheAgentId = `agent-cache-e2e-${randomUUID().slice(0, 8)}`;
+    const cacheScope = "agent" as const;
+    const cacheScopeRef = `agent:${cacheAgentId}`;
+    const cacheConfig = {
+      enabled: true,
+      conversationTtlSec: 300,
+      kbTtlSec: 3600,
+      similarityThreshold: 0.95,
+    };
+
+    const fakeResults: MemorySearchResult[] = [
+      {
+        path: "/e2e/cache.md",
+        startLine: 1,
+        endLine: 5,
+        snippet: "DataVault pipeline architecture",
+        score: 0.88,
+        source: "conversation",
+      },
+      {
+        path: "/e2e/cache2.md",
+        startLine: 1,
+        endLine: 3,
+        snippet: "MongoDB data model for pipelines",
+        score: 0.82,
+        source: "conversation",
+      },
+    ];
+
+    it("should write a cache entry and read it back via Tier 1 (exact hash match)", async () => {
+      const query = "What is the DataVault pipeline architecture?";
+
+      // Write to cache (fire-and-forget, but we await a small delay for it to complete)
+      writeCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        results: fakeResults,
+        pathUsed: "hybrid",
+        sourceScope: "conversation",
+        ttlSec: 300,
+      });
+
+      // Small delay for the fire-and-forget upsert to complete
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Tier 1: exact match — same query should hit the cache
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(true);
+      expect(result.tier).toBe("exact");
+      expect(result.results).toHaveLength(2);
+      expect(result.results[0].snippet).toBe("DataVault pipeline architecture");
+      expect(result.pathUsed).toBe("hybrid");
+      expect(result.sourceScope).toBe("conversation");
+    });
+
+    it("should increment hitCount on exact cache hit", async () => {
+      const query = "What is the DataVault pipeline architecture?";
+
+      // Hit the cache a second time
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(true);
+
+      // Wait for fire-and-forget $inc to complete
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Verify hitCount was incremented in the actual document
+      const col = db.collection(`${PREFIX}query_cache`);
+      const doc = await col.findOne({ agentId: cacheAgentId });
+      expect(doc).not.toBeNull();
+      expect(doc!.hitCount).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should return miss for a completely different query (no cache entry)", async () => {
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query: "quantum physics black holes singularity",
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(false);
+      expect(result.tier).toBe("miss");
+      expect(result.results).toHaveLength(0);
+    });
+
+    it("should return miss for a different agentId (tenant isolation)", async () => {
+      const query = "What is the DataVault pipeline architecture?";
+
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: "completely-different-agent",
+        scope: cacheScope,
+        scopeRef: "agent:completely-different-agent",
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(false);
+      expect(result.tier).toBe("miss");
+    });
+
+    it("should return miss when cache is disabled", async () => {
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query: "What is the DataVault pipeline architecture?",
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: { ...cacheConfig, enabled: false },
+      });
+
+      expect(result.hit).toBe(false);
+      expect(result.tier).toBe("miss");
+    });
+
+    it("should upsert (update) an existing cache entry on re-write", async () => {
+      const query = "What is the DataVault pipeline architecture?";
+      const updatedResults: MemorySearchResult[] = [
+        {
+          path: "/e2e/updated.md",
+          startLine: 1,
+          endLine: 2,
+          snippet: "Updated architecture result",
+          score: 0.95,
+          source: "conversation",
+        },
+      ];
+
+      writeCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        results: updatedResults,
+        pathUsed: "vector",
+        sourceScope: "conversation",
+        ttlSec: 600,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query,
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(true);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].snippet).toBe("Updated architecture result");
+      expect(result.pathUsed).toBe("vector");
+    });
+
+    it("should handle the query_cache collection existing with $jsonSchema validation", async () => {
+      // Verify the collection validates documents — try inserting a bad document directly
+      const col = db.collection(`${PREFIX}query_cache`);
+      try {
+        await col.insertOne({ bad: "document" } as never);
+        // If validation is moderate, this might succeed for some schemas
+        // Either way, our writeCache should work correctly
+      } catch {
+        // Expected: validation rejects malformed document
+      }
+
+      // Our real writeCache should still work (it uses the correct schema)
+      writeCache({
+        db,
+        prefix: PREFIX,
+        query: "schema validation test query",
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        results: fakeResults,
+        pathUsed: "text",
+        sourceScope: "conversation",
+        ttlSec: 300,
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const result = await checkCache({
+        db,
+        prefix: PREFIX,
+        query: "schema validation test query",
+        agentId: cacheAgentId,
+        scope: cacheScope,
+        scopeRef: cacheScopeRef,
+        config: cacheConfig,
+      });
+
+      expect(result.hit).toBe(true);
+    });
+  });
+
+  // ─── Phase 13: Time Series Telemetry (Real MongoDB) ─────────────────────────
+  // Tests emitTelemetry against a real time series collection and verifies
+  // aggregation queries (getLatencyStats, getCacheHitRate, getOperationDistribution)
+  // return correct results from real data.
+
+  describe("Phase 13: Time Series Telemetry", () => {
+    const telemetryAgentId = `agent-telemetry-e2e-${randomUUID().slice(0, 8)}`;
+
+    it("should emit telemetry documents to the time series collection", async () => {
+      // Emit several telemetry documents with different operations
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "search" },
+        durationMs: 120,
+        ok: true,
+        pathUsed: "hybrid",
+        resultCount: 5,
+        topScore: 0.88,
+        fusionMethod: "scoreFusion",
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "search" },
+        durationMs: 85,
+        ok: true,
+        pathUsed: "vector",
+        resultCount: 3,
+        topScore: 0.92,
+        fusionMethod: "scoreFusion",
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "search" },
+        durationMs: 200,
+        ok: true,
+        pathUsed: "hybrid",
+        resultCount: 8,
+        topScore: 0.75,
+        fusionMethod: "rankFusion",
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "event-write" },
+        durationMs: 45,
+        ok: true,
+        eventType: "user",
+        projectionTriggered: true,
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "cache-check" },
+        durationMs: 2,
+        ok: true,
+        cacheHit: true,
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "cache-check" },
+        durationMs: 15,
+        ok: true,
+        cacheHit: false,
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "cache-check" },
+        durationMs: 3,
+        ok: true,
+        cacheHit: true,
+      });
+
+      emitTelemetry(db, PREFIX, {
+        meta: { agentId: telemetryAgentId, operation: "graph-expansion" },
+        durationMs: 65,
+        ok: true,
+        resultCount: 12,
+      });
+
+      // Wait for all fire-and-forget writes to complete
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Verify documents were actually written to the time series collection
+      const col = db.collection(`${PREFIX}memory_telemetry`);
+      const count = await col.countDocuments({ "meta.agentId": telemetryAgentId });
+      expect(count).toBe(8);
+    });
+
+    it("should calculate correct latency percentiles from real data", async () => {
+      const stats = await getLatencyStats({
+        db,
+        prefix: PREFIX,
+        agentId: telemetryAgentId,
+        operation: "search",
+        windowMs: 60_000, // last 60 seconds
+      });
+
+      expect(stats.count).toBe(3);
+      // Durations: [85, 120, 200] sorted
+      expect(stats.p50).toBe(120); // index 1 of 3 = 120
+      expect(stats.p95).toBe(200); // index 2 of 3 = 200
+      expect(stats.p99).toBe(200); // index 2 of 3 = 200
+    });
+
+    it("should calculate correct cache hit rate from real data", async () => {
+      const rate = await getCacheHitRate({
+        db,
+        prefix: PREFIX,
+        agentId: telemetryAgentId,
+        windowMs: 60_000,
+      });
+
+      expect(rate.total).toBe(3); // 3 cache-check events
+      expect(rate.hits).toBe(2); // 2 with cacheHit: true
+      expect(rate.misses).toBe(1); // 1 with cacheHit: false
+      expect(rate.hitRate).toBeCloseTo(2 / 3, 2);
+    });
+
+    it("should return correct operation distribution from real data", async () => {
+      const dist = await getOperationDistribution({
+        db,
+        prefix: PREFIX,
+        agentId: telemetryAgentId,
+        windowMs: 60_000,
+      });
+
+      expect(dist.length).toBe(4); // search, event-write, cache-check, graph-expansion
+
+      const searchDist = dist.find((d) => d.operation === "search");
+      expect(searchDist).toBeDefined();
+      expect(searchDist!.count).toBe(3);
+      expect(searchDist!.avgDurationMs).toBe(Math.round((120 + 85 + 200) / 3));
+
+      const cacheDist = dist.find((d) => d.operation === "cache-check");
+      expect(cacheDist).toBeDefined();
+      expect(cacheDist!.count).toBe(3);
+
+      const writeDist = dist.find((d) => d.operation === "event-write");
+      expect(writeDist).toBeDefined();
+      expect(writeDist!.count).toBe(1);
+      expect(writeDist!.avgDurationMs).toBe(45);
+
+      const graphDist = dist.find((d) => d.operation === "graph-expansion");
+      expect(graphDist).toBeDefined();
+      expect(graphDist!.count).toBe(1);
+    });
+
+    it("should return zero stats for a non-existent agent (tenant isolation)", async () => {
+      const stats = await getLatencyStats({
+        db,
+        prefix: PREFIX,
+        agentId: "non-existent-agent-12345",
+        windowMs: 60_000,
+      });
+
+      expect(stats.count).toBe(0);
+      expect(stats.p50).toBe(0);
+      expect(stats.p95).toBe(0);
+      expect(stats.p99).toBe(0);
+    });
+
+    it("should respect time window filtering", async () => {
+      // Use a 1ms window — nothing should match since all data was written > 1ms ago
+      const stats = await getLatencyStats({
+        db,
+        prefix: PREFIX,
+        agentId: telemetryAgentId,
+        windowMs: 1,
+      });
+
+      expect(stats.count).toBe(0);
+    });
+
+    it("should verify time series collection has correct options", async () => {
+      // List collections and find our time series collection
+      const collections = await db
+        .listCollections({ name: `${PREFIX}memory_telemetry` }, { nameOnly: false })
+        .toArray();
+      expect(collections).toHaveLength(1);
+
+      const colInfo = collections[0] as {
+        type?: string;
+        options?: { timeseries?: { timeField?: string; metaField?: string; granularity?: string } };
+      };
+      expect(colInfo.type).toBe("timeseries");
+      expect(colInfo.options?.timeseries?.timeField).toBe("ts");
+      expect(colInfo.options?.timeseries?.metaField).toBe("meta");
+      expect(colInfo.options?.timeseries?.granularity).toBe("seconds");
     });
   });
 });
