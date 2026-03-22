@@ -1,7 +1,7 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.23",
-  "description": "The MongoDB edition of OpenClaw - personal AI assistant with production-grade MongoDB memory, 22 channels, knowledge graph, episode materialization, and Voyage AI vector search",
+  "version": "2026.3.24",
+  "description": "OpenClaw, but it remembers. Full AI assistant (22 channels, 78 extensions, voice, apps) with MongoDB memory - vector search, knowledge graph, event-sourcing, KB, and 8 retrieval paths. Nothing is ever lost.",
   "keywords": [
     "mongodb",
     "ai-assistant",
@@ -29,7 +29,7 @@
     "url": "https://github.com/romiluz13/ClawMongo/issues"
   },
   "license": "MIT",
-  "author": "Rom Iluz <rom@openclaw.ai>",
+  "author": "Rom Iluz <rom@iluz.net>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/romiluz13/ClawMongo.git"

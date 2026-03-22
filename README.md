@@ -1,4 +1,4 @@
-# ClawMongo -- The MongoDB Edition of OpenClaw
+# ClawMongo -- OpenClaw, but it remembers.
 
 <p align="center">
   <img src="./README-clawmongo-header-v2.png" alt="ClawMongo" width="100%">
@@ -11,7 +11,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
 </p>
 
-ClawMongo is [OpenClaw](https://github.com/openclaw/openclaw) (329K stars, 22 messaging channels, native apps on macOS/iOS/Android, 78 extensions) with its memory system replaced by a production-grade MongoDB backend. Where OpenClaw defaults to QMD (SQLite + Markdown), ClawMongo uses MongoDB Community + mongot + Voyage AI to deliver vector search, knowledge graphs, episode materialization, event-sourcing, and 8 retrieval paths -- all inside a single database.
+Same channels. Same plugins. Same voice. But your agent's memory lives in MongoDB -- not in files that corrupt, disappear, or overflow your context window.
+
+ClawMongo is [OpenClaw](https://github.com/openclaw/openclaw) (329K+ stars, 22 messaging channels, native apps, 78 extensions) with its memory replaced by a production MongoDB backend. Where OpenClaw defaults to QMD (SQLite + Markdown files), ClawMongo uses MongoDB Community + mongot + Voyage AI for vector search, knowledge graphs, episode materialization, event-sourcing, and 8 retrieval paths -- all in one database. Nothing is ever lost.
 
 [ClawMongo Repo](https://github.com/romiluz13/ClawMongo) |
 [Getting Started](docs/start/clawmongo-getting-started.md) |
@@ -24,15 +26,15 @@ ClawMongo is [OpenClaw](https://github.com/openclaw/openclaw) (329K stars, 22 me
 
 ## What Is ClawMongo?
 
-Like Ubuntu is to Linux, ClawMongo is the MongoDB edition of OpenClaw. You get the full OpenClaw personal AI assistant -- 22 messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, Matrix, and 14 more), 78 extensions (25+ LLM providers, tools, media, infra), companion apps for macOS/iOS/Android, voice wake, live canvas, and the entire skills platform -- plus a MongoDB-native memory system that replaces the default SQLite/Markdown backend.
+The full OpenClaw personal AI assistant -- 22 messaging channels (WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, Matrix, and 14 more), 78 extensions (25+ LLM providers, tools, media, infra), companion apps for macOS/iOS/Android, voice wake, live canvas, and the entire skills platform -- with a MongoDB brain instead of files.
 
-ClawMongo is **not** a memory library. It is a complete personal AI assistant that happens to use MongoDB as its data layer. The product is the assistant. The MongoDB memory is what makes it production-ready.
+ClawMongo is **not** a memory library. It is a complete personal AI assistant with a real database behind it. The product is the assistant. MongoDB is what makes it production-ready.
 
-**Three audiences, in priority order:**
+**Who is this for:**
 
-1. **OpenClaw power users** who need retrieval quality, operational visibility, and a real database behind their assistant's memory.
-2. **MongoDB developers** who want a personal AI assistant that stores everything in the database they already know and operate.
-3. **Production teams** who need schema validation, multi-tenant isolation, change streams, and explain-driven diagnostics on their agent's recall system.
+1. **OpenClaw users** whose agent forgot something important. Again. You want a real backend, not files.
+2. **MongoDB developers** who want a personal AI assistant that stores everything in the database you already know and operate.
+3. **Teams building Company OS** -- multi-agent systems that need shared memory, knowledge bases, audit trails, and enterprise-grade isolation. All in MongoDB.
 
 ---
 
