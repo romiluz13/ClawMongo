@@ -1,14 +1,35 @@
 {
   "name": "@romiluz/clawmongo",
   "version": "2026.3.22",
-  "description": "MongoDB-first multi-channel agent runtime built on OpenClaw",
-  "keywords": [],
+  "description": "The MongoDB edition of OpenClaw - personal AI assistant with production-grade MongoDB memory, 22 channels, knowledge graph, episode materialization, and Voyage AI vector search",
+  "keywords": [
+    "mongodb",
+    "ai-assistant",
+    "personal-ai",
+    "openclaw",
+    "agent-memory",
+    "vector-search",
+    "knowledge-graph",
+    "voyage-ai",
+    "multi-channel",
+    "whatsapp",
+    "telegram",
+    "discord",
+    "slack",
+    "event-sourcing",
+    "graphlookup",
+    "mongot",
+    "hybrid-search",
+    "episode-materialization",
+    "retrieval-planner",
+    "typescript"
+  ],
   "homepage": "https://github.com/romiluz13/ClawMongo#readme",
   "bugs": {
     "url": "https://github.com/romiluz13/ClawMongo/issues"
   },
   "license": "MIT",
-  "author": "",
+  "author": "Rom Iluz <rom@openclaw.ai>",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/romiluz13/ClawMongo.git"
