@@ -95,6 +95,12 @@ const buildPluginCompatibilityNotices = vi.hoisted(() =>
 const formatPluginCompatibilityNotice = vi.hoisted(() =>
   vi.fn((notice: PluginCompatibilityNotice) => `${notice.pluginId} ${notice.message}`),
 );
+const resolveOpenClawPackageName = vi.hoisted(() => vi.fn(async () => "openclaw"));
+
+vi.mock("../infra/openclaw-root.js", () => ({
+  resolveOpenClawPackageName,
+  resolveOpenClawPackageRootSync: vi.fn(() => null),
+}));
 
 vi.mock("../commands/onboard-channels.js", () => ({
   setupChannels,

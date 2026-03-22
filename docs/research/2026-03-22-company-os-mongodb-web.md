@@ -1,11 +1,13 @@
 # Web Research: Company OS -- AI Agents as the Operating System for Companies, and Why MongoDB Is the Ideal Database
 
 ## Execution
+
 - Preferred backend: websearch+webfetch
 - Allowed fallbacks: webfetch-only
 - Research round: 1
 
 ## Sources Used
+
 - WebFetch: MongoDB product pages, blog, newsroom, investor relations (multiple URLs)
 - WebFetch: Anthropic's building effective agents guide
 - WebFetch: LangChain/LangGraph agent documentation
@@ -17,6 +19,7 @@
 - Failed sources: Reddit (blocked), Google Search (JS-rendered), McKinsey (timeout), Gartner (403), a16z/Sequoia (404s), multiple MongoDB developer docs (CSS-only rendering)
 
 ## Research Quality
+
 - Status: PARTIAL
 - Quality level: medium
 - Backend mode: webfetch-only
@@ -31,6 +34,7 @@
 "Company OS" is the emerging idea that AI agents will collectively form the **operating system of a company** -- handling workflows, decisions, and coordination the way an OS handles processes, memory, and I/O for a computer.
 
 Just as a computer OS manages:
+
 - **Processes** (running programs concurrently)
 - **Memory** (shared and isolated state)
 - **File system** (persistent knowledge)
@@ -38,6 +42,7 @@ Just as a computer OS manages:
 - **Security** (access control, permissions)
 
 A Company OS manages:
+
 - **Agents** (sales agent, support agent, engineering agent running concurrently)
 - **Memory** (shared company knowledge and per-agent context)
 - **Knowledge base** (documents, procedures, policies)
@@ -57,17 +62,17 @@ The trend manifests across multiple layers:
 
 From the research, the requirements cluster into:
 
-| Requirement | Why |
-|---|---|
-| **Multi-agent orchestration** | Companies need many specialized agents, not one monolith |
-| **Shared memory with isolation** | Agents must share company knowledge but maintain per-agent context |
-| **Persistent knowledge base** | Company documents, SOPs, product info must be retrievable by agents |
-| **Audit trail** | Every agent action must be traceable for compliance and debugging |
-| **Channel multiplexing** | Agents must operate across email, chat, voice, web simultaneously |
-| **Human-in-the-loop** | Critical decisions must route to humans with full context |
-| **Durable execution** | Long-running agent workflows must survive failures |
-| **Access control** | Agents must respect data boundaries (HR data vs. sales data) |
-| **Observability** | Operators must see what agents are doing and why |
+| Requirement                      | Why                                                                 |
+| -------------------------------- | ------------------------------------------------------------------- |
+| **Multi-agent orchestration**    | Companies need many specialized agents, not one monolith            |
+| **Shared memory with isolation** | Agents must share company knowledge but maintain per-agent context  |
+| **Persistent knowledge base**    | Company documents, SOPs, product info must be retrievable by agents |
+| **Audit trail**                  | Every agent action must be traceable for compliance and debugging   |
+| **Channel multiplexing**         | Agents must operate across email, chat, voice, web simultaneously   |
+| **Human-in-the-loop**            | Critical decisions must route to humans with full context           |
+| **Durable execution**            | Long-running agent workflows must survive failures                  |
+| **Access control**               | Agents must respect data boundaries (HR data vs. sales data)        |
+| **Observability**                | Operators must see what agents are doing and why                    |
 
 ---
 
@@ -113,6 +118,7 @@ Drawing from the research and ClawMongo's architecture:
 From successfully fetched MongoDB sources:
 
 **MongoDB's headline AI positioning** (mongodb.com/use-cases/artificial-intelligence): "AI isn't forcing change. It is the change." They position three core AI capabilities:
+
 1. Semantic Search
 2. Retrieval Augmented Generation (RAG)
 3. **Agentic AI** -- explicitly called out as a primary use case
@@ -122,11 +128,13 @@ From successfully fetched MongoDB sources:
 **MongoDB's Voyage AI acquisition** (investor relations, Q4 FY2025): "Following the Voyage AI acquisition, we combine real-time data, sophisticated embedding and retrieval models and semantic search directly in the database." This is the key strategic move -- embeddings are now native to MongoDB, not an external service.
 
 **MongoDB's January 2026 announcements** (newsroom):
+
 - **Automated Embedding**: MongoDB automatically generates and stores embeddings when data is inserted, updated, or queried. No external embedding pipeline needed.
 - **Voyage 4 models**: Four tiers of embedding models (general, large, lite, nano) including multimodal (text + images + video).
 - **MongoDB Community support**: Automated embedding available in Community edition, not just Atlas.
 
 **Customer validation** (mongodb.com):
+
 - Factory: "MongoDB's ability to handle rapid scaling without breaking under user load"
 - Tavily: "MongoDB lets lean startups focus on business rather than infrastructure"
 - Scalestack: "Atlas Vector Search for contextually relevant AI responses"
@@ -135,20 +143,20 @@ From successfully fetched MongoDB sources:
 
 ### The Technical Case: MongoDB vs. Alternatives
 
-| Capability | MongoDB | PostgreSQL (pgvector) | Redis | Pinecone | SQLite |
-|---|---|---|---|---|---|
-| **Document model** | Native (BSON) | JSON columns (bolted on) | Key-value only | None | None |
-| **Vector search** | Atlas Vector Search (native) | pgvector extension | Redis VSS module | Native (vector-only) | None |
-| **Full-text search** | Atlas Search (Lucene-based) | Built-in (basic) | RediSearch | None | FTS5 (basic) |
-| **Hybrid search** | Single aggregation pipeline | Requires multiple queries + app-side fusion | Limited | API-side only | Manual |
-| **Graph traversal** | $graphLookup (native) | Recursive CTEs (verbose) | None | None | None |
-| **Transactions** | Multi-document ACID | Full ACID | Limited (Lua scripts) | None | WAL-mode |
-| **Change Streams** | Native real-time | LISTEN/NOTIFY (limited) | Pub/Sub (volatile) | None | None |
-| **Schema flexibility** | Core design | Requires migrations | N/A | N/A | Requires migrations |
-| **Horizontal scaling** | Sharding (native) | Citus (extension) | Cluster | Managed | None |
-| **Embedded embeddings** | Voyage AI (native, automated) | External service required | External service required | Built-in but vector-only | External service required |
-| **TTL indexes** | Native | Requires cron/extension | Native (EXPIRE) | Metadata TTL | Manual |
-| **Replication/HA** | Replica sets (native) | Streaming replication | Sentinel/Cluster | Managed | None |
+| Capability              | MongoDB                       | PostgreSQL (pgvector)                       | Redis                     | Pinecone                 | SQLite                    |
+| ----------------------- | ----------------------------- | ------------------------------------------- | ------------------------- | ------------------------ | ------------------------- |
+| **Document model**      | Native (BSON)                 | JSON columns (bolted on)                    | Key-value only            | None                     | None                      |
+| **Vector search**       | Atlas Vector Search (native)  | pgvector extension                          | Redis VSS module          | Native (vector-only)     | None                      |
+| **Full-text search**    | Atlas Search (Lucene-based)   | Built-in (basic)                            | RediSearch                | None                     | FTS5 (basic)              |
+| **Hybrid search**       | Single aggregation pipeline   | Requires multiple queries + app-side fusion | Limited                   | API-side only            | Manual                    |
+| **Graph traversal**     | $graphLookup (native)         | Recursive CTEs (verbose)                    | None                      | None                     | None                      |
+| **Transactions**        | Multi-document ACID           | Full ACID                                   | Limited (Lua scripts)     | None                     | WAL-mode                  |
+| **Change Streams**      | Native real-time              | LISTEN/NOTIFY (limited)                     | Pub/Sub (volatile)        | None                     | None                      |
+| **Schema flexibility**  | Core design                   | Requires migrations                         | N/A                       | N/A                      | Requires migrations       |
+| **Horizontal scaling**  | Sharding (native)             | Citus (extension)                           | Cluster                   | Managed                  | None                      |
+| **Embedded embeddings** | Voyage AI (native, automated) | External service required                   | External service required | Built-in but vector-only | External service required |
+| **TTL indexes**         | Native                        | Requires cron/extension                     | Native (EXPIRE)           | Metadata TTL             | Manual                    |
+| **Replication/HA**      | Replica sets (native)         | Streaming replication                       | Sentinel/Cluster          | Managed                  | None                      |
 
 ### The "Single Database" Argument
 
@@ -175,16 +183,19 @@ This is critical for Company OS because:
 When a company runs multiple agents (sales, support, engineering, HR, finance), they face fundamental data architecture questions:
 
 **What must be shared?**
+
 - Company knowledge base (product docs, SOPs, policies)
 - Customer records and interaction history
 - Cross-department context ("this customer spoke to support about X, now they're talking to sales about Y")
 
 **What must be isolated?**
+
 - Per-agent working memory (current conversation state)
 - Department-specific confidential data (HR records, financial data)
 - Agent-specific learned behaviors and procedures
 
 **What requires controlled access?**
+
 - Customer PII (accessible to support, not to marketing analytics agent)
 - Financial data (accessible to finance agent, read-only for executive agent)
 - Draft content (accessible to creator, not to other agents until published)
@@ -194,11 +205,13 @@ When a company runs multiple agents (sales, support, engineering, HR, finance), 
 From CrewAI's documentation (successfully fetched) and Lilian Weng's survey:
 
 **CrewAI's unified memory model** uses a single Memory class with intelligent scope inference. Memories are organized into hierarchical scopes (like filesystem paths: `/project/alpha`, `/agent/researcher`). Retrieval uses composite scoring blending:
+
 - Semantic similarity (vector distance)
 - Recency decay (exponential, configurable half-life)
 - Importance scores (assigned during encoding)
 
 **Lilian Weng's agent memory taxonomy** maps to human memory:
+
 - **Sensory memory**: Raw input embeddings
 - **Short-term memory**: In-context (limited by context window)
 - **Long-term memory**: External vector stores with fast retrieval
@@ -206,6 +219,7 @@ From CrewAI's documentation (successfully fetched) and Lilian Weng's survey:
 She identifies the fundamental tension: "while vector stores and retrieval mechanisms expand the knowledge pool beyond context limitations, their representation power is not as powerful as full attention."
 
 **ClawMongo's v2 architecture** (from the codebase) provides the most complete model:
+
 - **Events**: Primary write target, every interaction is an event (immutable audit trail)
 - **Chunks**: Derived from events, the unit of vector search
 - **Entities**: Extracted people, organizations, concepts, systems
@@ -243,6 +257,7 @@ This maps to MongoDB collections with field-level RBAC, TTL indexes for lifecycl
 ### Why Keeping Them Separate Breaks Things
 
 The traditional architecture separates:
+
 - **Knowledge Base** (Pinecone/Weaviate for documents) from
 - **Conversation Memory** (Redis/PostgreSQL for chat history) from
 - **Entity Store** (Neo4j for relationships)
@@ -275,19 +290,19 @@ When KB and memory live in the same database:
 
 From OpenAI's governance paper (fetched), LangSmith's observability docs (fetched), and MongoDB's enterprise positioning:
 
-| Requirement | Why It Matters | How MongoDB Delivers |
-|---|---|---|
-| **Audit trail** | Every agent action must be traceable for compliance (SOX, HIPAA, GDPR) | Event sourcing pattern + Change Streams + oplog |
-| **RBAC** | Different departments need different data access | Native RBAC with field-level redaction |
-| **Encryption** | Data at rest and in transit must be encrypted | TLS, encryption at rest, Client-Side Field Level Encryption (CSFLE) |
-| **Backup/PITR** | Must be able to restore to any point in time | Atlas continuous backup with point-in-time recovery |
-| **Scalability** | 10 agents today, 1000 tomorrow | Sharding with zone-based partitioning |
-| **High availability** | Agents are production infrastructure, not toys | Replica sets with automatic failover |
-| **Observability** | Must see what agents are doing and why | Change Streams, query profiling, Atlas monitoring |
-| **Data residency** | Enterprise data may not leave certain regions | Atlas multi-region, zone-based sharding |
-| **Multi-tenancy** | Multiple teams/departments with isolated data | Database-level or collection-level isolation with RBAC |
-| **Rate limiting** | Agents must not overwhelm downstream systems | Connection pooling, operation profiling |
-| **Compliance certification** | SOC 2, HIPAA, PCI DSS, FedRAMP | MongoDB Atlas has all major certifications |
+| Requirement                  | Why It Matters                                                         | How MongoDB Delivers                                                |
+| ---------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| **Audit trail**              | Every agent action must be traceable for compliance (SOX, HIPAA, GDPR) | Event sourcing pattern + Change Streams + oplog                     |
+| **RBAC**                     | Different departments need different data access                       | Native RBAC with field-level redaction                              |
+| **Encryption**               | Data at rest and in transit must be encrypted                          | TLS, encryption at rest, Client-Side Field Level Encryption (CSFLE) |
+| **Backup/PITR**              | Must be able to restore to any point in time                           | Atlas continuous backup with point-in-time recovery                 |
+| **Scalability**              | 10 agents today, 1000 tomorrow                                         | Sharding with zone-based partitioning                               |
+| **High availability**        | Agents are production infrastructure, not toys                         | Replica sets with automatic failover                                |
+| **Observability**            | Must see what agents are doing and why                                 | Change Streams, query profiling, Atlas monitoring                   |
+| **Data residency**           | Enterprise data may not leave certain regions                          | Atlas multi-region, zone-based sharding                             |
+| **Multi-tenancy**            | Multiple teams/departments with isolated data                          | Database-level or collection-level isolation with RBAC              |
+| **Rate limiting**            | Agents must not overwhelm downstream systems                           | Connection pooling, operation profiling                             |
+| **Compliance certification** | SOC 2, HIPAA, PCI DSS, FedRAMP                                         | MongoDB Atlas has all major certifications                          |
 
 ### OpenAI's Governance Framework
 
@@ -296,6 +311,7 @@ OpenAI's practices paper (fetched) identifies the need for "an initial set of pr
 ### LangSmith's Observability Model
 
 LangSmith (fetched) provides a reference architecture for agent observability:
+
 - **Runs and Traces**: Every agent action is a "run" (like an OpenTelemetry span). Related runs form "traces."
 - **Projects and Threads**: Traces are organized by application (project) and conversation (thread via session_id).
 - **Feedback loops**: Inline feedback, manual annotations, and automated evaluators.
@@ -328,6 +344,7 @@ From the January 2026 announcements (fetched from newsroom):
 ### MongoDB's Blog Activity on Agentic AI (March 2026)
 
 From the blog index (fetched):
+
 - **"The Modern End-to-End Digital Lending Journey Powered by MongoDB and Agentic AI"** (March 18, 2026) -- agentic AI for financial workflows
 - **"How MongoDB Atlas Powers Agentic AI for Semiconductor Yield Optimization"** (March 5, 2026) -- agentic AI for manufacturing
 - **Multiple startup stories** using MongoDB for AI-native workflows (Modelence, Emergent Labs, Heidi, Thesys)
@@ -394,4 +411,5 @@ No other database offers this. PostgreSQL/pgvector requires external embedding A
 - https://supabase.com/blog/ai-agents -- Supabase's agent database perspective (enforcement layer)
 
 ---
+
 Web research complete.

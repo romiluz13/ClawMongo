@@ -33,6 +33,7 @@ export type AutoSetupResult =
 // ---------------------------------------------------------------------------
 
 const TIER_LABELS: Record<ComposeTier, string> = {
+  preview: "Preview: atlas-local single container (mongod + mongot + search + auto-embeddings)",
   fullstack: "Full stack: replica set + mongot (ACID transactions, vector search, analytics)",
   replicaset: "Replica set (ACID transactions, change streams, no vector search)",
   standalone: "Standalone with basic features (no transactions, no vector search)",

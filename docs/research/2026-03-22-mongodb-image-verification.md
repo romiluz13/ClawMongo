@@ -1,11 +1,13 @@
 # Web Research: MongoDB Docker Image Verification for Auto-Embeddings
 
 ## Execution
+
 - Preferred backend: websearch+webfetch
 - Allowed fallbacks: websearch-only
 - Research round: 1
 
 ## Sources Used
+
 - Docker Hub API v2 (mongodb/mongodb-atlas-local repository info + tags) -- SUCCESS, primary source
 - Docker Hub API v2 (mongodb/mongodb-community-server repository info) -- SUCCESS
 - Docker Hub API v2 (mongodb/mongodb-community-search repository info + tags) -- SUCCESS
@@ -15,6 +17,7 @@
 - MongoDB blog posts -- FAILED (404 / CSS-only rendering)
 
 ## Research Quality
+
 - Status: COMPLETE
 - Quality level: high
 - Backend mode: websearch+webfetch
@@ -35,6 +38,7 @@ This is confirmed by the official Docker Hub README (retrieved via API):
 > Note: The `preview` tag only supports the latest version of MongoDB.
 >
 > **Current experimental features:**
+>
 > - Use of MongoDB Search in Community image
 >   - This edition of MongoDB Search (mongot) enables use of auto-embedding, utilizing AI to automatically embed your vector indexes.
 >   - Provide your Voyage API key through the environment variable `VOYAGE_API_KEY`.
@@ -49,15 +53,16 @@ This is confirmed by the official Docker Hub README (retrieved via API):
 
 ### Tag breakdown (as of 2026-03-20):
 
-| Tag | MongoDB Version | Digest (prefix) | Auto-Embed? | Notes |
-|-----|----------------|-----------------|-------------|-------|
-| `preview` | Latest (experimental) | `sha256:4f4c43e8...` | YES | Unique image, 584 MB |
-| `latest` | 8.2.6 | `sha256:a3a49321...` | NO | Same as `8.2`, `8.2.6`, `8` |
-| `8.2` | 8.2.6 | `sha256:a3a49321...` | NO | Same as `latest` |
-| `8.0` | 8.0.20 | `sha256:1040c810...` | NO | |
-| `7.0` | 7.0.31 | `sha256:fe2165cf...` | NO | |
+| Tag       | MongoDB Version       | Digest (prefix)      | Auto-Embed? | Notes                       |
+| --------- | --------------------- | -------------------- | ----------- | --------------------------- |
+| `preview` | Latest (experimental) | `sha256:4f4c43e8...` | YES         | Unique image, 584 MB        |
+| `latest`  | 8.2.6                 | `sha256:a3a49321...` | NO          | Same as `8.2`, `8.2.6`, `8` |
+| `8.2`     | 8.2.6                 | `sha256:a3a49321...` | NO          | Same as `latest`            |
+| `8.0`     | 8.0.20                | `sha256:1040c810...` | NO          |                             |
+| `7.0`     | 7.0.31                | `sha256:fe2165cf...` | NO          |                             |
 
 Key observations:
+
 - `preview` has a **completely different digest** from all other tags -- it is a separate, distinct image
 - `preview` is **smaller** (584 MB) vs `latest` (651 MB), suggesting different internal components (uses `mongodb-community-search` mongot instead of standard mongot)
 - `latest` = `8.2` = `8.2.6` = `8` (identical digest `sha256:a3a49321...`)
@@ -65,6 +70,7 @@ Key observations:
 ## Q2: mongodb-atlas-local vs mongodb-community-server
 
 ### mongodb/mongodb-atlas-local
+
 - Includes **both** `mongod` AND `mongot` (MongoDB Search) as a single-node replica set
 - Supports Atlas Search and Atlas Vector Search out of the box
 - The `preview` tag additionally includes experimental auto-embedding via Voyage AI
@@ -73,6 +79,7 @@ Key observations:
 - Last updated: 2026-03-20
 
 ### mongodb/mongodb-community-server
+
 - **mongod only** -- no mongot, no Atlas Search, no Vector Search, no auto-embeddings
 - Description: "The Official MongoDB Community Server"
 - Just the database server, no search functionality bundled
@@ -80,6 +87,7 @@ Key observations:
 - Last updated: 2026-03-22
 
 ### mongodb/mongodb-community-search (mongot standalone)
+
 - The search service (mongot) as a standalone image
 - Open source under SSPL v1
 - Latest version: 0.60.1 (2026-01-15)
@@ -94,12 +102,14 @@ Key observations:
 ### Status: EXPERIMENTAL / PREVIEW
 
 Auto-embedding is:
+
 - Part of the "MongoDB Search in Community" initiative
 - Available only through the `preview` tag of `mongodb-atlas-local`
 - NOT generally available (GA)
 - Subject to change at any time during the preview period
 
 ### Known limitations (from official Docker Hub README):
+
 1. **MongoDB Search in Community image is in preview and may change at any time**
 2. **`$listSearchIndexes` aggregation stage is not complete** in the preview image
 3. **Only supported embedding provider endpoint is `ai.mongodb.com`** -- you cannot point to Voyage AI directly; you must go through MongoDB's AI gateway
@@ -107,6 +117,7 @@ Auto-embedding is:
 5. **Rate limiting (429) on lower AI Model tiers** -- see Manage Rate Limits docs
 
 ### Configuration:
+
 - Pass Voyage API key via environment variable: `VOYAGE_API_KEY`
 - Example: `docker run -e VOYAGE_API_KEY=your-key -p 27017:27017 mongodb/mongodb-atlas-local:preview`
 
@@ -115,6 +126,7 @@ Auto-embedding is:
 ### CONFIRMED: `preview` supports auto-embeddings; `8.0` / `8.2` / `latest` do NOT.
 
 Evidence:
+
 1. The Docker Hub README explicitly lists auto-embedding under "Current experimental features" of the `preview` tag section only
 2. `preview` has a unique digest (`sha256:4f4c43e8...`) different from all version tags
 3. `preview` is smaller (584 MB vs 639-651 MB) because it uses the community search (mongot) edition instead of the standard proprietary mongot
@@ -131,6 +143,7 @@ The `preview` tag bundles `mongodb-community-search` (the open-source mongot) wh
 ### CONFIRMED: MCP Server defaults to `preview` tag
 
 From the MongoDB MCP Server README:
+
 - `atlas-local-create-deployment` tool: **"Default image is preview"**
 - When no image tag is specified, preview is used by default
 - The MCP Server accepts `MDB_MCP_VOYAGE_API_KEY` configuration: "API key for Voyage AI embeddings service (required for creating Atlas Local deployments with auto-embed vector search capabilities)"
@@ -156,13 +169,13 @@ The single highest-signal finding: **Auto-embedding ONLY works on the `preview` 
 
 ## Image Selection Decision Matrix
 
-| Use Case | Recommended Image | Tag |
-|----------|------------------|-----|
-| Production with vector search (no auto-embed) | `mongodb/mongodb-atlas-local` | `8.0` or `latest` |
-| Development with auto-embedding | `mongodb/mongodb-atlas-local` | `preview` |
-| Auto-embedding required | `mongodb/mongodb-atlas-local` | `preview` (ONLY option) |
-| Basic MongoDB, no search | `mongodb/mongodb-community-server` | `8.0` or `latest` |
-| Standalone mongot for custom setup | `mongodb/mongodb-community-search` | `latest` (0.60.1) |
+| Use Case                                      | Recommended Image                  | Tag                     |
+| --------------------------------------------- | ---------------------------------- | ----------------------- |
+| Production with vector search (no auto-embed) | `mongodb/mongodb-atlas-local`      | `8.0` or `latest`       |
+| Development with auto-embedding               | `mongodb/mongodb-atlas-local`      | `preview`               |
+| Auto-embedding required                       | `mongodb/mongodb-atlas-local`      | `preview` (ONLY option) |
+| Basic MongoDB, no search                      | `mongodb/mongodb-community-server` | `8.0` or `latest`       |
+| Standalone mongot for custom setup            | `mongodb/mongodb-community-search` | `latest` (0.60.1)       |
 
 ## References
 
@@ -177,4 +190,5 @@ The single highest-signal finding: **Auto-embedding ONLY works on the `preview` 
 - Voyage AI Rate Limits: https://www.mongodb.com/docs/voyageai/management/rate-limits/
 
 ---
+
 Web research complete.

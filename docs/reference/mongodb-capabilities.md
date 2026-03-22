@@ -47,13 +47,13 @@ Configuration: set `memory.mongodb.embeddingMode = "automated"` in ClawMongo con
         type: "autoEmbed",
         modality: "text",
         path: "text",
-        model: "voyage-4-large"   // 1024 dimensions
+        model: "voyage-4-large", // 1024 dimensions
       },
       { type: "filter", path: "source" },
       { type: "filter", path: "agentId" },
-      { type: "filter", path: "scope" }
-    ]
-  }
+      { type: "filter", path: "scope" },
+    ],
+  },
 }
 ```
 
@@ -87,11 +87,11 @@ db.chunks.aggregate([
       path: "text",
       numCandidates: 100,
       limit: 10,
-      filter: { agentId: "agent-123", scope: "agent" }
-    }
+      filter: { agentId: "agent-123", scope: "agent" },
+    },
   },
-  { $project: { text: 1, score: { $meta: "vectorSearchScore" } } }
-])
+  { $project: { text: 1, score: { $meta: "vectorSearchScore" } } },
+]);
 ```
 
 The HNSW index provides sub-linear search time. Filter fields (`agentId`, `scope`, `scopeRef`, `source`, `path`) are pre-filtered before vector comparison, so multi-tenant queries remain fast.
@@ -128,10 +128,10 @@ ClawMongo creates mongot text search indexes alongside vector indexes. The text 
         text: { type: "string", analyzer: "lucene.standard" },
         source: { type: "token" },
         agentId: { type: "token" },
-        scope: { type: "token" }
-      }
-    }
-  }
+        scope: { type: "token" },
+      },
+    },
+  },
 }
 ```
 
@@ -208,9 +208,9 @@ db.relations.aggregate([
             connectToField: "fromEntityId",
             as: "connections",
             maxDepth: 1,
-            restrictSearchWithMatch: { agentId: "agent-123" }
-          }
-        }
+            restrictSearchWithMatch: { agentId: "agent-123" },
+          },
+        },
       ],
       inbound: [
         { $match: { toEntityId: rootEntityId } },
@@ -222,13 +222,13 @@ db.relations.aggregate([
             connectToField: "toEntityId",
             as: "connections",
             maxDepth: 1,
-            restrictSearchWithMatch: { agentId: "agent-123" }
-          }
-        }
-      ]
-    }
-  }
-])
+            restrictSearchWithMatch: { agentId: "agent-123" },
+          },
+        },
+      ],
+    },
+  },
+]);
 ```
 
 The `restrictSearchWithMatch` parameter is essential for multi-tenant isolation -- it ensures `$graphLookup` never traverses into another agent's data.
@@ -343,7 +343,7 @@ The `MongoDBChangeStreamWatcher` class opens a change stream on memory collectio
 // Change stream setup (simplified)
 const changeStream = collection.watch([], {
   fullDocument: "updateLookup",
-  resumeAfter: savedResumeToken
+  resumeAfter: savedResumeToken,
 });
 
 changeStream.on("change", (event) => {
@@ -376,13 +376,13 @@ ClawMongo creates TTL indexes on three collection types:
 // Embedding cache: expire after N days
 await embeddingCache.createIndex(
   { updatedAt: 1 },
-  { name: "idx_cache_ttl", expireAfterSeconds: days * 86400 }
+  { name: "idx_cache_ttl", expireAfterSeconds: days * 86400 },
 );
 
 // Relevance telemetry: expire after retention period
 await relevanceRuns.createIndex(
   { ts: 1 },
-  { name: "idx_relruns_ttl", expireAfterSeconds: retentionDays * 86400 }
+  { name: "idx_relruns_ttl", expireAfterSeconds: retentionDays * 86400 },
 );
 ```
 
@@ -443,9 +443,10 @@ ClawMongo separates creation-time fields from mutable fields using MongoDB's `$s
 ```javascript
 // Writing a canonical event (idempotent)
 await events.updateOne(
-  { eventId: eventId },                    // unique key
+  { eventId: eventId }, // unique key
   {
-    $setOnInsert: {                         // only set on first insert
+    $setOnInsert: {
+      // only set on first insert
       eventId,
       agentId,
       role,
@@ -453,17 +454,19 @@ await events.updateOne(
       scope,
       scopeRef,
       timestamp,
-      createdAt: new Date()
+      createdAt: new Date(),
     },
-    $set: {                                 // update on every upsert
-      updatedAt: new Date()
-    }
+    $set: {
+      // update on every upsert
+      updatedAt: new Date(),
+    },
   },
-  { upsert: true }
+  { upsert: true },
 );
 ```
 
 This pattern is used consistently across all collections:
+
 - `eventId` for events (unique: true)
 - `episodeId` for episodes (unique: true)
 - `{agentId, scope, scopeRef, type, key}` for structured memory (unique: true)

@@ -50,10 +50,10 @@ Set `memory.backend = "mongodb"` (this is the default and only valid value).
 
 ### Prerequisites
 
-- A MongoDB 7+ instance (Community or Atlas). Replica set required for transactions and change streams.
-- For vector search: mongot (Atlas Search) running alongside mongod.
-- For automated embeddings: Voyage AI API key (`VOYAGE_API_KEY`).
-- See `docker/mongodb/` for the Docker Compose setup with all three tiers (standalone, replicaset, fullstack).
+- **Recommended:** The `mongodb-atlas-local:preview` Docker image (bundles mongod + mongot + Atlas Search + Vector Search in one container). Start with `./docker/mongodb/start-preview.sh`.
+- For automated embeddings: Voyage AI API key (`VOYAGE_API_KEY`) passed as a container environment variable.
+- Alternative: A standalone MongoDB 7+ instance, but vector search and auto-embeddings require mongot which is bundled in the atlas-local image.
+- See `docker/mongodb/` for Docker setup options (preview recommended, multi-container for advanced use).
 
 ### How MongoDB memory works
 

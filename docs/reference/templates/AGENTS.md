@@ -213,6 +213,7 @@ Periodically (every few days), use a heartbeat to promote important context from
 4. **Do not duplicate** -- before writing, use `memory_search` to check if the fact already exists in MongoDB
 
 Weekly promotion cycle:
+
 - **Daily notes** (`memory/YYYY-MM-DD.md`) are raw capture -- ephemeral by nature
 - **Structured memory** (MongoDB via `memory_write`) is durable -- survives compaction and session resets
 - **MEMORY.md** remains human-authored bridge guidance only -- do not treat it as a memory store
@@ -226,10 +227,11 @@ Compaction summarizes your conversation history to free token space. Key timing 
 **Compact BEFORE giving new instructions, not after.**
 
 If you need to redirect the agent or give it a new task:
+
 1. Run `/compact` first (or let auto-compaction fire)
 2. Then give new instructions on a clean context
 
-Compacting *after* new instructions risks losing those instructions in the summary.
+Compacting _after_ new instructions risks losing those instructions in the summary.
 When auto-compaction fires mid-conversation, the pre-compaction flush stores durable
 facts to MongoDB via `memory_write` -- so important context survives. But instructions
 that were just given may be summarized away.

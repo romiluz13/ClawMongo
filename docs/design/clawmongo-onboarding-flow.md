@@ -47,23 +47,24 @@ The existing onboarding flow (implemented across 34 files in `src/commands/onboa
   - Optimal: 8.2+ (for `$scoreFusion`)
 
 **Error handling:**
+
 - Connection refused: print connection troubleshooting steps
 - Auth failure: prompt for credentials
 - Version too old: warn and suggest upgrade path
 
-### Step 2: mongot Verification
+### Step 2: Search Engine Verification
 
-**Goal:** Verify that MongoDB Search (mongot) is available for text and vector indexing.
+**Goal:** Verify that the atlas-local container's bundled mongot is operational.
 
 - Attempt `collection.listSearchIndexes()` on a probe collection
 - If successful: mongot is available, proceed
 - If failed with "Search Index Management service" error: mongot not available
-  - Print setup instructions for the user's deployment type (Docker, local, Atlas)
+  - Print setup instructions pointing to `./docker/mongodb/start-preview.sh` (atlas-local:preview bundles mongot)
   - Allow proceeding without mongot (degraded mode: BSON `$text` indexes only, no vector search)
 
 **Error handling:**
-- mongot not running: provide platform-specific startup instructions
-- Atlas without Search enabled: link to Atlas Search documentation
+
+- mongot not available: suggest starting with `./docker/mongodb/start-preview.sh` (atlas-local:preview bundles mongot)
 
 ### Step 3: Voyage AI Configuration
 
@@ -72,10 +73,12 @@ The existing onboarding flow (implemented across 34 files in `src/commands/onboa
 - If mongot is available: attempt to create a test vector search index with `autoEmbed`
 - Verify the index reaches `READY` state (not `FAILED` or `PENDING`)
 - If the index fails due to Voyage AI credentials: prompt for Voyage AI API key
+- Set `VOYAGE_API_KEY` when starting the atlas-local container
 - Set `memory.mongodb.embeddingMode = "automated"` in config
 
 **Error handling:**
-- Missing Voyage AI key: prompt for key, provide signup link (voyageai.com)
+
+- Missing Voyage AI key: prompt for key, provide signup link (voyageai.com), suggest restarting container with `VOYAGE_API_KEY=key ./docker/mongodb/start-preview.sh`
 - Invalid key: display error, prompt for re-entry
 - Rate limit: suggest waiting and retrying
 
@@ -92,12 +95,14 @@ The existing onboarding flow (implemented across 34 files in `src/commands/onboa
   - Search indexes created (if mongot available)
 
 **Display to user:**
+
 - Collection count created
 - Index count created
 - Search index status (created / skipped due to no mongot)
 - Any schema validation warnings
 
 **Error handling:**
+
 - Permission denied: suggest database role requirements
 - Index creation failure: log specific index and suggest manual creation
 
@@ -153,18 +158,18 @@ This step is unchanged from the current onboarding flow:
 
 ## Error Handling Summary
 
-| Failure | Recovery | Blocking? |
-|---------|----------|-----------|
-| MongoDB unreachable | Print connection troubleshooting, retry prompt | Yes |
-| Replica set not configured | Warn, suggest `--replSet`, allow proceeding (degraded) | No |
-| MongoDB version < 7.0 | Warn, suggest upgrade | No |
-| mongot not available | Warn, allow proceeding without vector search | No |
-| Voyage AI key missing/invalid | Prompt for key, retry | No (proceed without autoEmbed) |
-| Collection creation failed | Log error, suggest permissions fix | Yes |
-| Index creation failed | Log specific index, continue with others | No |
-| LLM connection failed | Retry prompt, allow different provider | Yes |
-| Channel setup failed | Skip, allow setup later | No |
-| Memory write/read failed | Log error, suggest troubleshooting | Yes |
+| Failure                       | Recovery                                               | Blocking?                      |
+| ----------------------------- | ------------------------------------------------------ | ------------------------------ |
+| MongoDB unreachable           | Print connection troubleshooting, retry prompt         | Yes                            |
+| Replica set not configured    | Warn, suggest `--replSet`, allow proceeding (degraded) | No                             |
+| MongoDB version < 7.0         | Warn, suggest upgrade                                  | No                             |
+| mongot not available          | Warn, allow proceeding without vector search           | No                             |
+| Voyage AI key missing/invalid | Prompt for key, retry                                  | No (proceed without autoEmbed) |
+| Collection creation failed    | Log error, suggest permissions fix                     | Yes                            |
+| Index creation failed         | Log specific index, continue with others               | No                             |
+| LLM connection failed         | Retry prompt, allow different provider                 | Yes                            |
+| Channel setup failed          | Skip, allow setup later                                | No                             |
+| Memory write/read failed      | Log error, suggest troubleshooting                     | Yes                            |
 
 ---
 

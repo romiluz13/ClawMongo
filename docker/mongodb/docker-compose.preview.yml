@@ -1,0 +1,33 @@
+# docker-compose.preview.yml - ClawMongo one-command setup
+# Uses mongodb/mongodb-atlas-local:preview (the ONLY tag with auto-embeddings)
+#
+# Usage:
+#   docker compose -f docker/mongodb/docker-compose.preview.yml up -d
+#   VOYAGE_API_KEY=your-key docker compose -f docker/mongodb/docker-compose.preview.yml up -d
+#
+# What's included (single container):
+#   - mongod (MongoDB 8.x, single-node replica set)
+#   - mongot (community search engine)
+#   - Atlas Search + Atlas Vector Search
+#   - Auto-embeddings via Voyage AI (when VOYAGE_API_KEY is set)
+
+services:
+  mongodb:
+    image: mongodb/mongodb-atlas-local:preview
+    container_name: clawmongo-preview
+    ports:
+      - "${MONGODB_PORT:-27017}:27017"
+    environment:
+      - VOYAGE_API_KEY=${VOYAGE_API_KEY:-}
+    volumes:
+      - clawmongo_preview_data:/data/db
+    # Built-in healthcheck verifies both mongod and mongot are operational
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/runner", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  clawmongo_preview_data:

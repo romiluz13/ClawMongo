@@ -98,11 +98,13 @@ Routing guidance:
 
 ## MongoDB deployment model
 
-ClawMongo is community-first.
+ClawMongo targets `mongodb-atlas-local:preview` -- a single Docker image that bundles
+mongod, mongot (community search engine), Atlas Search, Atlas Vector Search, and
+Voyage AI auto-embeddings in one container.
 
 ### Official ClawMongo target
 
-Use `community-mongot` with automatic embeddings:
+Use the `community-mongot` deployment profile with automatic embeddings:
 
 ```json5
 {
@@ -132,11 +134,11 @@ ClawMongo supports one official deployment profile:
 
 ClawMongo defaults to `embeddingMode: "automated"`.
 
-In this mode, `mongot` delegates embedding generation to the Voyage AI API
-using the API keys you configure during `mongot` initialization. ClawMongo
-does not require application-side embedding code — `mongot` handles embedding
-at index time and query time — but you do need Voyage AI API keys configured
-in your `mongot` deployment.
+In this mode, the bundled mongot inside the `mongodb-atlas-local:preview` container
+delegates embedding generation to the Voyage AI API. Set `VOYAGE_API_KEY` as an
+environment variable when starting the container. ClawMongo does not require
+application-side embedding code -- mongot handles embedding at index time and
+query time automatically.
 
 ## Search behavior
 

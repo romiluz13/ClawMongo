@@ -44,20 +44,20 @@ MongoDB is uniquely suited for agent memory because it combines document flexibi
 
 ClawMongo uses 12 MongoDB capabilities. Each one solves a specific agent memory problem:
 
-| # | Capability | Why It Matters | How It Works |
-|---|-----------|----------------|--------------|
-| 1 | **Automated Embeddings** | No application-side embedding code, no batch jobs, no model version management | mongot calls Voyage AI API at index time and query time via `autoEmbed` |
-| 2 | **Vector Search** | Semantic recall over conversation history and knowledge base | `$vectorSearch` with HNSW indexing on `voyage-4-large` (1024 dimensions) |
-| 3 | **Full-Text Search** | Keyword recall when the user asks for exact terms | mongot text indexes with Lucene standard analyzer |
-| 4 | **Hybrid Search** | Neither vector nor keyword alone is sufficient for agent memory | `$rankFusion` / `$scoreFusion` (MongoDB 8.0+/8.2+), with manual RRF fallback |
-| 5 | **Knowledge Graph** | Agents need to traverse relationships, not just match strings | `$graphLookup` with bi-directional expansion via `$facet` |
-| 6 | **Event-Sourcing** | Every write must be auditable and replayable | Canonical `events` collection with derived projections (chunks, entities, episodes) |
-| 7 | **Schema Validation** | Garbage in, garbage out -- agent memory must be structurally consistent | JSON Schema (`$jsonSchema`) on all 17 validated collections |
-| 8 | **Change Streams** | Multiple gateway instances must stay in sync | Real-time cross-instance notification via MongoDB change streams |
-| 9 | **TTL Indexes** | Embedding caches and telemetry data should expire automatically | `expireAfterSeconds` on `embedding_cache`, `relevance_runs`, `relevance_artifacts` |
-| 10 | **Multi-Tenant Isolation** | One database, many agents, zero data leakage | Compound indexes with `agentId` prefix + `$graphLookup` `restrictSearchWithMatch` |
-| 11 | **Idempotent Upserts** | Network retries and replays must not corrupt memory | `$setOnInsert` for creation-time fields + `$set` for mutable fields on unique compound keys |
-| 12 | **Relevance Telemetry** | You cannot improve retrieval quality without measuring it | `explain`-driven diagnostics across `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
+| #   | Capability                 | Why It Matters                                                                 | How It Works                                                                                         |
+| --- | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 1   | **Automated Embeddings**   | No application-side embedding code, no batch jobs, no model version management | mongot calls Voyage AI API at index time and query time via `autoEmbed`                              |
+| 2   | **Vector Search**          | Semantic recall over conversation history and knowledge base                   | `$vectorSearch` with HNSW indexing on `voyage-4-large` (1024 dimensions)                             |
+| 3   | **Full-Text Search**       | Keyword recall when the user asks for exact terms                              | mongot text indexes with Lucene standard analyzer                                                    |
+| 4   | **Hybrid Search**          | Neither vector nor keyword alone is sufficient for agent memory                | `$rankFusion` / `$scoreFusion` (MongoDB 8.0+/8.2+), with manual RRF fallback                         |
+| 5   | **Knowledge Graph**        | Agents need to traverse relationships, not just match strings                  | `$graphLookup` with bi-directional expansion via `$facet`                                            |
+| 6   | **Event-Sourcing**         | Every write must be auditable and replayable                                   | Canonical `events` collection with derived projections (chunks, entities, episodes)                  |
+| 7   | **Schema Validation**      | Garbage in, garbage out -- agent memory must be structurally consistent        | JSON Schema (`$jsonSchema`) on all 17 validated collections                                          |
+| 8   | **Change Streams**         | Multiple gateway instances must stay in sync                                   | Real-time cross-instance notification via MongoDB change streams                                     |
+| 9   | **TTL Indexes**            | Embedding caches and telemetry data should expire automatically                | `expireAfterSeconds` on `embedding_cache`, `relevance_runs`, `relevance_artifacts`                   |
+| 10  | **Multi-Tenant Isolation** | One database, many agents, zero data leakage                                   | Compound indexes with `agentId` prefix + `$graphLookup` `restrictSearchWithMatch`                    |
+| 11  | **Idempotent Upserts**     | Network retries and replays must not corrupt memory                            | `$setOnInsert` for creation-time fields + `$set` for mutable fields on unique compound keys          |
+| 12  | **Relevance Telemetry**    | You cannot improve retrieval quality without measuring it                      | `explain`-driven diagnostics across `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
 
 For the full technical deep-dive on each capability with code examples: [MongoDB Capabilities in ClawMongo](docs/reference/mongodb-capabilities.md)
 
@@ -65,23 +65,23 @@ For the full technical deep-dive on each capability with code examples: [MongoDB
 
 ## ClawMongo vs Default OpenClaw Memory
 
-| Capability | OpenClaw Default (QMD/SQLite) | ClawMongo (MongoDB) |
-|---|---|---|
-| Storage backend | SQLite file + Markdown files | MongoDB Community (replica set) |
-| Vector search | sqlite-vec or LanceDB | mongot + Voyage AI autoEmbed |
-| Embedding management | Application-side (multiple providers) | Automated via mongot (zero app code) |
-| Full-text search | SQLite FTS5 / BM25 | mongot text indexes (Lucene) |
-| Hybrid search | BM25 + vector with MMR | `$rankFusion` / `$scoreFusion` + RRF |
-| Knowledge graph | None | `$graphLookup` with entities + relations |
-| Episodes | None | Auto-materialized from event windows |
-| Event sourcing | None (append-only Markdown) | Canonical events collection |
-| Structured memory | Basic key-value | Salience, temporal validity, state, provenance |
-| Procedures | None | Versioned workflow artifacts |
-| Retrieval paths | 1 (search) | 8 paths with planner-driven selection |
-| Schema validation | None | JSON Schema on all collections |
-| Multi-tenant isolation | Filesystem separation | Compound indexes with agentId prefix |
-| Operational visibility | Limited | Ingest runs, projection runs, relevance telemetry |
-| Data model | Flat files + SQLite rows | 20 collections, 53 indexes |
+| Capability             | OpenClaw Default (QMD/SQLite)         | ClawMongo (MongoDB)                               |
+| ---------------------- | ------------------------------------- | ------------------------------------------------- |
+| Storage backend        | SQLite file + Markdown files          | MongoDB Community (replica set)                   |
+| Vector search          | sqlite-vec or LanceDB                 | mongot + Voyage AI autoEmbed                      |
+| Embedding management   | Application-side (multiple providers) | Automated via mongot (zero app code)              |
+| Full-text search       | SQLite FTS5 / BM25                    | mongot text indexes (Lucene)                      |
+| Hybrid search          | BM25 + vector with MMR                | `$rankFusion` / `$scoreFusion` + RRF              |
+| Knowledge graph        | None                                  | `$graphLookup` with entities + relations          |
+| Episodes               | None                                  | Auto-materialized from event windows              |
+| Event sourcing         | None (append-only Markdown)           | Canonical events collection                       |
+| Structured memory      | Basic key-value                       | Salience, temporal validity, state, provenance    |
+| Procedures             | None                                  | Versioned workflow artifacts                      |
+| Retrieval paths        | 1 (search)                            | 8 paths with planner-driven selection             |
+| Schema validation      | None                                  | JSON Schema on all collections                    |
+| Multi-tenant isolation | Filesystem separation                 | Compound indexes with agentId prefix              |
+| Operational visibility | Limited                               | Ingest runs, projection runs, relevance telemetry |
+| Data model             | Flat files + SQLite rows              | 20 collections, 53 indexes                        |
 
 **Decision rule:** If your workload is one user with small memory files, OpenClaw's default memory is fine. If you need retrieval quality SLOs, operational visibility, knowledge graphs, or team-scale agent memory, ClawMongo is the practical path.
 
@@ -108,15 +108,15 @@ Inbound message / tool output
 
 ### 20 Collections
 
-| Group | Collections |
-|-------|------------|
-| Conversation memory | `chunks`, `files`, `embedding_cache`, `meta` |
-| Knowledge base | `knowledge_base`, `kb_chunks` |
-| Structured memory | `structured_mem`, `structured_mem_revisions` |
-| Procedures | `procedures`, `procedure_revisions` |
+| Group               | Collections                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| Conversation memory | `chunks`, `files`, `embedding_cache`, `meta`                     |
+| Knowledge base      | `knowledge_base`, `kb_chunks`                                    |
+| Structured memory   | `structured_mem`, `structured_mem_revisions`                     |
+| Procedures          | `procedures`, `procedure_revisions`                              |
 | Relevance telemetry | `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
-| v2 event system | `events`, `entities`, `relations`, `entity_links`, `episodes` |
-| Operational | `ingest_runs`, `projection_runs` |
+| v2 event system     | `events`, `entities`, `relations`, `entity_links`, `episodes`    |
+| Operational         | `ingest_runs`, `projection_runs`                                 |
 
 All backed by **53 standard indexes** and **up to 8 MongoDB Search indexes** (4 text + 4 vector autoEmbed).
 
@@ -124,16 +124,16 @@ All backed by **53 standard indexes** and **up to 8 MongoDB Search indexes** (4 
 
 The retrieval planner (`planRetrieval`) scores paths based on query analysis:
 
-| Path | When It Scores High |
-|------|-------------------|
-| `active-critical` | Current-state, crisis, blocker, or "what matters now" queries |
-| `procedural` | Workflow, runbook, process, or exact learned procedure lookups |
-| `structured` | Fact, preference, or current-truth lookups |
-| `raw-window` | Recent context ("what did I just say") |
-| `graph` | Entity names detected in query |
-| `episodic` | Time-range or summary queries |
-| `kb` | Reference material queries |
-| `hybrid` | Broad lexical + vector fallback |
+| Path              | When It Scores High                                            |
+| ----------------- | -------------------------------------------------------------- |
+| `active-critical` | Current-state, crisis, blocker, or "what matters now" queries  |
+| `procedural`      | Workflow, runbook, process, or exact learned procedure lookups |
+| `structured`      | Fact, preference, or current-truth lookups                     |
+| `raw-window`      | Recent context ("what did I just say")                         |
+| `graph`           | Entity names detected in query                                 |
+| `episodic`        | Time-range or summary queries                                  |
+| `kb`              | Reference material queries                                     |
+| `hybrid`          | Broad lexical + vector fallback                                |
 
 After retrieval, `rerankResults` applies source diversity penalty, episode boost, deduplication, and backstop execution.
 
@@ -147,9 +147,12 @@ After retrieval, `rerankResults` applies source diversity penalty, episode boost
 
 ## Quick Start
 
-**Prerequisites:** Node.js 22+ (24 recommended), MongoDB 7.0+ with mongot, Voyage AI API key, an LLM API key (Anthropic Claude recommended).
+**Prerequisites:** Node.js 22+ (24 recommended), Docker (for `mongodb-atlas-local:preview`), Voyage AI API key, an LLM API key (Anthropic Claude recommended).
 
 ```bash
+# Start MongoDB (atlas-local:preview -- bundles mongod + mongot + search)
+./docker/mongodb/start-preview.sh
+
 npm install -g @romiluz/clawmongo@latest
 
 clawmongo onboard --install-daemon
@@ -241,8 +244,8 @@ Full security guide: [docs.openclaw.ai/gateway/security](https://docs.openclaw.a
 
 ## Sponsors
 
-| OpenAI | Vercel | Blacksmith | Convex |
-|--------|--------|------------|--------|
+| OpenAI                                                            | Vercel                                                            | Blacksmith                                                                   | Convex                                                                |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | [![OpenAI](docs/assets/sponsors/openai.svg)](https://openai.com/) | [![Vercel](docs/assets/sponsors/vercel.svg)](https://vercel.com/) | [![Blacksmith](docs/assets/sponsors/blacksmith.svg)](https://blacksmith.sh/) | [![Convex](docs/assets/sponsors/convex.svg)](https://www.convex.dev/) |
 
 ---

@@ -10,31 +10,31 @@ Both are valid choices. The default memory is simpler to set up. ClawMongo is mo
 
 ## Feature Comparison
 
-| Capability | OpenClaw Default (QMD/SQLite) | ClawMongo (MongoDB) |
-|---|---|---|
-| **Storage backend** | SQLite file + Markdown files | MongoDB Community (replica set) |
-| **Vector search** | sqlite-vec extension or LanceDB | mongot + Voyage AI autoEmbed (`voyage-4-large`) |
-| **Embedding management** | Application-side (OpenAI, Gemini, Voyage, Mistral, Ollama) | Automated via mongot (zero application-side code) |
-| **Full-text search** | SQLite FTS5 / BM25 | mongot text indexes (Lucene standard analyzer) |
-| **Hybrid search** | BM25 + vector with MMR diversity | `$rankFusion` / `$scoreFusion` + manual RRF fallback |
-| **Knowledge graph** | None | `$graphLookup` with entities, relations, bi-directional expansion |
-| **Episodes** | None | Auto-materialized from event windows (daily, weekly, thread, topic, decision) |
-| **Event sourcing** | None (append-only Markdown) | Canonical events collection with derived projections |
-| **Structured memory** | Basic key-value facts | Salience, temporal validity, state, provenance, revision tracking |
-| **Procedures** | None | Versioned workflow artifacts with intent tags and ordered steps |
-| **Retrieval paths** | 1 (search) | 8 (active-critical, procedural, structured, raw-window, graph, episodic, kb, hybrid) |
-| **Retrieval planning** | Simple search dispatch | Pure-function planner scoring paths based on query analysis |
-| **Reranking** | MMR (Maximal Marginal Relevance) | Source diversity penalty + episode boost + deduplication |
-| **Schema validation** | None | JSON Schema (`$jsonSchema`) on 17 collections |
-| **Multi-tenant isolation** | Filesystem separation | Compound indexes with `agentId` prefix |
-| **Cross-instance sync** | File sync (rsync, git) | MongoDB replica set + change streams |
-| **Operational visibility** | Limited | Ingest runs, projection runs, relevance telemetry (3 collections) |
-| **Data model** | Flat files + SQLite rows | 20 collections, 53 standard indexes, up to 8 search indexes |
-| **Entity extraction** | None | Rule-based from conversations (@mentions, #tags, URLs, paths, quoted names) |
-| **Graph traversal** | None | `$graphLookup` with `restrictSearchWithMatch` for tenant isolation |
-| **Memory lifecycle** | Manual | TTL indexes for caches/telemetry, consolidation lifecycle for events |
-| **Write idempotency** | File overwrites | `$setOnInsert` + `$set` on unique compound keys |
-| **Diagnostic tools** | Limited | `memory relevance *` CLI with explain-driven telemetry |
+| Capability                 | OpenClaw Default (QMD/SQLite)                              | ClawMongo (MongoDB)                                                                  |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Storage backend**        | SQLite file + Markdown files                               | MongoDB Community (replica set)                                                      |
+| **Vector search**          | sqlite-vec extension or LanceDB                            | mongot + Voyage AI autoEmbed (`voyage-4-large`)                                      |
+| **Embedding management**   | Application-side (OpenAI, Gemini, Voyage, Mistral, Ollama) | Automated via mongot (zero application-side code)                                    |
+| **Full-text search**       | SQLite FTS5 / BM25                                         | mongot text indexes (Lucene standard analyzer)                                       |
+| **Hybrid search**          | BM25 + vector with MMR diversity                           | `$rankFusion` / `$scoreFusion` + manual RRF fallback                                 |
+| **Knowledge graph**        | None                                                       | `$graphLookup` with entities, relations, bi-directional expansion                    |
+| **Episodes**               | None                                                       | Auto-materialized from event windows (daily, weekly, thread, topic, decision)        |
+| **Event sourcing**         | None (append-only Markdown)                                | Canonical events collection with derived projections                                 |
+| **Structured memory**      | Basic key-value facts                                      | Salience, temporal validity, state, provenance, revision tracking                    |
+| **Procedures**             | None                                                       | Versioned workflow artifacts with intent tags and ordered steps                      |
+| **Retrieval paths**        | 1 (search)                                                 | 8 (active-critical, procedural, structured, raw-window, graph, episodic, kb, hybrid) |
+| **Retrieval planning**     | Simple search dispatch                                     | Pure-function planner scoring paths based on query analysis                          |
+| **Reranking**              | MMR (Maximal Marginal Relevance)                           | Source diversity penalty + episode boost + deduplication                             |
+| **Schema validation**      | None                                                       | JSON Schema (`$jsonSchema`) on 17 collections                                        |
+| **Multi-tenant isolation** | Filesystem separation                                      | Compound indexes with `agentId` prefix                                               |
+| **Cross-instance sync**    | File sync (rsync, git)                                     | MongoDB replica set + change streams                                                 |
+| **Operational visibility** | Limited                                                    | Ingest runs, projection runs, relevance telemetry (3 collections)                    |
+| **Data model**             | Flat files + SQLite rows                                   | 20 collections, 53 standard indexes, up to 8 search indexes                          |
+| **Entity extraction**      | None                                                       | Rule-based from conversations (@mentions, #tags, URLs, paths, quoted names)          |
+| **Graph traversal**        | None                                                       | `$graphLookup` with `restrictSearchWithMatch` for tenant isolation                   |
+| **Memory lifecycle**       | Manual                                                     | TTL indexes for caches/telemetry, consolidation lifecycle for events                 |
+| **Write idempotency**      | File overwrites                                            | `$setOnInsert` + `$set` on unique compound keys                                      |
+| **Diagnostic tools**       | Limited                                                    | `memory relevance *` CLI with explain-driven telemetry                               |
 
 ---
 
@@ -101,12 +101,12 @@ After migration, ClawMongo uses MongoDB as the sole memory backend. The original
 
 ## Numbers at a Glance
 
-| Metric | OpenClaw Default | ClawMongo |
-|--------|-----------------|-----------|
-| Collections | ~2 (SQLite tables) | 20 |
-| Indexes | Few | 53 standard + up to 8 search |
-| Retrieval paths | 1 | 8 |
-| Schema-validated collections | 0 | 17 |
-| Unit tests (memory module) | Varies | 573 |
-| v2 memory unit tests | N/A | 205 |
-| Live e2e tests | N/A | 53 (MongoDB 8.2 + Voyage AI) |
+| Metric                       | OpenClaw Default   | ClawMongo                    |
+| ---------------------------- | ------------------ | ---------------------------- |
+| Collections                  | ~2 (SQLite tables) | 20                           |
+| Indexes                      | Few                | 53 standard + up to 8 search |
+| Retrieval paths              | 1                  | 8                            |
+| Schema-validated collections | 0                  | 17                           |
+| Unit tests (memory module)   | Varies             | 573                          |
+| v2 memory unit tests         | N/A                | 205                          |
+| Live e2e tests               | N/A                | 53 (MongoDB 8.2 + Voyage AI) |

@@ -1,11 +1,13 @@
 # Web Research: Documentation Validation Against Official Sources
 
 ## Execution
+
 - Preferred backend: websearch+webfetch
 - Allowed fallbacks: webfetch-only
 - Research round: 1
 
 ## Sources Used
+
 - Docker Hub API (JSON): `hub.docker.com/v2/repositories/mongodb/mongodb-atlas-local/` -- SUCCESS
 - Docker Hub API (JSON): `hub.docker.com/v2/repositories/mongodb/mongodb-atlas-search/` -- SUCCESS
 - Docker Hub API (Tags): `hub.docker.com/v2/repositories/mongodb/mongodb-atlas-local/tags/` -- SUCCESS
@@ -16,6 +18,7 @@
 - MongoDB product pages: `mongodb.com/products/platform/atlas-search` -- SUCCESS (partial)
 
 ## Research Quality
+
 - Status: COMPLETE
 - Quality level: high
 - Backend mode: websearch+webfetch
@@ -26,6 +29,7 @@
 ## Question 1: Docker Compose `version` Field
 
 ### Source
+
 - URL: https://docs.docker.com/reference/compose-file/version-and-name/
 - Fetched: 2026-03-22
 
@@ -49,6 +53,7 @@ Legacy versions 2.x and 3.x of the Compose file format were merged into the unif
 - Using `version:` is harmless but will produce a warning in Docker Compose v2+.
 
 ### Confidence: DEFINITIVE
+
 Source is the canonical Docker Compose Specification reference page.
 
 ---
@@ -56,6 +61,7 @@ Source is the canonical Docker Compose Specification reference page.
 ## Question 2: mongot Docker Image Name
 
 ### Sources
+
 - Docker Hub API: https://hub.docker.com/v2/repositories/mongodb/mongodb-atlas-search/ (full_description)
 - Docker Hub API: https://hub.docker.com/v2/repositories/mongodb/mongodb-atlas-local/ (full_description)
 - Atlas CLI source: https://github.com/mongodb/mongodb-atlas-cli (deployment_opts.go)
@@ -65,6 +71,7 @@ Source is the canonical Docker Compose Specification reference page.
 ### Key Finding: Two Separate Docker Images Exist
 
 #### Image 1: `mongodb/mongodb-atlas-local` (RECOMMENDED)
+
 - **Official description**: "a full deployment of both MongoDB (mongod) and MongoDB Search (mongot) as a single node replica set"
 - **Includes**: mongod + mongot + Atlas Search + Atlas Vector Search
 - **Pull count**: 5.2 million+
@@ -75,6 +82,7 @@ Source is the canonical Docker Compose Specification reference page.
 - **This is what Atlas CLI uses internally**: confirmed by source code constant `LocalDevImage = "docker.io/mongodb/mongodb-atlas-local"`
 
 #### Image 2: `mongodb/mongodb-atlas-search` (LEGACY / NOT RECOMMENDED FOR LOCAL DEV)
+
 - **Official description**: "Atlas Search is an embedded full-text search in MongoDB Atlas that gives you a seamless, scalable experience for building relevance-based app features."
 - **Recommendation from its own description**: "Users interested in running a local Atlas deployment with Atlas Search and Atlas Vector Search for testing and development are recommended to use Atlas CLI."
 - **Pull count**: 1.2 million
@@ -86,6 +94,7 @@ Source is the canonical Docker Compose Specification reference page.
 ### Our Getting-Started Guide Error
 
 Our guide uses `mongodb/mongodb-atlas-search:latest` -- this is **technically a valid image** but is:
+
 1. NOT the recommended approach (MongoDB's own description redirects to Atlas CLI / atlas-local)
 2. Extremely large (~49 GB vs ~683 MB for atlas-local)
 3. Does NOT include mongod -- it is mongot only, requiring a separate MongoDB instance
@@ -111,6 +120,7 @@ services:
 This single image provides mongod + mongot + Atlas Search + Vector Search in one container, with a built-in healthcheck.
 
 ### Confidence: DEFINITIVE
+
 Sources are the official Docker Hub API metadata (JSON), the Atlas CLI Go source code, and the image's own full_description which explicitly recommends atlas-local over atlas-search for local development.
 
 ---
@@ -118,6 +128,7 @@ Sources are the official Docker Hub API metadata (JSON), the Atlas CLI Go source
 ## Question 3: MongoDB Atlas Local Deployment
 
 ### Sources
+
 - Docker Hub API: https://hub.docker.com/v2/repositories/mongodb/mongodb-atlas-local/ (full_description)
 - Docker Hub tags API: https://hub.docker.com/v2/repositories/mongodb/mongodb-atlas-local/tags/
 
@@ -129,33 +140,34 @@ It provides **a full deployment of both MongoDB (mongod) and MongoDB Search (mon
 
 ### Included Out of the Box
 
-| Feature | Included | Notes |
-|---------|----------|-------|
-| mongod (database) | YES | Single-node replica set |
-| mongot (search engine) | YES | Co-located in same container |
-| Atlas Search (full-text) | YES | Available immediately |
-| Atlas Vector Search | YES | Available immediately |
-| Built-in healthcheck | YES | Checks both mongod and mongot every 30s |
-| Authentication | Optional | Via `MONGODB_INITDB_ROOT_USERNAME` / `MONGODB_INITDB_ROOT_PASSWORD` |
-| Init scripts | YES | Mount to `/docker-entrypoint-initdb.d` (.sh or .js) |
-| Sample data loading | Optional | Via `MONGODB_LOAD_SAMPLE_DATA` env var |
-| Multi-arch | YES | amd64 and arm64 |
+| Feature                  | Included | Notes                                                               |
+| ------------------------ | -------- | ------------------------------------------------------------------- |
+| mongod (database)        | YES      | Single-node replica set                                             |
+| mongot (search engine)   | YES      | Co-located in same container                                        |
+| Atlas Search (full-text) | YES      | Available immediately                                               |
+| Atlas Vector Search      | YES      | Available immediately                                               |
+| Built-in healthcheck     | YES      | Checks both mongod and mongot every 30s                             |
+| Authentication           | Optional | Via `MONGODB_INITDB_ROOT_USERNAME` / `MONGODB_INITDB_ROOT_PASSWORD` |
+| Init scripts             | YES      | Mount to `/docker-entrypoint-initdb.d` (.sh or .js)                 |
+| Sample data loading      | Optional | Via `MONGODB_LOAD_SAMPLE_DATA` env var                              |
+| Multi-arch               | YES      | amd64 and arm64                                                     |
 
 ### Available Version Tags (as of 2026-03-20)
 
-| Tag | MongoDB Version | Image Size (amd64) |
-|-----|----------------|-------------------|
-| `latest` | 8.2.x | 683 MB |
-| `8.2.6` | 8.2.6 | 683 MB |
-| `8.2.2` | 8.2.2 | 683 MB |
-| `8.0.18` | 8.0.18 | 670 MB |
-| `8.0.16` | 8.0.16 | 670 MB |
-| `7.0.31` | 7.0.31 | 664 MB |
-| `7.0.28` | 7.0.28 | 664 MB |
+| Tag      | MongoDB Version | Image Size (amd64) |
+| -------- | --------------- | ------------------ |
+| `latest` | 8.2.x           | 683 MB             |
+| `8.2.6`  | 8.2.6           | 683 MB             |
+| `8.2.2`  | 8.2.2           | 683 MB             |
+| `8.0.18` | 8.0.18          | 670 MB             |
+| `8.0.16` | 8.0.16          | 670 MB             |
+| `7.0.31` | 7.0.31          | 664 MB             |
+| `7.0.28` | 7.0.28          | 664 MB             |
 
 ### Is This the Recommended Way?
 
 **Yes.** This is the officially recommended way to run MongoDB with search capabilities locally:
+
 - MongoDB's Atlas CLI uses this exact image internally (confirmed from source code)
 - The `mongodb/mongodb-atlas-search` image's own Docker Hub page redirects developers to Atlas CLI / atlas-local
 - The image has 5.2M+ pulls and is updated regularly (last: 2026-03-20)
@@ -204,6 +216,7 @@ services:
 ```
 
 ### Confidence: DEFINITIVE
+
 Source is the official Docker Hub full_description from MongoDB, cross-referenced with Atlas CLI source code.
 
 ---
@@ -211,6 +224,7 @@ Source is the official Docker Hub full_description from MongoDB, cross-reference
 ## Question 4: mongot Standalone
 
 ### Sources
+
 - Docker Hub API: `mongodb/mongodb-atlas-local` full_description
 - Docker Hub API: `mongodb/mongodb-atlas-search` full_description + tags
 - MongoDB product page: mongodb.com/products/platform/atlas-search
@@ -221,6 +235,7 @@ Source is the official Docker Hub full_description from MongoDB, cross-reference
 **Technically yes, but it is NOT recommended.**
 
 The `mongodb/mongodb-atlas-search` Docker image exists and contains mongot as a standalone component:
+
 - Image: `mongodb/mongodb-atlas-search:latest` (or `1.63.0`)
 - Size: ~49.4 GB (extremely large)
 - Contains 118 tags, actively maintained
@@ -257,6 +272,7 @@ The `mongodb/mongodb-atlas-local` Docker Hub description mentions:
 This confirms that MongoDB is actively working on making mongot/search available in Community Edition, but as of 2026-03-22, this is still in **preview** status.
 
 For production Community Edition servers (not Docker), mongot is NOT available -- Atlas Search requires either:
+
 1. MongoDB Atlas (cloud)
 2. `mongodb/mongodb-atlas-local` Docker image (local dev)
 
@@ -268,18 +284,19 @@ For production Community Edition servers (not Docker), mongot is NOT available -
 - **If mentioning Community Edition search**: note it is in preview via the `preview` tag of `mongodb/mongodb-atlas-local`
 
 ### Confidence: HIGH
+
 Based on official Docker Hub metadata from MongoDB and Atlas CLI source code. The standalone mongot image exists and works, but MongoDB's own documentation actively redirects developers away from it toward atlas-local.
 
 ---
 
 ## Summary of Changes Needed in Our Docs
 
-| Issue | Current (Wrong) | Correct | Source |
-|-------|-----------------|---------|--------|
-| Docker Compose version | `version: "3.8"` | Remove entirely (obsolete) | Docker Compose Specification |
-| mongot Docker image | `mongodb/mongodb-atlas-search:latest` | `mongodb/mongodb-atlas-local:8.0` | Docker Hub API + Atlas CLI source |
-| What atlas-local includes | Not documented | mongod + mongot + Atlas Search + Vector Search | Docker Hub full_description |
-| mongot standalone | Implied separate container | Bundled in atlas-local; standalone not recommended | Docker Hub full_description |
+| Issue                     | Current (Wrong)                       | Correct                                            | Source                            |
+| ------------------------- | ------------------------------------- | -------------------------------------------------- | --------------------------------- |
+| Docker Compose version    | `version: "3.8"`                      | Remove entirely (obsolete)                         | Docker Compose Specification      |
+| mongot Docker image       | `mongodb/mongodb-atlas-search:latest` | `mongodb/mongodb-atlas-local:8.0`                  | Docker Hub API + Atlas CLI source |
+| What atlas-local includes | Not documented                        | mongod + mongot + Atlas Search + Vector Search     | Docker Hub full_description       |
+| mongot standalone         | Implied separate container            | Bundled in atlas-local; standalone not recommended | Docker Hub full_description       |
 
 ## What Changed the Recommendation
 
@@ -306,4 +323,5 @@ The single highest-signal finding is that the `mongodb/mongodb-atlas-search` Doc
 - https://www.mongodb.com/products/platform/atlas-search (Atlas Search product page)
 
 ---
+
 Web research complete.

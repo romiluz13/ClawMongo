@@ -47,10 +47,17 @@ vi.mock("mongodb", () => ({
   },
 }));
 
+const mockDetectTopology = vi.hoisted(() =>
+  vi.fn(async () => ({ serverVersion: "8.2.0", replicaSetName: "rs0", hasMongot: true })),
+);
+const mockTopologyToTier = vi.hoisted(() => vi.fn(() => "fullstack"));
+const mockTierFeatures = vi.hoisted(() =>
+  vi.fn(() => ({ available: ["Search", "Vector Search"], unavailable: [] as string[] })),
+);
 vi.mock("../memory/mongodb-topology.js", () => ({
-  detectTopology: vi.fn(async () => ({ serverVersion: "8.2.0", replicaSetName: "rs0" })),
-  topologyToTier: vi.fn(() => "fullstack"),
-  tierFeatures: vi.fn(() => ({ available: ["Search", "Vector Search"], unavailable: [] })),
+  detectTopology: mockDetectTopology,
+  topologyToTier: mockTopologyToTier,
+  tierFeatures: mockTierFeatures,
 }));
 
 vi.mock("../memory/mongodb-analytics.js", () => ({
@@ -64,10 +71,12 @@ describe("noteMemorySearchHealth", () => {
   const cfg = {} as OpenClawConfig;
 
   function expectOnlyBackendHealthNote() {
-    // 2 calls: backend health note + recall diagnostic note
-    expect(note).toHaveBeenCalledTimes(2);
+    // At minimum: backend health note + recall diagnostic note (+ possible mongot/auto-embed/vector notes)
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(String(note.mock.calls[0]?.[0] ?? "")).toContain("MongoDB connected. Profile:");
-    expect(String(note.mock.calls[1]?.[1] ?? "")).toBe("Memory Recall Diagnostic");
+    // Recall diagnostic is the last note in the standard doctor flow
+    const lastNote = note.mock.calls[note.mock.calls.length - 1];
+    expect(String(lastNote?.[1] ?? "")).toBe("Memory Recall Diagnostic");
   }
 
   function getLastNoteMessage(): string {
@@ -130,7 +139,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: false, error: "node-llama-cpp not installed" },
     });
 
-    expect(note).toHaveBeenCalledTimes(3);
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
     const message = getLastNoteMessage();
     expect(message).toContain("gateway reports local embeddings are not ready");
     expect(message).toContain("node-llama-cpp not installed");
@@ -274,7 +283,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: true },
     });
 
-    expect(note).toHaveBeenCalledTimes(3);
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
     const message = getLastNoteMessage();
     expect(message).toContain("reports memory embeddings are ready");
   });
@@ -294,7 +303,7 @@ describe("noteMemorySearchHealth", () => {
       },
     });
 
-    expect(note).toHaveBeenCalledTimes(3);
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
     const message = getLastNoteMessage();
     expect(message).toContain("Gateway memory probe for default agent is not ready");
     expect(message).toContain("openclaw configure --section model");
@@ -310,7 +319,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note).toHaveBeenCalledTimes(3);
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
     const message = getLastNoteMessage();
     expect(message).toContain("needs at least one embedding provider");
     expect(message).toContain("openclaw configure --section model");
@@ -335,10 +344,89 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note).toHaveBeenCalledTimes(3);
+    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
     const providerCalls = resolveApiKeyForProvider.mock.calls as Array<[{ provider: string }]>;
     const providersChecked = providerCalls.map(([arg]) => arg.provider);
     expect(providersChecked).toEqual(["openai", "google", "voyage", "mistral"]);
+  });
+});
+
+describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
+  const cfg = {} as OpenClawConfig;
+
+  beforeEach(() => {
+    note.mockClear();
+    resolveMemoryBackendConfig.mockReset();
+    resolveMemoryBackendConfig.mockReturnValue({
+      backend: "mongodb",
+      citations: "auto",
+      mongodb: {
+        uri: "mongodb://localhost:27017/openclaw",
+        database: "openclaw",
+        collectionPrefix: "openclaw_",
+        deploymentProfile: "community-mongot",
+      },
+    });
+    mockDetectTopology.mockResolvedValue({
+      serverVersion: "8.2.0",
+      replicaSetName: "rs0",
+      hasMongot: true,
+    });
+    mockTopologyToTier.mockReturnValue("fullstack");
+    mockTierFeatures.mockReturnValue({
+      available: ["Search", "Vector Search"],
+      unavailable: [],
+    });
+  });
+
+  it("shows start-preview.sh in upgrade guidance when features missing", async () => {
+    mockTopologyToTier.mockReturnValue("standalone");
+    mockTierFeatures.mockReturnValue({
+      available: [],
+      unavailable: ["Vector Search", "Atlas Search"],
+    });
+
+    const { noteMongoDBBackendHealth } = await import("./doctor-memory-search.js");
+    await noteMongoDBBackendHealth(cfg);
+
+    const allNotes = note.mock.calls.map((c: unknown[]) => String(c[0]));
+    const upgradeNote = allNotes.find((n: string) => n.includes("start-preview.sh"));
+    expect(upgradeNote).toBeDefined();
+    expect(upgradeNote).toContain("mongodb-atlas-local:preview");
+  });
+
+  it("reports mongot not reachable when topology.hasMongot is false", async () => {
+    mockDetectTopology.mockResolvedValue({
+      serverVersion: "8.2.0",
+      replicaSetName: "rs0",
+      hasMongot: false,
+    });
+
+    const { noteMongoDBBackendHealth } = await import("./doctor-memory-search.js");
+    await noteMongoDBBackendHealth(cfg);
+
+    const allNotes = note.mock.calls.map((c: unknown[]) => String(c[0]));
+    const mongotNote = allNotes.find((n: string) => n.includes("mongot is not reachable"));
+    expect(mongotNote).toBeDefined();
+    expect(mongotNote).toContain("start-preview.sh");
+  });
+
+  it("reports auto-embed not configured when VOYAGE_API_KEY missing", async () => {
+    const origKey = process.env.VOYAGE_API_KEY;
+    delete process.env.VOYAGE_API_KEY;
+
+    try {
+      const { noteMongoDBBackendHealth } = await import("./doctor-memory-search.js");
+      await noteMongoDBBackendHealth(cfg);
+
+      const allNotes = note.mock.calls.map((c: unknown[]) => String(c[0]));
+      const autoEmbedNote = allNotes.find((n: string) => n.includes("VOYAGE_API_KEY is not set"));
+      expect(autoEmbedNote).toBeDefined();
+    } finally {
+      if (origKey !== undefined) {
+        process.env.VOYAGE_API_KEY = origKey;
+      }
+    }
   });
 });
 

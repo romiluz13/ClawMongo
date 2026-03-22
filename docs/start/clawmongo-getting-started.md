@@ -9,7 +9,7 @@ ClawMongo is the MongoDB edition of OpenClaw. This guide gets you from zero to a
 ### Required
 
 - **Node.js 22+** (24 recommended)
-- **MongoDB 7.0+** with mongot (MongoDB Community Search)
+- **MongoDB** via `mongodb-atlas-local:preview` Docker image (recommended) or Atlas CLI local deployment
 - **Voyage AI API key** (for automated embeddings via mongot)
 - **LLM API key** (Anthropic Claude recommended, or OpenAI, Google, Mistral, etc.)
 
@@ -49,31 +49,22 @@ That's it -- no replica set init needed. The `mongodb-atlas-local` image starts 
 docker exec -it $(docker compose ps -q mongodb) mongosh --eval "db.runCommand({ ping: 1 })"
 ```
 
-#### Option B: Local Install (macOS/Linux)
+#### Option B: Atlas CLI Local Deployment
 
-Install MongoDB Community and mongot using Homebrew (macOS) or your package manager:
+Use the MongoDB Atlas CLI to create a local deployment (bundles mongod + mongot):
 
 ```bash
-# macOS
-brew tap mongodb/brew
-brew install mongodb-community
-brew install mongodb-atlas-cli
+# Install Atlas CLI
+brew install mongodb-atlas-cli  # macOS
+# or see https://www.mongodb.com/docs/atlas/cli/stable/install-atlas-cli/
 
-# Start as a replica set (required for change streams)
-mongod --replSet rs0 --dbpath /usr/local/var/mongodb --logpath /usr/local/var/log/mongodb/mongod.log --fork
-mongosh --eval "rs.initiate()"
+# Create a local deployment with search support
+atlas deployments setup clawmongo --type local --port 27017
 ```
 
-Install and configure mongot separately. See [MongoDB Community Search documentation](https://www.mongodb.com/docs/atlas/atlas-search/) for platform-specific instructions.
+This creates a local deployment with mongod + mongot bundled together -- no separate mongot install needed.
 
-#### Option C: MongoDB Atlas
-
-Create a free or paid cluster on [MongoDB Atlas](https://www.mongodb.com/atlas):
-
-1. Create a cluster (M0 free tier works for development)
-2. Enable Atlas Search on the cluster
-3. Configure the Voyage AI integration in Atlas Search settings
-4. Get the connection string from the Atlas dashboard
+> **Why not Atlas SaaS?** ClawMongo targets local MongoDB via the `mongodb-atlas-local:preview` Docker image. Atlas SaaS URIs (`.mongodb.net`) are not supported by the onboarding wizard. The atlas-local image provides the same search capabilities without a cloud dependency.
 
 ---
 
@@ -81,7 +72,7 @@ Create a free or paid cluster on [MongoDB Atlas](https://www.mongodb.com/atlas):
 
 1. Sign up at [voyageai.com](https://www.voyageai.com)
 2. Generate an API key from the dashboard
-3. Configure the key in your mongot deployment (Docker env var, Atlas Search settings, or local config)
+3. Set `VOYAGE_API_KEY` when starting the atlas-local container (Docker env var) or pass it to Atlas CLI
 
 ClawMongo uses `voyage-4-large` (1024 dimensions) for all embeddings. This is configured in the search index definitions, not in application code.
 
@@ -113,12 +104,6 @@ clawmongo config set memory.mongodb.uri "mongodb://localhost:27017/clawmongo?rep
 
 # Enable automated embeddings via mongot
 clawmongo config set memory.mongodb.embeddingMode "automated"
-```
-
-For Atlas, use the full connection string:
-
-```bash
-clawmongo config set memory.mongodb.uri "mongodb+srv://user:password@cluster.mongodb.net/clawmongo"
 ```
 
 ---
@@ -208,14 +193,14 @@ Minimal `~/.openclaw/openclaw.json` for ClawMongo:
 ```json5
 {
   agent: {
-    model: "anthropic/claude-opus-4-6"
+    model: "anthropic/claude-opus-4-6",
   },
   memory: {
     mongodb: {
       uri: "mongodb://localhost:27017/clawmongo?replicaSet=rs0",
-      embeddingMode: "automated"
-    }
-  }
+      embeddingMode: "automated",
+    },
+  },
 }
 ```
 
@@ -256,7 +241,14 @@ mongosh --eval "rs.initiate()"
 
 ### mongot not available
 
-If search index creation fails, verify mongot is running and connected to your MongoDB instance. ClawMongo falls back to BSON `$text` indexes when mongot is unavailable, but vector search requires mongot.
+If search index creation fails, ensure you are running the `mongodb-atlas-local:preview` Docker image
+which bundles mongot. Run:
+
+```bash
+./docker/mongodb/start-preview.sh
+```
+
+ClawMongo falls back to BSON `$text` indexes when mongot is unavailable, but vector search requires mongot.
 
 ### Voyage AI embedding errors
 

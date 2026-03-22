@@ -16,9 +16,11 @@
 ## Plan: Article-Inspired Memory Improvements
 
 ### Request Summary
+
 - Adapt 6 VelvetShark article recommendations for ClawMongo's MongoDB-first architecture
 
 ### Requirements Snapshot
+
 - R1: Pre-compaction flush must use `memory_write` (MongoDB), not file writes
 - R2: Recommend `reserveTokensFloor: 40000` in docs and as default
 - R3: Add compaction timing guidance to AGENTS.md template
@@ -27,6 +29,7 @@
 - R6: Memory hygiene automation via heartbeat-driven promotion from daily bridge notes to MongoDB structured memory
 
 ### Constraints Snapshot
+
 - MUST NOT break any existing tests (53 live e2e pass)
 - MUST NOT change the core memory write path (persistConversationMessageToMongo)
 - MongoDB-only: no SQLite, no QMD, no file-based memory as canonical truth
@@ -34,6 +37,7 @@
 - TypeScript ESM, strict typing, avoid `any`
 
 ### In Scope
+
 - System prompt flush-to-MongoDB wiring (prompt text changes)
 - Default reserveTokensFloor config change from 20000 to 40000
 - Documentation updates (memory-config.md, AGENTS.md templates)
@@ -42,6 +46,7 @@
 - Memory hygiene guidance in AGENTS.md heartbeat section
 
 ### Out Of Scope
+
 - New MongoDB collections or indexes
 - Changes to the core write path (persistConversationMessageToMongo, guardSessionManager)
 - LLM entity extraction automation
@@ -49,22 +54,26 @@
 - Automated promotion scripts (guidance only in this plan; automation deferred)
 
 ### Planning Mode
+
 - Plan mode: `execution_plan`
 - Verification rigor: `standard`
 
 ### Open Decisions
+
 - None
 
 ### Differences From Agreement
+
 - None
 
 ### Recommended Defaults
+
 - `reserveTokensFloor: 40000` as new default (article recommends, current 20000 proven too tight for long sessions with tools)
 
 ### Current State
 
 **Flush prompt (`src/auto-reply/reply/memory-flush.ts:25-33`):**
-The `DEFAULT_MEMORY_FLUSH_PROMPT` already directs to `memory_write` and explicitly says "Store durable structured memories with memory_write only; do not use file writes for runtime memory." and "Use MEMORY.md and memory/*.md only as human-authored bridge notes." The flush prompt is already MongoDB-correct in the codebase. The test scenario in `prompt-composition-scenarios.ts:570-576` still references the old "Store durable memories only in memory/2026-03-15.md" wording -- this is a stale test fixture that should be updated.
+The `DEFAULT_MEMORY_FLUSH_PROMPT` already directs to `memory_write` and explicitly says "Store durable structured memories with memory_write only; do not use file writes for runtime memory." and "Use MEMORY.md and memory/\*.md only as human-authored bridge notes." The flush prompt is already MongoDB-correct in the codebase. The test scenario in `prompt-composition-scenarios.ts:570-576` still references the old "Store durable memories only in memory/2026-03-15.md" wording -- this is a stale test fixture that should be updated.
 
 **reserveTokensFloor (`src/agents/pi-settings.ts:4`):**
 `DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR = 20_000`. Config help text already documents the field. `docs/reference/memory-config.md` has no mention of reserveTokensFloor.
@@ -79,14 +88,17 @@ Currently checks MongoDB connection, topology, embedding coverage, and embedding
 Has "Memory Maintenance (During Heartbeats)" section but no compaction timing guidance and no MongoDB-specific promotion guidance.
 
 ### Alternatives
+
 - A1: Keep `reserveTokensFloor` at 20000 and document 40000 as suggestion only -- lower risk, less benefit
 - A2: Make sub-agent bridge a full Memory Recall section instead of just the bridge -- more tokens per sub-agent prompt
 
 ### Drawbacks
+
 - Changing `reserveTokensFloor` default from 20000 to 40000 means sessions compact earlier, using slightly more LLM calls. On large context models (200K+) this is negligible.
 - Adding bridge section to sub-agent prompts adds ~200 tokens per sub-agent system prompt.
 
 ### Critical-Path Verification Design
+
 - Behavior contract: Not required (standard rigor)
 - Edge-case catalog: Concise below
 - Provable properties: None
@@ -94,6 +106,7 @@ Has "Memory Maintenance (During Heartbeats)" section but no compaction timing gu
 - Verification strategy: Unit tests for each improvement
 
 ### Edge Cases
+
 - Flush prompt: custom user prompt must still get safety hints appended (already handled by `ensureMemoryFlushSafetyHints`)
 - reserveTokensFloor: users who already set a custom value should not be affected (config override takes precedence)
 - Sub-agent bridge: when `memoryBackend` is not "mongodb", bridge should still be skipped for sub-agents
@@ -105,16 +118,19 @@ Has "Memory Maintenance (During Heartbeats)" section but no compaction timing gu
 ## Relevant Codebase Files
 
 ### Patterns to Follow
+
 - `src/auto-reply/reply/memory-flush.ts` (lines 25-42) -- flush prompt pattern
 - `src/agents/system-prompt.ts` (lines 25-51) -- MongoDB bridge section pattern
 - `src/commands/doctor-memory-search.ts` (lines 17-119) -- doctor note pattern
 - `src/agents/pi-settings.ts` (line 4) -- default constant pattern
 
 ### Configuration Files
+
 - `src/config/types.agent-defaults.ts` (lines 308-350) -- compaction config types
 - `src/config/zod-schema.agent-defaults.ts` (line 93) -- Zod schema for reserveTokensFloor
 
 ### Test Files
+
 - `src/agents/pi-settings.test.ts` -- reserveTokensFloor default tests
 - `src/auto-reply/reply/reply-state.test.ts` -- memory flush settings tests
 - `src/auto-reply/reply/agent-runner.runreplyagent.e2e.test.ts` -- e2e flush tests
@@ -130,11 +146,13 @@ Has "Memory Maintenance (During Heartbeats)" section but no compaction timing gu
 ### Task 1.1: Update stale prompt-composition-scenarios flush fixture
 
 **Files:**
+
 - Modify: `src/agents/prompt-composition-scenarios.ts:570-584`
 
 **Step 1: Read current default flush prompt**
 
 The actual default in `memory-flush.ts:25-33` already says:
+
 ```
 "Pre-compaction memory flush."
 "Store durable structured memories with memory_write only; do not use file writes for runtime memory."
@@ -176,6 +194,7 @@ scripts/committer "Memory: align flush prompt test fixtures with MongoDB-first d
 ### Task 2.1: Update the default constant
 
 **Files:**
+
 - Modify: `src/agents/pi-settings.ts:4`
 
 **Step 1: Change the default**
@@ -204,13 +223,14 @@ Expected: All pass
 ### Task 2.2: Document reserveTokensFloor in memory-config.md
 
 **Files:**
+
 - Modify: `docs/reference/memory-config.md`
 
 **Step 1: Add compaction section to memory-config.md**
 
 After the "Citations" section (~line 92), add:
 
-```markdown
+````markdown
 ## Compaction tuning
 
 ### reserveTokensFloor
@@ -229,6 +249,7 @@ agents: {
   }
 }
 ```
+````
 
 Raise this value if the agent frequently compacts mid-task. Lower it only on
 small-context models where compaction cost is a concern.
@@ -246,7 +267,8 @@ The flush is enabled by default. Configure it under
 - `softThresholdTokens` (default: `4000`) -- token margin before compaction that triggers the flush.
 - `prompt` -- custom flush prompt (safety hints are always appended).
 - `systemPrompt` -- custom system prompt for the flush turn.
-```
+
+````
 
 **Step 2: Verify docs render (manual)**
 
@@ -256,7 +278,7 @@ Check the Markdown renders correctly.
 
 ```bash
 scripts/committer "Config: raise reserveTokensFloor default to 40000 and document compaction tuning" src/agents/pi-settings.ts docs/reference/memory-config.md
-```
+````
 
 ---
 
@@ -267,6 +289,7 @@ scripts/committer "Config: raise reserveTokensFloor default to 40000 and documen
 ### Task 3.1: Add compaction timing guidance to AGENTS.md template
 
 **Files:**
+
 - Modify: `docs/reference/templates/AGENTS.md`
 - Modify: `docs/reference/templates/AGENTS.dev.md`
 
@@ -282,10 +305,11 @@ Compaction summarizes your conversation history to free token space. Key timing 
 **Compact BEFORE giving new instructions, not after.**
 
 If you need to redirect the agent or give it a new task:
+
 1. Run `/compact` first (or let auto-compaction fire)
 2. Then give new instructions on a clean context
 
-Compacting *after* new instructions risks losing those instructions in the summary.
+Compacting _after_ new instructions risks losing those instructions in the summary.
 When auto-compaction fires mid-conversation, the pre-compaction flush stores durable
 facts to MongoDB via `memory_write` -- so important context survives. But instructions
 that were just given may be summarized away.
@@ -318,6 +342,7 @@ scripts/committer "Docs: add compaction timing guidance to AGENTS.md templates" 
 ### Task 4.1: Add noteMemoryRecallDiagnostic function
 
 **Files:**
+
 - Modify: `src/commands/doctor-memory-search.ts`
 - Create test: `src/commands/doctor-memory-recall-diagnostic.test.ts`
 
@@ -431,6 +456,7 @@ scripts/committer "Doctor: add three-failure-mode memory recall diagnostic" src/
 ### Task 5.1: Write failing test for sub-agent bridge
 
 **Files:**
+
 - Modify: `src/agents/system-prompt.ts`
 - Create or modify test: `src/agents/system-prompt.test.ts` (or existing test file)
 
@@ -478,6 +504,7 @@ Expected: FAIL (minimal mode currently filters out MongoDB bridge)
 In `src/agents/system-prompt.ts`, modify `buildMongoDBBridgeSection` (lines 25-52):
 
 Change the guard from:
+
 ```typescript
 if (params.memoryBackend !== "mongodb" || params.isMinimal) {
   return [];
@@ -485,6 +512,7 @@ if (params.memoryBackend !== "mongodb" || params.isMinimal) {
 ```
 
 To:
+
 ```typescript
 if (params.memoryBackend !== "mongodb") {
   return [];
@@ -524,6 +552,7 @@ scripts/committer "Prompts: add condensed MongoDB bridge for sub-agent minimal m
 ### Task 6.1: Update Memory Maintenance section with promotion guidance
 
 **Files:**
+
 - Modify: `docs/reference/templates/AGENTS.md`
 
 **Step 1: Replace the Memory Maintenance section**
@@ -541,6 +570,7 @@ Periodically (every few days), use a heartbeat to promote important context from
 4. **Do not duplicate** -- before writing, use `memory_search` to check if the fact already exists in MongoDB
 
 Weekly promotion cycle:
+
 - **Daily notes** (`memory/YYYY-MM-DD.md`) are raw capture -- ephemeral by nature
 - **Structured memory** (MongoDB via `memory_write`) is durable -- survives compaction and session resets
 - **MEMORY.md** remains human-authored bridge guidance only -- do not treat it as a memory store
@@ -571,26 +601,29 @@ scripts/committer "Docs: add MongoDB memory hygiene promotion guidance to AGENTS
 
 ## Risks And Mitigations
 
-| Risk | P | I | Score | Mitigation |
-|------|---|---|-------|------------|
-| reserveTokensFloor change causes more frequent compaction on small-context models | 2 | 2 | 4 | Only affects models with <80K context; document how to lower |
-| Sub-agent bridge adds ~200 tokens per sub-agent prompt | 1 | 1 | 1 | Minimal impact; condensed to 2 lines |
-| Prompt composition snapshot tests may break from bridge change | 3 | 2 | 6 | Run snapshot tests, update expected output |
-| Doctor diagnostic note adds noise to `openclaw doctor` output | 1 | 1 | 1 | Only shown when backend=mongodb; informational |
-| Stale test fixture update changes prompt composition scenarios | 2 | 2 | 4 | Careful update, verify all consuming tests pass |
+| Risk                                                                              | P   | I   | Score | Mitigation                                                   |
+| --------------------------------------------------------------------------------- | --- | --- | ----- | ------------------------------------------------------------ |
+| reserveTokensFloor change causes more frequent compaction on small-context models | 2   | 2   | 4     | Only affects models with <80K context; document how to lower |
+| Sub-agent bridge adds ~200 tokens per sub-agent prompt                            | 1   | 1   | 1     | Minimal impact; condensed to 2 lines                         |
+| Prompt composition snapshot tests may break from bridge change                    | 3   | 2   | 6     | Run snapshot tests, update expected output                   |
+| Doctor diagnostic note adds noise to `openclaw doctor` output                     | 1   | 1   | 1     | Only shown when backend=mongodb; informational               |
+| Stale test fixture update changes prompt composition scenarios                    | 2   | 2   | 4     | Careful update, verify all consuming tests pass              |
 
 ---
 
 ## Summary
+
 - Plan saved: docs/plans/2026-03-21-article-inspired-improvements-plan.md
 - Phases: 6
 - Risks: 5 identified (all low-to-medium, mitigated)
 - Key decisions: reserveTokensFloor 20K->40K, sub-agent gets condensed bridge, doctor gets recall diagnostic
 
 ## Recommended Skills for BUILD (SKILL_HINTS for Router)
+
 - cc10x:architecture-patterns (multi-component system prompt / config / docs work)
 
 ## Confidence Score: 82/100
+
 - High: all source files identified with exact line numbers (+25)
 - High: edge cases documented (+20)
 - High: test commands specific with expected results (+20)
@@ -599,12 +632,14 @@ scripts/committer "Docs: add MongoDB memory hygiene promotion guidance to AGENTS
 - Deduction: doctor test may need mock adjustment for the new function (-5)
 
 **Key Assumptions:**
+
 - The prompt-composition-scenarios.ts fixture is consumed only by snapshot/comparison tests, not runtime code
 - Sub-agent tools (memory_search, memory_write) are registered at the tool level regardless of prompt mode
 - The doctor command's `noteMemorySearchHealth` calls `noteMongoDBBackendHealth` internally, which is the right place to add the recall diagnostic
 - No existing test hardcodes `20000` as the expected reserveTokensFloor default (they import the constant)
 
 ## Findings
+
 - The flush prompt is ALREADY MongoDB-correct in production code (`memory-flush.ts`). Only the test fixture in `prompt-composition-scenarios.ts` is stale.
 - Sub-agents currently get tools but NOT the MongoDB bridge guidance. This is a real gap that can cause the primary failure mode (Not Retrieved).
 - The `buildMongoDBBridgeSection` function is cleanly separated and easy to modify for minimal mode.

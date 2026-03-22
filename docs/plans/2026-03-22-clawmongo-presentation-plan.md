@@ -110,9 +110,11 @@
 **Inputs:** Current package.json, research findings on npm positioning
 
 **Files/surfaces:**
+
 - Modify: `package.json:1-20` (metadata fields only)
 
 **Expected artifacts:**
+
 - Updated `description`, `keywords`, and `author` fields in package.json
 
 **Content specification:**
@@ -147,6 +149,7 @@
 ```
 
 **Required checks:**
+
 - `cat package.json | head -20` shows updated fields
 - `pnpm build` still passes (metadata-only change should not break build)
 
@@ -163,14 +166,17 @@
 **Inputs:** Current README.md, both research files, approved positioning decisions
 
 **Files/surfaces:**
+
 - Modify: `README.md` (complete rewrite, preserve header image reference)
 
 **Expected artifacts:**
+
 - New README.md with restructured content
 
 **Content structure (top to bottom):**
 
 ### Section 1: Hero (lines 1-30 approx)
+
 - Header image (preserve existing `README-clawmongo-header-v2.png` reference)
 - Tagline: "The MongoDB Edition of OpenClaw"
 - One-paragraph elevator pitch: ClawMongo is OpenClaw (the most popular open-source personal AI assistant, 329K stars, 22 channels, native apps) with a production-grade MongoDB memory system replacing the default SQLite/Markdown backend
@@ -178,12 +184,14 @@
 - Quick links row
 
 ### Section 2: What Is ClawMongo? (30 lines approx)
+
 - Distribution framing: "Like Ubuntu is to Linux, ClawMongo is the MongoDB edition of OpenClaw"
 - What you get: the FULL OpenClaw assistant (22 channels, 78 extensions, voice, canvas, native apps) PLUS MongoDB-native memory
 - NOT a memory library, NOT competing with Mem0/Zep -- this is a complete personal AI assistant
 - Three audiences explicitly addressed: OpenClaw users upgrading memory, MongoDB developers wanting an AI assistant, teams needing production-grade agent memory
 
 ### Section 3: Why MongoDB for Agent Memory? (40 lines approx)
+
 - Opening argument: MongoDB is uniquely suited for agent memory because it combines document flexibility, vector search, full-text search, graph traversal, and operational guarantees in a single platform
 - Brief intro to each of the 12 capabilities (2-3 lines each, linking to deep-dive doc for details):
   1. Automated Embeddings (Voyage AI via mongot)
@@ -201,6 +209,7 @@
 - Link to full deep-dive: `docs/reference/mongodb-capabilities.md`
 
 ### Section 4: ClawMongo vs Default OpenClaw Memory (30 lines approx)
+
 - Comparison table (NOT vs Mem0/Zep -- vs OpenClaw's SQLite/QMD default)
 - Columns: Capability | OpenClaw Default | ClawMongo
 - Rows covering: storage backend, vector search, knowledge graph, episodes, structured memory, procedures, retrieval paths, operational visibility, collections/indexes, data model
@@ -208,6 +217,7 @@
 - Link to full comparison: `docs/reference/clawmongo-vs-default-memory.md`
 
 ### Section 5: MongoDB Memory Architecture (40 lines approx)
+
 - Event-sourcing diagram (preserve existing ASCII art, refine)
 - 20 collections listed with purpose
 - Retrieval planner and 8 paths table (preserve existing)
@@ -215,12 +225,14 @@
 - This section is the "HOW it works" technical meat
 
 ### Section 6: Quick Start (30 lines approx)
+
 - Prerequisites: MongoDB 7+ with mongot, Voyage AI API key, Node 22+
 - `npm install -g @romiluz/clawmongo@latest`
 - `clawmongo onboard --install-daemon`
 - Link to full getting-started guide: `docs/start/clawmongo-getting-started.md`
 
 ### Section 7: The Full OpenClaw Platform (50 lines approx)
+
 - Channels list (preserve existing 22 channels, this is a differentiator)
 - Apps + nodes summary (macOS, iOS, Android -- preserve)
 - Tools + automation summary (browser, canvas, cron -- preserve)
@@ -228,16 +240,19 @@
 - This section says: "You get ALL of this, plus MongoDB memory"
 
 ### Section 8: Development and Ops (30 lines approx)
+
 - Install from source
 - Keep in sync with upstream (preserve `pnpm upstream:steady`)
 - Development channels (stable/beta/dev)
 - Security defaults (preserve DM pairing section)
 
 ### Section 9: Star History + Links (10 lines approx)
+
 - Star History chart
 - Contributing, license, upstream credit
 
 **Key writing guidelines for the builder:**
+
 - Lead with MongoDB value, not OpenClaw features (those come after)
 - Every MongoDB capability gets a WHY (business value) and HOW (technical mechanism)
 - Use "ClawMongo" as the primary name, "OpenClaw" when referring to the upstream project
@@ -246,6 +261,7 @@
 - No emojis except the existing lobster in the H1 title
 
 **Required checks:**
+
 - README renders correctly in GitHub preview (no broken markdown)
 - All links are valid (internal file references and external URLs)
 - No mentions of Mem0, Zep, or other memory libraries as competitors
@@ -265,9 +281,11 @@
 **Inputs:** Source code (mongodb-schema.ts, mongodb-events.ts, mongodb-graph.ts, etc.), research findings, existing README technical sections
 
 **Files/surfaces:**
+
 - Create: `docs/reference/mongodb-capabilities.md`
 
 **Expected artifacts:**
+
 - New doc page with 12 capability sections
 
 **Content structure:**
@@ -279,26 +297,31 @@ ClawMongo uses 12 MongoDB features that make it the best agentic data layer.
 This page explains WHY each feature matters for agent memory and HOW ClawMongo implements it.
 
 ## Table of Contents
+
 [12 capabilities listed]
 
 ## 1. Automated Embeddings (Voyage AI via mongot)
 
 ### Why This Matters
+
 [2-3 paragraphs: No application-side embedding pipeline. No embedding library dependency.
 No batch embedding jobs. mongot handles it at index time and query time. This eliminates
 an entire class of infrastructure (embedding queues, retry logic, model version management)
 that other solutions require.]
 
 ### How It Works
+
 [Technical explanation: mongot reads the `text` field, calls Voyage AI API, stores
 embedding in the index. At query time, $vectorSearch sends query text to mongot,
 which embeds it and runs ANN search. Model: voyage-4-large, 1024 dimensions.]
 
 ### Configuration
+
 [Code block: vector search index definition with autoEmbed]
 [Code block: memory.mongodb.embeddingMode = "automated" config]
 
 ### Collections Using This
+
 - chunks (conversation memory)
 - kb_chunks (knowledge base)
 - structured_mem (structured facts)
@@ -306,49 +329,63 @@ which embeds it and runs ANN search. Model: voyage-4-large, 1024 dimensions.]
 ---
 
 ## 2. Vector Search ($vectorSearch)
+
 [Same WHY/HOW/Config/Collections pattern]
 
 ## 3. Full-Text Search (mongot)
+
 [Same pattern]
 
 ## 4. Hybrid Search ($rankFusion / $scoreFusion)
+
 [Same pattern -- explain both fusion methods, when each is used]
 
 ## 5. Knowledge Graph ($graphLookup)
+
 [Same pattern -- include bi-directional $facet expansion diagram]
 
 ## 6. Event-Sourcing (Canonical Events Collection)
+
 [Same pattern -- include writeEventAndProject flow diagram]
 
 ## 7. Schema Validation (JSON Schema)
+
 [Same pattern -- include example schema from mongodb-schema.ts]
 
 ## 8. Change Streams
+
 [Same pattern -- explain real-time sync use case]
 
 ## 9. TTL Indexes
+
 [Same pattern -- explain automatic lifecycle management]
 
 ## 10. Multi-Tenant Isolation
+
 [Same pattern -- explain agentId compound indexes, $graphLookup restrictSearchWithMatch]
 
 ## 11. Idempotent Upserts
+
 [Same pattern -- explain $setOnInsert/$set pattern, compound unique keys]
 
 ## 12. Relevance Telemetry
+
 [Same pattern -- explain explain-driven diagnostics]
 
 ## The Full Picture
+
 [Summary diagram showing how all 12 capabilities work together in a single query/write cycle]
 ```
 
 **For each capability, the builder MUST:**
+
 1. Read the relevant source file to verify technical accuracy
 2. Include at least one code/config example
 3. Explain WHY in terms of developer/team value (not just technical correctness)
 4. Explain HOW with enough detail that a MongoDB developer could understand the implementation
 
 **Required checks:**
+
 - All 12 capabilities have WHY + HOW + example sections
 - Code examples match actual implementation in source code
 - No references to external vector DBs, graph DBs, or non-MongoDB solutions
@@ -367,9 +404,11 @@ which embeds it and runs ANN search. Model: voyage-4-large, 1024 dimensions.]
 **Inputs:** Research findings on OpenClaw default memory, ClawMongo architecture knowledge
 
 **Files/surfaces:**
+
 - Create: `docs/reference/clawmongo-vs-default-memory.md`
 
 **Expected artifacts:**
+
 - Comparison doc with feature-by-feature table and decision guidance
 
 **Content structure:**
@@ -378,42 +417,47 @@ which embeds it and runs ANN search. Model: voyage-4-large, 1024 dimensions.]
 # ClawMongo vs OpenClaw Default Memory
 
 ## Overview
+
 OpenClaw ships with SQLite + Markdown files as its default memory backend.
 ClawMongo replaces this with MongoDB Community + mongot + Voyage AI.
 This page compares the two approaches feature by feature.
 
 ## Feature Comparison
 
-| Capability | OpenClaw Default (SQLite/QMD) | ClawMongo (MongoDB) |
-|---|---|---|
-| Storage backend | SQLite file + Markdown files | MongoDB Community (replica set) |
-| Vector search | sqlite-vec extension or LanceDB | mongot + Voyage AI autoEmbed |
-| Embedding management | Application-side (OpenAI/Gemini/Voyage/Mistral/Ollama) | Automated via mongot (zero app-side code) |
-| Full-text search | SQLite FTS5 or BM25 | mongot text indexes |
-| Hybrid search | BM25 + vector with MMR | $rankFusion / $scoreFusion |
-| Knowledge graph | None | $graphLookup with entities/relations |
-| Episodes | None | Auto-materialized from event windows |
-| Event sourcing | None (append-only Markdown) | Canonical events collection |
-| Structured memory | Basic key-value | Salience, temporal validity, state, provenance |
-| Procedures | None | Versioned workflow artifacts |
-| Retrieval paths | 1 (search) | 8 (active-critical, procedural, structured, raw-window, graph, episodic, kb, hybrid) |
-| Schema validation | None | JSON Schema on all collections |
-| Multi-tenant isolation | Filesystem separation | Compound indexes with agentId prefix |
-| Operational visibility | Limited | Ingest runs, projection runs, relevance telemetry |
-| Data model | Flat files + SQLite rows | 20 collections, 53 indexes |
-| Sync across instances | File sync (rsync, git) | MongoDB replica set |
+| Capability             | OpenClaw Default (SQLite/QMD)                          | ClawMongo (MongoDB)                                                                  |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Storage backend        | SQLite file + Markdown files                           | MongoDB Community (replica set)                                                      |
+| Vector search          | sqlite-vec extension or LanceDB                        | mongot + Voyage AI autoEmbed                                                         |
+| Embedding management   | Application-side (OpenAI/Gemini/Voyage/Mistral/Ollama) | Automated via mongot (zero app-side code)                                            |
+| Full-text search       | SQLite FTS5 or BM25                                    | mongot text indexes                                                                  |
+| Hybrid search          | BM25 + vector with MMR                                 | $rankFusion / $scoreFusion                                                           |
+| Knowledge graph        | None                                                   | $graphLookup with entities/relations                                                 |
+| Episodes               | None                                                   | Auto-materialized from event windows                                                 |
+| Event sourcing         | None (append-only Markdown)                            | Canonical events collection                                                          |
+| Structured memory      | Basic key-value                                        | Salience, temporal validity, state, provenance                                       |
+| Procedures             | None                                                   | Versioned workflow artifacts                                                         |
+| Retrieval paths        | 1 (search)                                             | 8 (active-critical, procedural, structured, raw-window, graph, episodic, kb, hybrid) |
+| Schema validation      | None                                                   | JSON Schema on all collections                                                       |
+| Multi-tenant isolation | Filesystem separation                                  | Compound indexes with agentId prefix                                                 |
+| Operational visibility | Limited                                                | Ingest runs, projection runs, relevance telemetry                                    |
+| Data model             | Flat files + SQLite rows                               | 20 collections, 53 indexes                                                           |
+| Sync across instances  | File sync (rsync, git)                                 | MongoDB replica set                                                                  |
 
 ## When to Use OpenClaw Default Memory
+
 [Guidance: single user, small corpus, local-only, no operational requirements]
 
 ## When to Use ClawMongo
+
 [Guidance: team scale, growing corpus, retrieval quality SLOs, operational visibility needs, production deployment]
 
 ## Migration Path
+
 [Brief: ClawMongo includes v1-to-v2 migration (backfillEventsFromChunks). Existing OpenClaw users can migrate their SQLite/Markdown data into MongoDB.]
 ```
 
 **Required checks:**
+
 - Comparison is factually accurate for both sides
 - No unfair characterization of OpenClaw default (it's good for what it does)
 - Decision guidance is honest and helpful
@@ -432,9 +476,11 @@ This page compares the two approaches feature by feature.
 **Inputs:** Existing docs/start/getting-started.md (upstream), ClawMongo-specific requirements
 
 **Files/surfaces:**
+
 - Create: `docs/start/clawmongo-getting-started.md`
 
 **Expected artifacts:**
+
 - Step-by-step getting-started guide for ClawMongo
 
 **Content structure:**
@@ -448,6 +494,7 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 ## Prerequisites
 
 ### Required
+
 - **Node.js 22+** (24 recommended)
 - **MongoDB 7.0+** with mongot (MongoDB Community Search)
 - **Voyage AI API key** (for automated embeddings)
@@ -456,15 +503,19 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 ### MongoDB Setup Options
 
 #### Option A: Docker (Quickest)
+
 [Docker compose with mongodb + mongot, ready to go]
 
 #### Option B: Local Install
+
 [mongod + mongot install steps for macOS/Linux]
 
 #### Option C: MongoDB Atlas
+
 [Atlas cluster with Search enabled, connection string]
 
 ### Voyage AI Setup
+
 [Sign up at voyageai.com, get API key, configure in mongot]
 
 ## Install ClawMongo
@@ -488,6 +539,7 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 [Send a test message, verify it appears in MongoDB]
 
 ## Next Steps
+
 - Connect a channel (Telegram is quickest)
 - Import knowledge base documents
 - Configure structured memory
@@ -495,6 +547,7 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 ```
 
 **Required checks:**
+
 - All commands are correct and match actual CLI interface
 - Docker compose example actually works (if included)
 - Prerequisites are complete and accurate
@@ -510,12 +563,14 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 
 **Objective:** Design the ClawMongo-specific onboarding flow (MongoDB connection, mongot verification, Voyage AI setup, channel configuration). Design only -- no code changes.
 
-**Inputs:** Existing onboarding code (src/commands/onboard*.ts), ClawMongo-specific requirements
+**Inputs:** Existing onboarding code (src/commands/onboard\*.ts), ClawMongo-specific requirements
 
 **Files/surfaces:**
+
 - Create: `docs/design/clawmongo-onboarding-flow.md`
 
 **Expected artifacts:**
+
 - Design document for future onboarding code changes
 
 **Content structure:**
@@ -524,62 +579,74 @@ to a working personal AI assistant with MongoDB-native memory in about 10 minute
 # ClawMongo Onboarding Flow Design
 
 ## Overview
+
 ClawMongo's onboarding must verify MongoDB infrastructure before proceeding
 to channel setup. This is a design document for future implementation.
 
 ## Current State
+
 [Describe current onboarding: model provider -> API key -> gateway -> channels]
 [What's missing: MongoDB connection verification, mongot check, Voyage AI check]
 
 ## Proposed Flow
 
 ### Step 1: MongoDB Connection
+
 - Prompt for MongoDB URI (or detect from environment)
 - Test connection with ping
 - Verify replica set (required for change streams)
 - Check MongoDB version >= 7.0
 
 ### Step 2: mongot Verification
+
 - Check if mongot is running (search index creation test)
 - If not: provide setup instructions
 - If Atlas: verify Search is enabled
 
 ### Step 3: Voyage AI Configuration
+
 - Prompt for Voyage AI API key
 - Test embedding generation
 - Configure embeddingMode = "automated"
 
 ### Step 4: Collection Bootstrap
+
 - Run ensureCollections + ensureIndexes
 - Verify all 20 collections created
 - Verify all 53 standard indexes created
 - If mongot available: create search indexes
 
 ### Step 5: LLM Provider (existing flow)
+
 - Select model provider
 - Enter API key
 - Test model connection
 
 ### Step 6: Channel Setup (existing flow)
+
 - Select channel(s)
 - Configure credentials
 - Test channel connection
 
 ### Step 7: Health Check
+
 - clawmongo doctor (with MongoDB-specific checks)
 - Verify memory write + read cycle
 - Show status summary
 
 ## Error Handling
+
 [What happens when MongoDB is unreachable, mongot not found, Voyage AI key invalid]
 
 ## Implementation Notes
+
 [Which files to modify: onboard-interactive.ts, onboard-config.ts]
 [New checks needed: MongoDB ping, mongot detection, Voyage AI verification]
 [Estimated implementation effort: medium]
 ```
 
 **Required checks:**
+
 - Design references correct source files
 - Flow is complete (no missing steps)
 - Error handling is considered
@@ -608,13 +675,13 @@ After all phases complete:
 
 ## Risks and Mitigations
 
-| Risk | Probability | Impact | Score | Mitigation |
-|------|-------------|--------|-------|------------|
-| README too long/unfocused | 3 | 3 | 9 | Strict section structure with line count targets |
-| Technical claims inaccurate | 2 | 4 | 8 | Builder must verify against source code for each capability |
-| Upstream links become stale | 2 | 2 | 4 | Use docs.openclaw.ai links which are more stable than file paths |
-| MongoDB version requirements unclear | 2 | 3 | 6 | Getting-started guide explicitly lists version requirements |
-| Onboarding design becomes stale | 3 | 2 | 6 | Clearly marked as design doc, references current source files |
+| Risk                                 | Probability | Impact | Score | Mitigation                                                       |
+| ------------------------------------ | ----------- | ------ | ----- | ---------------------------------------------------------------- |
+| README too long/unfocused            | 3           | 3      | 9     | Strict section structure with line count targets                 |
+| Technical claims inaccurate          | 2           | 4      | 8     | Builder must verify against source code for each capability      |
+| Upstream links become stale          | 2           | 2      | 4     | Use docs.openclaw.ai links which are more stable than file paths |
+| MongoDB version requirements unclear | 2           | 3      | 6     | Getting-started guide explicitly lists version requirements      |
+| Onboarding design becomes stale      | 3           | 2      | 6     | Clearly marked as design doc, references current source files    |
 
 ## Summary
 
@@ -627,4 +694,4 @@ After all phases complete:
 ## Recommended Skills for BUILD
 
 - `cc10x:architecture-patterns` (multi-component documentation work)
-- No MongoDB agent skills (per project patterns: use ONLY mcp__mongodb__search-knowledge)
+- No MongoDB agent skills (per project patterns: use ONLY mcp**mongodb**search-knowledge)

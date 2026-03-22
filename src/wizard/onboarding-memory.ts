@@ -86,7 +86,7 @@ async function setupMongoDBMemory(
         return "URI must start with mongodb:// or mongodb+srv://";
       }
       if (trimmed.includes(".mongodb.net")) {
-        return "ClawMongo supports MongoDB Community + mongot only. Atlas URIs are not supported.";
+        return "ClawMongo targets local MongoDB (mongodb-atlas-local:preview Docker image). Atlas SaaS URIs (.mongodb.net) are not supported. Use a local connection string instead.";
       }
       return undefined;
     },
@@ -150,9 +150,9 @@ async function continueMongoDBSetup(
         lines.push("", "Missing features (upgrade to enable):");
         lines.push(...features.unavailable.map((f) => `  - ${f}`));
         if (detectedTier !== "fullstack") {
-          lines.push("  - Community + mongot full stack");
+          lines.push("  - Full search stack (use mongodb-atlas-local:preview Docker image)");
         }
-        lines.push("", "Upgrade: ./docker/mongodb/start.sh fullstack");
+        lines.push("", "Upgrade: ./docker/mongodb/start-preview.sh (mongodb-atlas-local:preview)");
       }
 
       await prompter.note(lines.join("\n"), "MongoDB Topology");

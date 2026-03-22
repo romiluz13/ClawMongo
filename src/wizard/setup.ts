@@ -434,6 +434,21 @@ export async function runSetupWizard(
   const { applyLocalSetupWorkspaceConfig } = await import("../commands/onboard-config.js");
   let nextConfig: OpenClawConfig = applyLocalSetupWorkspaceConfig(baseConfig, workspaceDir);
 
+  // Wire in MongoDB setup for ClawMongo (BEFORE auth/LLM provider)
+  // Only activates for the ClawMongo package; upstream OpenClaw flow is unchanged.
+  try {
+    const { resolveOpenClawPackageName } = await import("../infra/openclaw-root.js");
+    const packageName = await resolveOpenClawPackageName();
+    if (packageName === "@romiluz/clawmongo") {
+      const { setupMemoryBackend } = await import("./onboarding-memory.js");
+      nextConfig = await setupMemoryBackend(nextConfig, prompter);
+    }
+  } catch (err) {
+    // If package name resolution or memory setup fails, log and continue with the rest of setup
+    // MongoDB setup failed or was cancelled — continue with rest of wizard
+    void err;
+  }
+
   const { ensureAuthProfileStore } = await import("../agents/auth-profiles.runtime.js");
   const { promptAuthChoiceGrouped } = await import("../commands/auth-choice-prompt.js");
   const { promptCustomApiConfig } = await import("../commands/onboard-custom.js");

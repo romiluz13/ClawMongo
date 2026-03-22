@@ -132,7 +132,8 @@ describe("detectExistingMongoDB", () => {
     const { detectExistingMongoDB } = await import("./mongodb-docker.js");
     const result = await detectExistingMongoDB();
     expect(result.connected).toBe(true);
-    expect(result.uri).toBe("mongodb://localhost:27017/openclaw");
+    // Preview URI (directConnection=true, no auth) is tried first
+    expect(result.uri).toBe("mongodb://localhost:27017/openclaw?directConnection=true");
   });
 
   it("returns connected=false when MongoDB is not reachable", async () => {
@@ -142,11 +143,12 @@ describe("detectExistingMongoDB", () => {
     expect(result.connected).toBe(false);
   });
 
-  it("falls back to authenticated URI when unauthenticated URI fails", async () => {
+  it("falls back to authenticated URI when unauthenticated URIs fail", async () => {
     const { detectExistingMongoDB } = await import("./mongodb-docker.js");
     mockMongoClientConnectFn.mockImplementation(async (...args: unknown[]) => {
       const uri = typeof args[0] === "string" ? args[0] : undefined;
-      if (uri === "mongodb://localhost:27017/openclaw") {
+      // Fail both no-auth URIs (preview directConnection and standalone)
+      if (uri && !uri.includes("admin:admin")) {
         throw new Error("authentication failed");
       }
       return undefined;
@@ -183,6 +185,35 @@ describe("detectExistingMongoDB", () => {
     const result = await detectExistingMongoDB();
     expect(result.connected).toBe(true);
     expect(result.isDocker).toBe(true);
+  });
+
+  it("detects Docker container when clawmongo-preview is running", async () => {
+    const { detectExistingMongoDB } = await import("./mongodb-docker.js");
+    mockDockerContainerState.mockImplementation(async (name: string) => {
+      if (name === "clawmongo-preview") {
+        return { exists: true, running: true };
+      }
+      return { exists: false, running: false };
+    });
+    const result = await detectExistingMongoDB();
+    expect(result.connected).toBe(true);
+    expect(result.isDocker).toBe(true);
+  });
+
+  it("tries preview URI (directConnection, no auth) first in candidate list", async () => {
+    const { detectExistingMongoDB } = await import("./mongodb-docker.js");
+    // Only the directConnection URI without auth should succeed
+    mockMongoClientConnectFn.mockImplementation(async (...args: unknown[]) => {
+      const uri = typeof args[0] === "string" ? args[0] : undefined;
+      if (uri?.includes("directConnection=true") && !uri?.includes("admin:admin")) {
+        return undefined; // success
+      }
+      throw new Error("connection refused");
+    });
+    const result = await detectExistingMongoDB();
+    expect(result.connected).toBe(true);
+    expect(result.uri).toContain("directConnection=true");
+    expect(result.uri).not.toContain("admin:admin");
   });
 
   it("closes MongoClient even on error", async () => {
@@ -236,6 +267,26 @@ describe("getComposeFilePath", () => {
     const { getComposeFilePath } = await import("./mongodb-docker.js");
     const filePath = getComposeFilePath();
     expect(filePath).toBe("/tmp/clawmongo/docker/mongodb/docker-compose.mongodb.yml");
+  });
+});
+
+describe("getPreviewComposeFilePath", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveOpenClawPackageRootSync.mockReturnValue(null);
+  });
+
+  it("resolves to docker/mongodb/docker-compose.preview.yml relative to package root", async () => {
+    const { getPreviewComposeFilePath } = await import("./mongodb-docker.js");
+    const filePath = getPreviewComposeFilePath();
+    expect(filePath).toContain("docker/mongodb/docker-compose.preview.yml");
+  });
+
+  it("prefers resolved package root when available", async () => {
+    mockResolveOpenClawPackageRootSync.mockReturnValue("/tmp/clawmongo");
+    const { getPreviewComposeFilePath } = await import("./mongodb-docker.js");
+    const filePath = getPreviewComposeFilePath();
+    expect(filePath).toBe("/tmp/clawmongo/docker/mongodb/docker-compose.preview.yml");
   });
 });
 
@@ -357,7 +408,7 @@ describe("waitForMongoDBHealth", () => {
 describe("autoStartMongoDB", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("starts fullstack and returns the tier on success", async () => {
+  it("tries preview first and returns preview tier on success", async () => {
     const { autoStartMongoDB } = await import("./mongodb-docker.js");
     mockExecDocker.mockImplementation(async (args: string[]) => {
       if (args.includes("--format") && args.includes("{{.State.Health.Status}}")) {
@@ -373,13 +424,47 @@ describe("autoStartMongoDB", () => {
       healthPollIntervalMs: 100,
     });
     expect(result.success).toBe(true);
-    expect(result.tier).toBe("fullstack");
+    expect(result.tier).toBe("preview");
     expect(progressCalls.length).toBeGreaterThan(0);
   });
 
-  it("falls back to replicaset when fullstack fails", async () => {
+  it("falls back to fullstack when preview fails", async () => {
     const { autoStartMongoDB } = await import("./mongodb-docker.js");
     mockExecDocker.mockImplementation(async (args: string[]) => {
+      // Fail preview compose up
+      if (
+        args.includes("compose") &&
+        args.includes("up") &&
+        args.some((a) => a.includes("preview"))
+      ) {
+        throw new Error("preview image not found");
+      }
+      // Health check for fullstack returns healthy
+      if (args.includes("--format") && args.includes("{{.State.Health.Status}}")) {
+        return { stdout: "healthy", stderr: "", code: 0 };
+      }
+      return { stdout: "", stderr: "", code: 0 };
+    });
+    const result = await autoStartMongoDB({
+      composeFile: "/path/to/compose.yml",
+      healthTimeoutMs: 5000,
+      healthPollIntervalMs: 100,
+    });
+    expect(result.success).toBe(true);
+    expect(result.tier).toBe("fullstack");
+  });
+
+  it("falls back to replicaset when preview and fullstack fail", async () => {
+    const { autoStartMongoDB } = await import("./mongodb-docker.js");
+    mockExecDocker.mockImplementation(async (args: string[]) => {
+      // Fail preview compose up
+      if (
+        args.includes("compose") &&
+        args.includes("up") &&
+        args.some((a) => a.includes("preview"))
+      ) {
+        throw new Error("preview image not found");
+      }
       // Fail the fullstack up -d
       if (args.includes("fullstack") && args.includes("up")) {
         throw new Error("mongot image not found");
@@ -399,9 +484,17 @@ describe("autoStartMongoDB", () => {
     expect(result.tier).toBe("replicaset");
   });
 
-  it("falls back to standalone when replicaset fails", async () => {
+  it("falls back to standalone when preview, fullstack, and replicaset fail", async () => {
     const { autoStartMongoDB } = await import("./mongodb-docker.js");
     mockExecDocker.mockImplementation(async (args: string[]) => {
+      // Fail preview compose up
+      if (
+        args.includes("compose") &&
+        args.includes("up") &&
+        args.some((a) => a.includes("preview"))
+      ) {
+        throw new Error("preview image not found");
+      }
       if ((args.includes("fullstack") || args.includes("replicaset")) && args.includes("up")) {
         throw new Error("auth files failed");
       }
@@ -422,7 +515,7 @@ describe("autoStartMongoDB", () => {
     expect(result.tier).toBe("standalone");
   });
 
-  it("returns success=false when all tiers fail", async () => {
+  it("returns success=false when all tiers including preview fail", async () => {
     const { autoStartMongoDB } = await import("./mongodb-docker.js");
     mockExecDocker.mockImplementation(async (args: string[]) => {
       if (args.includes("up")) {
@@ -489,6 +582,38 @@ describe("getRunningClawMongoContainers", () => {
     const result = await getRunningClawMongoContainers();
     expect(result.running).toBe(true);
     expect(result.tier).toBe("standalone");
+  });
+
+  it("detects preview container and returns tier preview", async () => {
+    const { getRunningClawMongoContainers } = await import("./mongodb-docker.js");
+    mockDockerContainerState.mockImplementation(async (name: string) => {
+      if (name === "clawmongo-preview") {
+        return { exists: true, running: true };
+      }
+      return { exists: false, running: false };
+    });
+    const result = await getRunningClawMongoContainers();
+    expect(result.running).toBe(true);
+    expect(result.tier).toBe("preview");
+    expect(result.containers).toContain("clawmongo-preview");
+  });
+
+  it("prefers preview over fullstack when both running", async () => {
+    const { getRunningClawMongoContainers } = await import("./mongodb-docker.js");
+    mockDockerContainerState.mockImplementation(async (name: string) => {
+      if (
+        name === "clawmongo-preview" ||
+        name === "clawmongo-mongod" ||
+        name === "clawmongo-mongot"
+      ) {
+        return { exists: true, running: true };
+      }
+      return { exists: false, running: false };
+    });
+    const result = await getRunningClawMongoContainers();
+    expect(result.running).toBe(true);
+    // Preview should be preferred when detected first
+    expect(result.tier).toBe("preview");
   });
 
   it("returns running=false when no containers running", async () => {

@@ -86,6 +86,8 @@ export type ExistingMongoDBResult = {
 
 function existingMongoCandidateUris(port: number): string[] {
   return [
+    // Preview image (mongodb-atlas-local:preview) -- no auth, directConnection
+    `mongodb://localhost:${port}/openclaw?directConnection=true`,
     // Standalone/default local install (no auth).
     `mongodb://localhost:${port}/openclaw`,
     // ClawMongo Docker replica set/fullstack defaults.
@@ -123,6 +125,14 @@ export async function detectExistingMongoDB(port = 27017): Promise<ExistingMongo
         if (!isDocker) {
           try {
             const state = await dockerContainerState("clawmongo-mongod-standalone");
+            isDocker = state.running;
+          } catch {
+            // Not a Docker container
+          }
+        }
+        if (!isDocker) {
+          try {
+            const state = await dockerContainerState("clawmongo-preview");
             isDocker = state.running;
           } catch {
             // Not a Docker container
@@ -188,7 +198,27 @@ export function getComposeFilePath(): string {
   return path.resolve(__dirname, "..", "..", "docker", "mongodb", "docker-compose.mongodb.yml");
 }
 
-export type ComposeTier = "standalone" | "replicaset" | "fullstack";
+/**
+ * Get absolute path to docker-compose.preview.yml (atlas-local single-container).
+ * Resolves from the detected package root so global npm installs work.
+ */
+export function getPreviewComposeFilePath(): string {
+  const packageRoot = resolveOpenClawPackageRootSync({
+    moduleUrl: import.meta.url,
+    argv1: process.argv[1],
+    cwd: process.cwd(),
+  });
+  if (packageRoot) {
+    return path.join(packageRoot, "docker", "mongodb", "docker-compose.preview.yml");
+  }
+
+  // Fallback for unusual execution contexts.
+  return path.resolve(__dirname, "..", "..", "docker", "mongodb", "docker-compose.preview.yml");
+}
+
+// "preview" detects as "fullstack" in DeploymentTier at runtime (same mongot capabilities).
+// ComposeTier tracks the Docker Compose topology: preview = atlas-local single container.
+export type ComposeTier = "preview" | "standalone" | "replicaset" | "fullstack";
 
 /**
  * Run the setup-generator (keyfile + auth files).
@@ -288,12 +318,14 @@ export type AutoStartResult = {
 };
 
 const TIER_CONTAINERS: Record<ComposeTier, string[]> = {
+  preview: ["clawmongo-preview"],
   fullstack: ["clawmongo-mongod", "clawmongo-mongot"],
   replicaset: ["clawmongo-mongod"],
   standalone: ["clawmongo-mongod-standalone"],
 };
 
 const TIER_URIS: Record<ComposeTier, string> = {
+  preview: "mongodb://localhost:27017/openclaw?directConnection=true",
   fullstack:
     "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true",
   replicaset:
@@ -321,6 +353,47 @@ export async function autoStartMongoDB(options: {
     healthPollIntervalMs = 2_000,
   } = options;
   const report = onProgress ?? (() => {});
+
+  // Try preview (atlas-local single container) first -- bypasses startMongoDBCompose
+  try {
+    const previewComposeFile = getPreviewComposeFilePath();
+    report("Starting MongoDB (preview: atlas-local)...");
+    await execDocker(["compose", "-f", previewComposeFile, "up", "-d"], {
+      allowFailure: false,
+    });
+    report("Waiting for clawmongo-preview to be ready...");
+    const previewHealthy = await waitForMongoDBHealth("clawmongo-preview", {
+      timeoutMs: healthTimeoutMs,
+      pollIntervalMs: healthPollIntervalMs,
+    });
+    if (previewHealthy) {
+      const uri = TIER_URIS.preview;
+      report("MongoDB started successfully (preview: atlas-local)");
+      log.info("Auto-started MongoDB with tier: preview");
+      return { success: true, tier: "preview", uri };
+    }
+    log.warn("preview: container did not become healthy, falling back to multi-container");
+    // Stop unhealthy preview container to free port 27017 for fallback tiers
+    try {
+      await execDocker(["compose", "-f", getPreviewComposeFilePath(), "down"], {
+        allowFailure: true,
+      });
+    } catch {
+      /* best-effort cleanup */
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.warn(`preview failed: ${msg}`);
+    report("preview failed, trying multi-container fallback...");
+    // Stop preview container if partially started
+    try {
+      await execDocker(["compose", "-f", getPreviewComposeFilePath(), "down"], {
+        allowFailure: true,
+      });
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
 
   for (const tier of FALLBACK_ORDER) {
     try {
@@ -386,6 +459,20 @@ export async function getRunningClawMongoContainers(): Promise<{
   tier?: ComposeTier;
   containers: string[];
 }> {
+  // Check preview container FIRST (recommended path)
+  try {
+    const previewState = await dockerContainerState("clawmongo-preview");
+    if (previewState.running) {
+      return {
+        running: true,
+        tier: "preview" as ComposeTier,
+        containers: ["clawmongo-preview"],
+      };
+    }
+  } catch {
+    // Docker not available or container not found
+  }
+
   const containers: string[] = [];
 
   // Check fullstack containers

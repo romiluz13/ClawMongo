@@ -88,10 +88,44 @@ export async function noteMongoDBBackendHealth(cfg: OpenClawConfig): Promise<voi
         lines.push("Missing features (upgrade to enable):");
         lines.push(...features.unavailable.map((f) => `  - ${f}`));
         lines.push("");
-        lines.push("Upgrade: ./docker/mongodb/start.sh fullstack");
+        lines.push("Upgrade: ./docker/mongodb/start-preview.sh (mongodb-atlas-local:preview)");
       }
 
       note(lines.join("\n"), "Memory (MongoDB)");
+
+      // --- mongot health ---
+      if (!topology.hasMongot) {
+        note(
+          [
+            "mongot is not reachable. Vector search and auto-embeddings are unavailable.",
+            "",
+            "Fix: Start the atlas-local container which bundles mongot:",
+            "  ./docker/mongodb/start-preview.sh",
+          ].join("\n"),
+          "Memory (mongot)",
+        );
+      } else {
+        // mongot present -- check Voyage AI key
+        if (!process.env.VOYAGE_API_KEY) {
+          note(
+            [
+              "mongot is reachable but VOYAGE_API_KEY is not set in the environment.",
+              "Auto-embeddings require a Voyage AI API key.",
+              "",
+              "Fix: Set VOYAGE_API_KEY and restart the container:",
+              "  VOYAGE_API_KEY=your-key ./docker/mongodb/start-preview.sh",
+            ].join("\n"),
+            "Memory (Auto-Embed)",
+          );
+        }
+      }
+
+      // --- vector search index check ---
+      await noteVectorSearchIndexHealth(
+        client.db(mongoConfig.database),
+        mongoConfig.collectionPrefix,
+        topology.hasMongot,
+      );
     } catch {
       // Topology detection failed -- show basic connected message
       note(`MongoDB connected. Profile: ${deploymentProfile}.`, "Memory (MongoDB)");
@@ -412,6 +446,49 @@ function buildGatewayProbeWarning(
  * for ClawMongo where "Never Stored" is rare (runtime write path is automatic)
  * and "Not Retrieved" (agent didn't search MongoDB) is the primary failure mode.
  */
+/**
+ * Check vector search index existence on chunks collection.
+ * Only runs when mongot is available.
+ */
+async function noteVectorSearchIndexHealth(
+  db: import("mongodb").Db,
+  prefix: string,
+  hasMongot: boolean,
+): Promise<void> {
+  if (!hasMongot) {
+    return; // Skip when mongot is not available
+  }
+  try {
+    const collection = db.collection(`${prefix}chunks`);
+    const indexes = await collection.listSearchIndexes().toArray();
+    const vectorIndexes = indexes.filter(
+      (idx: Record<string, unknown>) => idx.type === "vectorSearch",
+    );
+    if (vectorIndexes.length === 0) {
+      note(
+        [
+          `Vector search indexes: none found on ${prefix}chunks`,
+          "",
+          "Fix: Indexes are created automatically on first gateway start.",
+          "Manual: clawmongo memory init --indexes",
+        ].join("\n"),
+        "Memory (Vector Indexes)",
+      );
+    } else {
+      const names = vectorIndexes
+        .map((idx: Record<string, unknown>) => idx.name)
+        .filter(Boolean)
+        .join(", ");
+      note(
+        `Vector search indexes: ${vectorIndexes.length} found on ${prefix}chunks${names ? ` (${names})` : ""}`,
+        "Memory (Vector Indexes)",
+      );
+    }
+  } catch {
+    // listSearchIndexes may fail on older MongoDB or without mongot -- skip silently
+  }
+}
+
 export function noteMemoryRecallDiagnostic(params: {
   backend?: string;
 }): { title: string; lines: string } | null {

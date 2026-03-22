@@ -1,16 +1,51 @@
 # ClawMongo MongoDB Setup
 
-One-command MongoDB setup for ClawMongo with three deployment tiers.
+One-command MongoDB setup for ClawMongo.
+
+## Recommended: Preview (Single Container)
+
+The fastest way to run ClawMongo's full MongoDB stack:
+
+```bash
+# Start (bundles mongod + mongot + Atlas Search + Vector Search)
+./docker/mongodb/start-preview.sh
+
+# With auto-embeddings
+VOYAGE_API_KEY=your-key ./docker/mongodb/start-preview.sh
+
+# Stop
+./docker/mongodb/start-preview.sh stop
+```
+
+This uses `mongodb/mongodb-atlas-local:preview` (~584 MB) -- a single container with everything ClawMongo needs:
+
+- mongod (MongoDB 8.x, single-node replica set)
+- mongot (community search engine)
+- Atlas Search + Atlas Vector Search
+- Auto-embeddings via Voyage AI (when `VOYAGE_API_KEY` is set)
+
+**Connection string:** `mongodb://localhost:27017/?directConnection=true` (no auth needed)
+
+**Docker Compose file:** `docker/mongodb/docker-compose.preview.yml`
+
+For most users, this is all you need. The multi-container setup below is for advanced use cases only.
+
+---
+
+## Advanced: Multi-Container Setup
+
+> **Note:** Most users should use the [Preview single container](#recommended-preview-single-container) above.
+> The multi-container setup is for users who need separate mongod/mongot control, custom auth, or specific MongoDB versions.
 
 Adapted from [mdb-community-search](https://github.com/JohnGUnderwood/mdb-community-search) (MongoDB engineer reference implementation).
 
-## Prerequisites
+### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) (Docker Desktop or Docker Engine)
 - [Docker Compose](https://docs.docker.com/compose/install/) (included in Docker Desktop)
 - At least 2GB of available RAM (4GB recommended for fullstack)
 
-## Three Deployment Tiers
+### Three Deployment Tiers
 
 | Tier           | Description                       | Transactions | Vector Search | Text Search | Auto-Embedding  |
 | -------------- | --------------------------------- | :----------: | :-----------: | :---------: | :-------------: |

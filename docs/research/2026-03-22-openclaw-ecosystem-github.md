@@ -1,11 +1,13 @@
 # GitHub Research: OpenClaw Ecosystem
 
 ## Execution
+
 - Preferred backend: web-only (no Octocode MCP available)
 - Allowed fallbacks: WebFetch, local codebase reading
 - Research round: 1
 
 ## Sources Used
+
 - Local codebase (ClawMongo fork, synced 0 behind upstream as of 2026-03-22)
 - GitHub web (openclaw/openclaw repo page, issues, pulse, forks, topics)
 - npmjs.com (openclaw package)
@@ -13,6 +15,7 @@
 - GitHub competitor repos (AutoGPT, CrewAI)
 
 ## Research Quality
+
 - Status: COMPLETE
 - Quality level: high
 - Backend mode: web-only
@@ -26,24 +29,27 @@
 **Tagline:** "Your own personal AI assistant. Any OS. Any Platform. The lobster way."
 
 ### Metrics (as of 2026-03-22)
-| Metric | Value |
-|--------|-------|
-| Stars | 329,000 |
-| Forks | 63,900 |
-| Open issues | 8,756 |
-| Commits (all time) | 20,918 |
-| Security advisories | 288 |
-| npm weekly downloads | 1,109,169 |
-| npm package name | `openclaw` |
-| Latest npm version | 2026.3.13 |
-| License | MIT |
-| Language | TypeScript (ESM) |
-| Runtime | Node 24 (recommended) / Node 22.16+ |
+
+| Metric               | Value                               |
+| -------------------- | ----------------------------------- |
+| Stars                | 329,000                             |
+| Forks                | 63,900                              |
+| Open issues          | 8,756                               |
+| Commits (all time)   | 20,918                              |
+| Security advisories  | 288                                 |
+| npm weekly downloads | 1,109,169                           |
+| npm package name     | `openclaw`                          |
+| Latest npm version   | 2026.3.13                           |
+| License              | MIT                                 |
+| Language             | TypeScript (ESM)                    |
+| Runtime              | Node 24 (recommended) / Node 22.16+ |
 
 ### History / Name Evolution
+
 Warelay -> Clawdbot -> Moltbot -> OpenClaw (from VISION.md). Backward-compat shims exist for clawdbot/moltbot naming.
 
 ### Maintainers (from CONTRIBUTING.md)
+
 - **Peter Steinberger (@steipete)** -- Benevolent Dictator
 - **Shadow (@thewilloftheshadow)** -- Discord, community moderation, ClawHub
 - **Vignesh (@vignesh07)** -- Memory (QMD), TUI, IRC, Lobster
@@ -75,7 +81,9 @@ Warelay -> Clawdbot -> Moltbot -> OpenClaw (from VISION.md). Backward-compat shi
 ClawMongo fork publishes as `@romiluz/clawmongo` with dual bin entries (`clawmongo` + `openclaw` alias).
 
 ### Plugin SDK Surface (package.json exports)
+
 The npm package exposes 35+ subpath exports under `./plugin-sdk/*`, including:
+
 - Core: `./plugin-sdk`, `./plugin-sdk/core`, `./plugin-sdk/runtime`
 - Channels: `./plugin-sdk/channel-setup`, `./plugin-sdk/channel-runtime`, `./plugin-sdk/channel-reply-pipeline`
 - Providers: `./plugin-sdk/provider-setup`, `./plugin-sdk/self-hosted-provider-setup`
@@ -113,6 +121,7 @@ diagnostics-otel (OpenTelemetry), openshell (sandbox backend), acpx (ACP runtime
 google-antigravity-auth, openai-codex-auth, qwen-portal-auth
 
 ### Plugin Architecture
+
 - Plugins register via `definePluginEntry()` with `OpenClawPluginApi`
 - Plugins can register: tools, CLI commands, memory prompt sections, context engines
 - Memory is a special "kind" slot (only one memory plugin active at a time)
@@ -125,6 +134,7 @@ google-antigravity-auth, openai-codex-auth, qwen-portal-auth
 ## 4. Memory Architecture (Upstream vs ClawMongo)
 
 ### Upstream OpenClaw Memory
+
 - **Default backends:** `builtin` (SQLite) and `qmd` (Quick Markdown) for vector/hybrid search
 - **QMD:** QmdMemoryManager -- Markdown-file-based memory with vector search via LanceDB
 - **Memory plugin slot:** `memory-core` extension provides `memory_search`, `memory_get`, `kb_search`, `memory_write` tools
@@ -132,6 +142,7 @@ google-antigravity-auth, openai-codex-auth, qwen-portal-auth
 - Upstream recently pivoted toward QMD as the recommended backend
 
 ### ClawMongo Memory (Fork Additions, 273 commits ahead)
+
 - **MongoDB-only:** Community mongod + mongot, Voyage AI autoEmbed
 - **20 collections, 53 standard indexes, up to 8 MongoDB Search indexes**
 - **Canonical events architecture:** events as single source of truth, everything else derived
@@ -144,6 +155,7 @@ google-antigravity-auth, openai-codex-auth, qwen-portal-auth
 - **1,632 lines** in mongodb-schema.ts alone
 
 ### Key Architectural Gap
+
 Upstream treats memory as a file/Markdown concern. ClawMongo treats memory as a database-first concern with explicit write/read/audit semantics. The fork's memory system is materially more sophisticated than upstream's QMD or SQLite paths.
 
 ---
@@ -151,6 +163,7 @@ Upstream treats memory as a file/Markdown concern. ClawMongo treats memory as a 
 ## 5. Onboarding Flow
 
 **34 files** under `src/commands/onboard*.ts` covering:
+
 - `onboard.ts` -- main entry, dispatches to interactive or non-interactive
 - `onboard-interactive.ts` -- step-by-step wizard
 - `onboard-non-interactive.ts` -- scripted/headless setup
@@ -165,6 +178,7 @@ Upstream treats memory as a file/Markdown concern. ClawMongo treats memory as a 
 - `onboard-types.ts` -- type definitions
 
 **Key features:**
+
 - Interactive wizard (default) or `--non-interactive` for CI/automation
 - `--install-daemon` flag installs launchd/systemd user service
 - Auth choices: setup-token (Anthropic), openai-codex (OAuth), etc.
@@ -177,6 +191,7 @@ Upstream treats memory as a file/Markdown concern. ClawMongo treats memory as a 
 ## 6. Companion Apps
 
 OpenClaw ships native apps under `apps/`:
+
 - **macOS** -- SwiftUI, Sparkle updates, voice wake, menubar gateway
 - **iOS** -- SwiftUI, voice wake, Observation framework
 - **Android** -- Kotlin, dark theme, Talk speech, SMS/call log search
@@ -189,6 +204,7 @@ This is unusual for an agent runtime. Most competitors are CLI-only or web-only.
 ## 7. Community Activity Patterns
 
 ### Issue Categories (8,756 open)
+
 1. Gateway stability during long-running operations
 2. Cross-platform compatibility (Windows/Linux filesystem)
 3. Multi-language/localization gaps
@@ -198,6 +214,7 @@ This is unusual for an agent runtime. Most competitors are CLI-only or web-only.
 7. Channel-specific bugs (Telegram, Discord, Matrix)
 
 ### Contributing Bar
+
 - Bugs/small fixes: direct PR welcome
 - New features: start a Discussion or Discord first
 - Refactor-only PRs: not accepted unless maintainer-requested
@@ -205,7 +222,9 @@ This is unusual for an agent runtime. Most competitors are CLI-only or web-only.
 - CI requirements: `pnpm build && pnpm check && pnpm test`
 
 ### Recent Changelog Activity (Unreleased)
+
 The unreleased changelog section shows 50+ entries, indicating very high development velocity. Recent additions include:
+
 - Anthropic Vertex provider support
 - `/btw` side-question command
 - Pluggable sandbox backends (OpenShell)
@@ -224,12 +243,12 @@ The unreleased changelog section shows 50+ entries, indicating very high develop
 
 ### Direct Competitors
 
-| Project | Stars | Language | Focus | Memory | Channels |
-|---------|-------|----------|-------|--------|----------|
-| **OpenClaw** | 329K | TypeScript | Personal assistant, multi-channel | SQLite/QMD/pluggable | 24 messaging platforms |
-| **AutoGPT** | 183K | Python/TS | Agent builder platform, low-code | PostgreSQL | Web UI only |
-| **CrewAI** | 46.8K | Python | Multi-agent orchestration | Pluggable | None (library) |
-| **LangChain** | ~90K | Python/JS | LLM framework/toolkit | Pluggable (100+ stores) | None (library) |
+| Project       | Stars | Language   | Focus                             | Memory                  | Channels               |
+| ------------- | ----- | ---------- | --------------------------------- | ----------------------- | ---------------------- |
+| **OpenClaw**  | 329K  | TypeScript | Personal assistant, multi-channel | SQLite/QMD/pluggable    | 24 messaging platforms |
+| **AutoGPT**   | 183K  | Python/TS  | Agent builder platform, low-code  | PostgreSQL              | Web UI only            |
+| **CrewAI**    | 46.8K | Python     | Multi-agent orchestration         | Pluggable               | None (library)         |
+| **LangChain** | ~90K  | Python/JS  | LLM framework/toolkit             | Pluggable (100+ stores) | None (library)         |
 
 ### What Makes OpenClaw Unique
 
@@ -262,6 +281,7 @@ The unreleased changelog section shows 50+ entries, indicating very high develop
 ## 9. Other Forks / Variants
 
 The fork network shows hundreds of forks, with several patterns:
+
 - **Renamed forks:** `clawdbot`, `moltbot` appear dozens of times (legacy names)
 - **Specialized forks:** `openclaw-meets-kiro`, `openclaw-msns`, `openclaw-westworld`, `openclaw-rust`
 - **ClawMongo** (this fork): the only known MongoDB-native fork with 273 commits of divergence
@@ -272,19 +292,19 @@ No other fork appears to have the scope of architectural divergence that ClawMon
 
 ## 10. What Makes ClawMongo Differentiated from Upstream
 
-| Dimension | Upstream OpenClaw | ClawMongo |
-|-----------|-------------------|-----------|
-| Memory backend | SQLite / QMD (Markdown + LanceDB) | MongoDB Community + mongot |
-| Memory model | File-based, flat search | Event-sourced, 20 collections, 8 retrieval paths |
-| Vector search | LanceDB local | Voyage AI autoEmbed via mongot (no app-side embedding code) |
-| Knowledge graph | None | $graphLookup with entities/relations/bi-directional expansion |
-| Episodes | None | Auto-materialized from event windows |
-| Structured memory | Basic | Salience, temporal validity, state, provenance, revision tracking |
-| Procedures | None | Versioned workflow artifacts with intent tags |
-| Retrieval planning | Simple search | 8-path planner with query analysis |
-| Operational visibility | Limited | Ingest runs, projection runs, relevance telemetry |
-| Collections | ~2 | 20 |
-| Indexes | Few | 53 standard + 8 search indexes |
+| Dimension              | Upstream OpenClaw                 | ClawMongo                                                         |
+| ---------------------- | --------------------------------- | ----------------------------------------------------------------- |
+| Memory backend         | SQLite / QMD (Markdown + LanceDB) | MongoDB Community + mongot                                        |
+| Memory model           | File-based, flat search           | Event-sourced, 20 collections, 8 retrieval paths                  |
+| Vector search          | LanceDB local                     | Voyage AI autoEmbed via mongot (no app-side embedding code)       |
+| Knowledge graph        | None                              | $graphLookup with entities/relations/bi-directional expansion     |
+| Episodes               | None                              | Auto-materialized from event windows                              |
+| Structured memory      | Basic                             | Salience, temporal validity, state, provenance, revision tracking |
+| Procedures             | None                              | Versioned workflow artifacts with intent tags                     |
+| Retrieval planning     | Simple search                     | 8-path planner with query analysis                                |
+| Operational visibility | Limited                           | Ingest runs, projection runs, relevance telemetry                 |
+| Collections            | ~2                                | 20                                                                |
+| Indexes                | Few                               | 53 standard + 8 search indexes                                    |
 
 ---
 
@@ -293,6 +313,7 @@ No other fork appears to have the scope of architectural divergence that ClawMon
 **Highest-signal finding:** OpenClaw has 329K stars and 1.1M weekly npm downloads, making it one of the most popular open-source agent projects globally -- far larger than AutoGPT (183K stars) in star count and community size. The upstream project is actively developed with 15+ maintainers, 78 extensions, 24 messaging channels, and native apps for 3 platforms. However, upstream's memory system (QMD/SQLite) is the acknowledged weak point -- VISION.md explicitly states they plan to "converge on one recommended default path" for memory. ClawMongo's MongoDB-native memory architecture (20 collections, 8 retrieval paths, knowledge graph, episodes, procedures) fills the exact gap that upstream acknowledges but has not yet addressed. This positions ClawMongo not as a competing fork but as the production memory backend that OpenClaw needs.
 
 ## References
+
 - https://github.com/openclaw/openclaw (329K stars)
 - https://www.npmjs.com/package/openclaw (1.1M weekly downloads)
 - https://deepwiki.com/openclaw/openclaw
@@ -300,7 +321,8 @@ No other fork appears to have the scope of architectural divergence that ClawMon
 - https://github.com/crewAIInc/crewAI (46.8K stars)
 - https://docs.openclaw.ai
 - Local: VISION.md, CONTRIBUTING.md, CHANGELOG.md, package.json
-- Local: extensions/ (78 plugins), src/memory/ (MongoDB architecture), src/commands/onboard*.ts (34 files)
+- Local: extensions/ (78 plugins), src/memory/ (MongoDB architecture), src/commands/onboard\*.ts (34 files)
 
 ---
+
 GitHub research complete.
