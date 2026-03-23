@@ -568,7 +568,7 @@ function validateConfigObjectWithPluginsBase(
       continue;
     }
     if (!knownIds.has(pluginId)) {
-      pushMissingPluginIssue("plugins.allow", pluginId);
+      pushMissingPluginIssue("plugins.allow", pluginId, { warnOnly: true });
     }
   }
 
@@ -599,7 +599,9 @@ function validateConfigObjectWithPluginsBase(
     typeof memorySlot === "string" &&
     memorySlot.trim() &&
     memorySlot.trim().toLowerCase() !== "none" &&
-    memorySlot.trim() !== "memory-core"
+    memorySlot.trim() !== "memory-core" &&
+    !LEGACY_REMOVED_PLUGIN_IDS.has(memorySlot.trim()) &&
+    knownIds.has(memorySlot.trim())
   ) {
     issues.push({
       path: "plugins.slots.memory",
