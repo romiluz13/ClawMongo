@@ -209,7 +209,7 @@ export async function synthesizeProfile(params: {
       settled("episodes", () =>
         episodesCollection(db, prefix)
           .find(scopeFilter)
-          .toSorted({ "timeRange.start": -1 })
+          .sort({ "timeRange.start": -1 })
           .limit(maxEpisodes)
           .project({ title: 1, summary: 1, type: 1, timeRange: 1 })
           .toArray(),
@@ -276,7 +276,7 @@ export async function synthesizeProfile(params: {
         type: e.type as string,
         relationCount: e.relationCount as number,
       })),
-      recentEpisodes: (episodeResults ?? []).map((e) => ({
+      recentEpisodes: ((episodeResults ?? []) as Document[]).map((e) => ({
         title: e.title as string,
         summary: e.summary as string,
         type: e.type as string,
