@@ -15,11 +15,11 @@ Same channels. Same plugins. Same voice. But your agent's memory lives in MongoD
 
 ClawMongo is [OpenClaw](https://github.com/openclaw/openclaw) (329K+ stars, 22 messaging channels, native apps, 78 extensions) with its memory replaced by a production MongoDB backend. Where OpenClaw defaults to QMD (SQLite + Markdown files), ClawMongo uses MongoDB Community + mongot + Voyage AI for vector search, knowledge graphs, episode materialization, event-sourcing, and 8 retrieval paths -- all in one database. Nothing is ever lost.
 
-[ClawMongo Repo](https://github.com/romiluz13/ClawMongo) |
+[Website](https://clawmongo.site) |
 [Getting Started](docs/start/clawmongo-getting-started.md) |
 [MongoDB Capabilities](docs/reference/mongodb-capabilities.md) |
 [vs Default Memory](docs/reference/clawmongo-vs-default-memory.md) |
-[OpenClaw Docs](https://docs.openclaw.ai) |
+[Upstream Docs](https://docs.openclaw.ai) |
 [Discord](https://discord.gg/clawd)
 
 ---
@@ -301,7 +301,7 @@ ClawMongo inherits the entire OpenClaw platform. Everything below works identica
 
 WhatsApp (Baileys), Telegram (grammY), Slack (Bolt), Discord (discord.js), Google Chat, Signal, BlueBubbles (iMessage), iMessage (legacy), IRC, Microsoft Teams, Matrix, Feishu, LINE, Mattermost, Nextcloud Talk, Nostr, Synology Chat, Tlon, Twitch, Zalo, Zalo Personal, WebChat.
 
-Full channel setup guides: [docs.openclaw.ai/channels](https://docs.openclaw.ai/channels)
+Full channel setup guides: [OpenClaw Docs -- Channels](https://docs.openclaw.ai/channels)
 
 ### 78 Extensions
 
@@ -319,11 +319,13 @@ Full channel setup guides: [docs.openclaw.ai/channels](https://docs.openclaw.ai/
 
 ### Tools and Automation
 
-- [Browser control](https://docs.openclaw.ai/tools/browser) (dedicated Chrome/Chromium with CDP)
-- [Live Canvas + A2UI](https://docs.openclaw.ai/platforms/mac/canvas) (agent-driven visual workspace)
-- [Voice Wake + Talk Mode](https://docs.openclaw.ai/nodes/voicewake) (macOS/iOS/Android)
+- [Browser control](https://docs.openclaw.ai/tools/browser) -- dedicated Chrome/Chromium with CDP
+- [Live Canvas + A2UI](https://docs.openclaw.ai/platforms/mac/canvas) -- agent-driven visual workspace
+- [Voice Wake + Talk Mode](https://docs.openclaw.ai/nodes/voicewake) -- macOS/iOS/Android
 - [Cron jobs](https://docs.openclaw.ai/automation/cron-jobs), [Webhooks](https://docs.openclaw.ai/automation/webhook), [Gmail Pub/Sub](https://docs.openclaw.ai/automation/gmail-pubsub)
-- [Skills platform](https://docs.openclaw.ai/tools/skills) (bundled, managed, workspace skills)
+- [Skills platform](https://docs.openclaw.ai/tools/skills) -- bundled, managed, workspace skills
+
+All links above point to the upstream [OpenClaw docs](https://docs.openclaw.ai). ClawMongo inherits this functionality unchanged.
 
 ---
 
@@ -367,11 +369,13 @@ ClawMongo connects to real messaging surfaces. Treat inbound DMs as untrusted in
 
 Default behavior: **DM pairing** -- unknown senders receive a pairing code. Approve with `clawmongo pairing approve <channel> <code>`. Public inbound DMs require explicit opt-in (`dmPolicy="open"`).
 
-Full security guide: [docs.openclaw.ai/gateway/security](https://docs.openclaw.ai/gateway/security)
+Full security guide: [OpenClaw Docs -- Security](https://docs.openclaw.ai/gateway/security)
 
 ---
 
-## Sponsors
+## Built on OpenClaw
+
+ClawMongo is a fork of [OpenClaw](https://github.com/openclaw/openclaw), which is supported by these sponsors:
 
 | OpenAI                                                            | Vercel                                                            | Blacksmith                                                                   | Convex                                                                |
 | ----------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -389,4 +393,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, maintainers, and how to s
 
 ClawMongo is built on [OpenClaw](https://github.com/openclaw/openclaw) by Peter Steinberger and the community. MIT licensed.
 
-- [openclaw.ai](https://openclaw.ai) | [docs.openclaw.ai](https://docs.openclaw.ai) | [Discord](https://discord.gg/clawd)
+- [clawmongo.site](https://clawmongo.site) | [Upstream Docs](https://docs.openclaw.ai) | [Discord](https://discord.gg/clawd)

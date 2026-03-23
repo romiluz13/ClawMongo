@@ -2069,31 +2069,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     },
                     additionalProperties: false,
                   },
-                  store: {
-                    type: "object",
-                    properties: {
-                      driver: {
-                        type: "string",
-                        const: "sqlite",
-                      },
-                      path: {
-                        type: "string",
-                      },
-                      vector: {
-                        type: "object",
-                        properties: {
-                          enabled: {
-                            type: "boolean",
-                          },
-                          extensionPath: {
-                            type: "string",
-                          },
-                        },
-                        additionalProperties: false,
-                      },
-                    },
-                    additionalProperties: false,
-                  },
                   chunking: {
                     type: "object",
                     properties: {
@@ -2424,6 +2399,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                     type: "integer",
                     exclusiveMinimum: 0,
                     maximum: 9007199254740991,
+                  },
+                  truncateAfterCompaction: {
+                    type: "boolean",
                   },
                   memoryFlush: {
                     type: "object",
@@ -3682,31 +3660,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
                         },
                         modelCacheDir: {
                           type: "string",
-                        },
-                      },
-                      additionalProperties: false,
-                    },
-                    store: {
-                      type: "object",
-                      properties: {
-                        driver: {
-                          type: "string",
-                          const: "sqlite",
-                        },
-                        path: {
-                          type: "string",
-                        },
-                        vector: {
-                          type: "object",
-                          properties: {
-                            enabled: {
-                              type: "boolean",
-                            },
-                            extensionPath: {
-                              type: "string",
-                            },
-                          },
-                          additionalProperties: false,
                         },
                       },
                       additionalProperties: false,
@@ -10926,16 +10879,8 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
         type: "object",
         properties: {
           backend: {
-            anyOf: [
-              {
-                type: "string",
-                const: "builtin",
-              },
-              {
-                type: "string",
-                const: "qmd",
-              },
-            ],
+            type: "string",
+            const: "mongodb",
           },
           citations: {
             anyOf: [
@@ -10953,217 +10898,265 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
               },
             ],
           },
-          qmd: {
+          runtimeMode: {
+            type: "string",
+          },
+          sources: {
             type: "object",
             properties: {
-              command: {
-                type: "string",
-              },
-              mcporter: {
+              reference: {
                 type: "object",
                 properties: {
                   enabled: {
                     type: "boolean",
                   },
-                  serverName: {
-                    type: "string",
-                  },
-                  startDaemon: {
+                },
+                additionalProperties: false,
+              },
+              conversation: {
+                type: "object",
+                properties: {
+                  enabled: {
                     type: "boolean",
                   },
                 },
                 additionalProperties: false,
               },
-              searchMode: {
+              structured: {
+                type: "object",
+                properties: {
+                  enabled: {
+                    type: "boolean",
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+          mongodb: {
+            type: "object",
+            properties: {
+              uri: {
+                type: "string",
+              },
+              database: {
+                type: "string",
+              },
+              collectionPrefix: {
+                type: "string",
+              },
+              deploymentProfile: {
+                type: "string",
+              },
+              embeddingMode: {
+                type: "string",
+              },
+              fusionMethod: {
                 anyOf: [
                   {
                     type: "string",
-                    const: "query",
+                    const: "scoreFusion",
                   },
                   {
                     type: "string",
-                    const: "search",
+                    const: "rankFusion",
                   },
                   {
                     type: "string",
-                    const: "vsearch",
+                    const: "js-merge",
                   },
                 ],
               },
-              includeDefaultMemory: {
+              quantization: {
+                anyOf: [
+                  {
+                    type: "string",
+                    const: "none",
+                  },
+                  {
+                    type: "string",
+                    const: "scalar",
+                  },
+                  {
+                    type: "string",
+                    const: "binary",
+                  },
+                ],
+              },
+              watchDebounceMs: {
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              numDimensions: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              maxPoolSize: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              minPoolSize: {
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              embeddingCacheTtlDays: {
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              memoryTtlDays: {
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              enableChangeStreams: {
                 type: "boolean",
               },
-              paths: {
-                type: "array",
-                items: {
-                  type: "object",
-                  properties: {
-                    path: {
-                      type: "string",
-                    },
-                    name: {
-                      type: "string",
-                    },
-                    pattern: {
-                      type: "string",
-                    },
-                  },
-                  required: ["path"],
-                  additionalProperties: false,
-                },
+              changeStreamDebounceMs: {
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
               },
-              sessions: {
+              maxSessionChunks: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              connectTimeoutMs: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              numCandidates: {
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
+              kb: {
                 type: "object",
                 properties: {
                   enabled: {
                     type: "boolean",
                   },
-                  exportDir: {
-                    type: "string",
-                  },
-                  retentionDays: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                },
-                additionalProperties: false,
-              },
-              update: {
-                type: "object",
-                properties: {
-                  interval: {
-                    type: "string",
-                  },
-                  debounceMs: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  onBoot: {
-                    type: "boolean",
-                  },
-                  waitForBootSync: {
-                    type: "boolean",
-                  },
-                  embedInterval: {
-                    type: "string",
-                  },
-                  commandTimeoutMs: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  updateTimeoutMs: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  embedTimeoutMs: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                },
-                additionalProperties: false,
-              },
-              limits: {
-                type: "object",
-                properties: {
-                  maxResults: {
-                    type: "integer",
-                    exclusiveMinimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  maxSnippetChars: {
-                    type: "integer",
-                    exclusiveMinimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  maxInjectedChars: {
-                    type: "integer",
-                    exclusiveMinimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                  timeoutMs: {
-                    type: "integer",
-                    minimum: 0,
-                    maximum: 9007199254740991,
-                  },
-                },
-                additionalProperties: false,
-              },
-              scope: {
-                type: "object",
-                properties: {
-                  default: {
-                    anyOf: [
-                      {
-                        type: "string",
-                        const: "allow",
+                  chunking: {
+                    type: "object",
+                    properties: {
+                      tokens: {
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                        maximum: 9007199254740991,
                       },
-                      {
-                        type: "string",
-                        const: "deny",
+                      overlap: {
+                        type: "integer",
+                        minimum: 0,
+                        maximum: 9007199254740991,
                       },
-                    ],
+                    },
+                    additionalProperties: false,
                   },
-                  rules: {
+                  autoImportPaths: {
                     type: "array",
                     items: {
-                      type: "object",
-                      properties: {
-                        action: {
-                          anyOf: [
-                            {
-                              type: "string",
-                              const: "allow",
-                            },
-                            {
-                              type: "string",
-                              const: "deny",
-                            },
-                          ],
-                        },
-                        match: {
-                          type: "object",
-                          properties: {
-                            channel: {
-                              type: "string",
-                            },
-                            chatType: {
-                              anyOf: [
-                                {
-                                  type: "string",
-                                  const: "direct",
-                                },
-                                {
-                                  type: "string",
-                                  const: "group",
-                                },
-                                {
-                                  type: "string",
-                                  const: "channel",
-                                },
-                                {
-                                  type: "string",
-                                  const: "dm",
-                                },
-                              ],
-                            },
-                            keyPrefix: {
-                              type: "string",
-                            },
-                            rawKeyPrefix: {
-                              type: "string",
-                            },
-                          },
-                          additionalProperties: false,
-                        },
-                      },
-                      required: ["action"],
-                      additionalProperties: false,
+                      type: "string",
                     },
+                  },
+                  maxDocumentSize: {
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                  autoRefreshHours: {
+                    type: "number",
+                    minimum: 0,
+                  },
+                },
+                additionalProperties: false,
+              },
+              relevance: {
+                type: "object",
+                properties: {
+                  enabled: {
+                    type: "boolean",
+                  },
+                  telemetry: {
+                    type: "object",
+                    properties: {
+                      enabled: {
+                        type: "boolean",
+                      },
+                      baseSampleRate: {
+                        type: "number",
+                        minimum: 0,
+                        maximum: 1,
+                      },
+                      adaptive: {
+                        type: "object",
+                        properties: {
+                          enabled: {
+                            type: "boolean",
+                          },
+                          maxSampleRate: {
+                            type: "number",
+                            minimum: 0,
+                            maximum: 1,
+                          },
+                          minWindowSize: {
+                            type: "integer",
+                            exclusiveMinimum: 0,
+                            maximum: 9007199254740991,
+                          },
+                        },
+                        additionalProperties: false,
+                      },
+                      persistRawExplain: {
+                        type: "boolean",
+                      },
+                      queryPrivacyMode: {
+                        anyOf: [
+                          {
+                            type: "string",
+                            const: "redacted-hash",
+                          },
+                          {
+                            type: "string",
+                            const: "raw",
+                          },
+                          {
+                            type: "string",
+                            const: "none",
+                          },
+                        ],
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                  retention: {
+                    type: "object",
+                    properties: {
+                      days: {
+                        type: "integer",
+                        exclusiveMinimum: 0,
+                        maximum: 9007199254740991,
+                      },
+                    },
+                    additionalProperties: false,
+                  },
+                  benchmark: {
+                    type: "object",
+                    properties: {
+                      enabled: {
+                        type: "boolean",
+                      },
+                      datasetPath: {
+                        type: "string",
+                      },
+                    },
+                    additionalProperties: false,
                   },
                 },
                 additionalProperties: false,
@@ -13341,7 +13334,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     },
     "agents.defaults.memorySearch": {
       label: "Memory Search",
-      help: "Vector search over MEMORY.md and memory/*.md (per-agent overrides supported).",
+      help: "MongoDB-backed vector search over runtime memory sources (per-agent overrides supported).",
       tags: ["advanced"],
     },
     "agents.defaults.memorySearch.enabled": {
@@ -13351,7 +13344,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     },
     "agents.defaults.memorySearch.sources": {
       label: "Memory Search Sources",
-      help: 'Chooses which sources are indexed: "memory" reads MEMORY.md + memory files, and "sessions" includes transcript history. Keep ["memory"] unless you need recall from prior chat transcripts.',
+      help: 'Chooses which sources are indexed: "memory" reads workspace memory files, and "sessions" includes transcript history. Keep ["memory"] unless you need recall from prior chat transcripts.',
       tags: ["advanced"],
     },
     "agents.defaults.memorySearch.extraPaths": {
@@ -13448,21 +13441,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     "agents.defaults.memorySearch.local.modelPath": {
       label: "Local Embedding Model Path",
       help: "Specifies the local embedding model source for local memory search, such as a GGUF file path or `hf:` URI. Use this only when provider is `local`, and verify model compatibility before large index rebuilds.",
-      tags: ["storage"],
-    },
-    "agents.defaults.memorySearch.store.path": {
-      label: "Memory Search Index Path",
-      help: "Sets where the SQLite memory index is stored on disk for each agent. Keep the default `~/.openclaw/memory/{agentId}.sqlite` unless you need custom storage placement or backup policy alignment.",
-      tags: ["storage"],
-    },
-    "agents.defaults.memorySearch.store.vector.enabled": {
-      label: "Memory Search Vector Index",
-      help: "Enables the sqlite-vec extension used for vector similarity queries in memory search (default: true). Keep this enabled for normal semantic recall; disable only for debugging or fallback-only operation.",
-      tags: ["storage"],
-    },
-    "agents.defaults.memorySearch.store.vector.extensionPath": {
-      label: "Memory Search Vector Extension Path",
-      help: "Overrides the auto-discovered sqlite-vec extension library path (`.dylib`, `.so`, or `.dll`). Use this when your runtime cannot find sqlite-vec automatically or you pin a known-good build.",
       tags: ["storage"],
     },
     "agents.defaults.memorySearch.chunking.tokens": {
@@ -13562,162 +13540,22 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
     },
     "agents.defaults.memorySearch.cache.enabled": {
       label: "Memory Search Embedding Cache",
-      help: "Caches computed chunk embeddings in SQLite so reindexing and incremental updates run faster (default: true). Keep this enabled unless investigating cache correctness or minimizing disk usage.",
+      help: "Caches computed chunk embeddings so reindexing and incremental updates run faster (default: true). In ClawMongo, the embedding cache is stored in MongoDB.",
       tags: ["storage"],
     },
     "agents.defaults.memorySearch.cache.maxEntries": {
       label: "Memory Search Embedding Cache Max Entries",
-      help: "Sets a best-effort upper bound on cached embeddings kept in SQLite for memory search. Use this when controlling disk growth matters more than peak reindex speed.",
+      help: "Sets a best-effort upper bound on cached embeddings for memory search. In ClawMongo, the embedding cache is stored in MongoDB.",
       tags: ["performance", "storage"],
     },
     memory: {
       label: "Memory",
-      help: "Memory backend configuration (global).",
+      help: "Memory backend configuration (global). ClawMongo uses MongoDB as the only canonical runtime memory backend.",
       tags: ["advanced"],
-    },
-    "memory.backend": {
-      label: "Memory Backend",
-      help: 'Selects the global memory engine: "builtin" uses OpenClaw memory internals, while "qmd" uses the QMD sidecar pipeline. Keep "builtin" unless you intentionally operate QMD.',
-      tags: ["storage"],
     },
     "memory.citations": {
       label: "Memory Citations Mode",
       help: 'Controls citation visibility in replies: "auto" shows citations when useful, "on" always shows them, and "off" hides them. Keep "auto" for a balanced signal-to-noise default.',
-      tags: ["storage"],
-    },
-    "memory.qmd.command": {
-      label: "QMD Binary",
-      help: "Sets the executable path for the `qmd` binary used by the QMD backend (default: resolved from PATH). Use an explicit absolute path when multiple qmd installs exist or PATH differs across environments.",
-      tags: ["storage"],
-    },
-    "memory.qmd.mcporter": {
-      label: "QMD MCPorter",
-      help: "Routes QMD work through mcporter (MCP runtime) instead of spawning `qmd` for each call. Use this when cold starts are expensive on large models; keep direct process mode for simpler local setups.",
-      tags: ["storage"],
-    },
-    "memory.qmd.mcporter.enabled": {
-      label: "QMD MCPorter Enabled",
-      help: "Routes QMD through an mcporter daemon instead of spawning qmd per request, reducing cold-start overhead for larger models. Keep disabled unless mcporter is installed and configured.",
-      tags: ["storage"],
-    },
-    "memory.qmd.mcporter.serverName": {
-      label: "QMD MCPorter Server Name",
-      help: "Names the mcporter server target used for QMD calls (default: qmd). Change only when your mcporter setup uses a custom server name for qmd mcp keep-alive.",
-      tags: ["storage"],
-    },
-    "memory.qmd.mcporter.startDaemon": {
-      label: "QMD MCPorter Start Daemon",
-      help: "Automatically starts the mcporter daemon when mcporter-backed QMD mode is enabled (default: true). Keep enabled unless process lifecycle is managed externally by your service supervisor.",
-      tags: ["storage"],
-    },
-    "memory.qmd.searchMode": {
-      label: "QMD Search Mode",
-      help: 'Selects the QMD retrieval path: "query" uses standard query flow, "search" uses search-oriented retrieval, and "vsearch" emphasizes vector retrieval. Keep default unless tuning relevance quality.',
-      tags: ["storage"],
-    },
-    "memory.qmd.includeDefaultMemory": {
-      label: "QMD Include Default Memory",
-      help: "Automatically indexes default memory files (MEMORY.md and memory/**/*.md) into QMD collections. Keep enabled unless you want indexing controlled only through explicit custom paths.",
-      tags: ["storage"],
-    },
-    "memory.qmd.paths": {
-      label: "QMD Extra Paths",
-      help: "Adds custom directories or files to include in QMD indexing, each with an optional name and glob pattern. Use this for project-specific knowledge locations that are outside default memory paths.",
-      tags: ["storage"],
-    },
-    "memory.qmd.paths.path": {
-      label: "QMD Path",
-      help: "Defines the root location QMD should scan, using an absolute path or `~`-relative path. Use stable directories so collection identity does not drift across environments.",
-      tags: ["storage"],
-    },
-    "memory.qmd.paths.pattern": {
-      label: "QMD Path Pattern",
-      help: "Filters files under each indexed root using a glob pattern, with default `**/*.md`. Use narrower patterns to reduce noise and indexing cost when directories contain mixed file types.",
-      tags: ["storage"],
-    },
-    "memory.qmd.paths.name": {
-      label: "QMD Path Name",
-      help: "Sets a stable collection name for an indexed path instead of deriving it from filesystem location. Use this when paths vary across machines but you want consistent collection identity.",
-      tags: ["storage"],
-    },
-    "memory.qmd.sessions.enabled": {
-      label: "QMD Session Indexing",
-      help: "Indexes session transcripts into QMD so recall can include prior conversation content (experimental, default: false). Enable only when transcript memory is required and you accept larger index churn.",
-      tags: ["storage"],
-    },
-    "memory.qmd.sessions.exportDir": {
-      label: "QMD Session Export Directory",
-      help: "Overrides where sanitized session exports are written before QMD indexing. Use this when default state storage is constrained or when exports must land on a managed volume.",
-      tags: ["storage"],
-    },
-    "memory.qmd.sessions.retentionDays": {
-      label: "QMD Session Retention (days)",
-      help: "Defines how long exported session files are kept before automatic pruning, in days (default: unlimited). Set a finite value for storage hygiene or compliance retention policies.",
-      tags: ["storage"],
-    },
-    "memory.qmd.update.interval": {
-      label: "QMD Update Interval",
-      help: "Sets how often QMD refreshes indexes from source content (duration string, default: 5m). Shorter intervals improve freshness but increase background CPU and I/O.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.update.debounceMs": {
-      label: "QMD Update Debounce (ms)",
-      help: "Sets the minimum delay between consecutive QMD refresh attempts in milliseconds (default: 15000). Increase this if frequent file changes cause update thrash or unnecessary background load.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.update.onBoot": {
-      label: "QMD Update on Startup",
-      help: "Runs an initial QMD update once during gateway startup (default: true). Keep enabled so recall starts from a fresh baseline; disable only when startup speed is more important than immediate freshness.",
-      tags: ["storage"],
-    },
-    "memory.qmd.update.waitForBootSync": {
-      label: "QMD Wait for Boot Sync",
-      help: "Blocks startup completion until the initial boot-time QMD sync finishes (default: false). Enable when you need fully up-to-date recall before serving traffic, and keep off for faster boot.",
-      tags: ["storage"],
-    },
-    "memory.qmd.update.embedInterval": {
-      label: "QMD Embed Interval",
-      help: "Sets how often QMD recomputes embeddings (duration string, default: 60m; set 0 to disable periodic embeds). Lower intervals improve freshness but increase embedding workload and cost.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.update.commandTimeoutMs": {
-      label: "QMD Command Timeout (ms)",
-      help: "Sets timeout for QMD maintenance commands such as collection list/add in milliseconds (default: 30000). Increase when running on slower disks or remote filesystems that delay command completion.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.update.updateTimeoutMs": {
-      label: "QMD Update Timeout (ms)",
-      help: "Sets maximum runtime for each `qmd update` cycle in milliseconds (default: 120000). Raise this for larger collections; lower it when you want quicker failure detection in automation.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.update.embedTimeoutMs": {
-      label: "QMD Embed Timeout (ms)",
-      help: "Sets maximum runtime for each `qmd embed` cycle in milliseconds (default: 120000). Increase for heavier embedding workloads or slower hardware, and lower to fail fast under tight SLAs.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.limits.maxResults": {
-      label: "QMD Max Results",
-      help: "Limits how many QMD hits are returned into the agent loop for each recall request (default: 6). Increase for broader recall context, or lower to keep prompts tighter and faster.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.limits.maxSnippetChars": {
-      label: "QMD Max Snippet Chars",
-      help: "Caps per-result snippet length extracted from QMD hits in characters (default: 700). Lower this when prompts bloat quickly, and raise only if answers consistently miss key details.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.limits.maxInjectedChars": {
-      label: "QMD Max Injected Chars",
-      help: "Caps how much QMD text can be injected into one turn across all hits. Use lower values to control prompt bloat and latency; raise only when context is consistently truncated.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.limits.timeoutMs": {
-      label: "QMD Search Timeout (ms)",
-      help: "Sets per-query QMD search timeout in milliseconds (default: 4000). Increase for larger indexes or slower environments, and lower to keep request latency bounded.",
-      tags: ["performance", "storage"],
-    },
-    "memory.qmd.scope": {
-      label: "QMD Surface Scope",
-      help: "Defines which sessions/channels are eligible for QMD recall using session.sendPolicy-style rules. Keep default direct-only scope unless you intentionally want cross-chat memory sharing.",
       tags: ["storage"],
     },
     auth: {
@@ -15978,7 +15816,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       tags: ["advanced"],
     },
     "plugins.slots.memory": {
-      label: "Memory Plugin",
+      label: "Memory Slot",
       help: 'Select the active memory plugin by id, or "none" to disable memory plugins.',
       tags: ["advanced"],
     },
@@ -16116,6 +15954,22 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       label: "Plugin Marketplace Plugin",
       help: "Plugin entry name inside the source marketplace, used for later updates.",
       tags: ["advanced"],
+    },
+    "agents.defaults.memorySearch.store.path": {
+      help: "Legacy store path setting (unused in ClawMongo — MongoDB is the canonical store).",
+      tags: ["storage"],
+    },
+    "agents.defaults.memorySearch.store.vector.enabled": {
+      help: "Legacy vector store setting (unused in ClawMongo — vector search is handled by MongoDB Atlas Search / mongot).",
+      tags: ["storage"],
+    },
+    "agents.defaults.memorySearch.store.vector.extensionPath": {
+      help: "Legacy vector extension path (unused in ClawMongo).",
+      tags: ["storage"],
+    },
+    "memory.backend": {
+      help: 'ClawMongo supports only "mongodb". This is the default and only valid value.',
+      tags: ["storage"],
     },
     "models.providers.*.headers.*": {
       sensitive: true,
@@ -16286,6 +16140,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       tags: ["security", "auth"],
     },
   },
-  version: "2026.3.23-beta.1",
+  version: "2026.3.29",
   generatedAt: "2026-03-22T21:17:33.302Z",
 } as const satisfies BaseConfigSchemaResponse;
