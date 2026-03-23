@@ -5,8 +5,6 @@ import { buildWorkspaceHookStatus } from "../hooks/hooks-status.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { WizardPrompter } from "../wizard/prompts.js";
 
-const LEGACY_ONBOARDING_HOOKS = new Set(["session-memory"]);
-
 export async function setupInternalHooks(
   cfg: OpenClawConfig,
   runtime: RuntimeEnv,
@@ -15,8 +13,7 @@ export async function setupInternalHooks(
   await prompter.note(
     [
       "Hooks let you automate actions when agent commands are issued.",
-      "Examples: inject extra bootstrap files or log commands for auditing.",
-      "Legacy bridge-export hooks such as session-memory can still be enabled later from the CLI if you want them.",
+      "Example: Save session context to memory when you issue /new or /reset.",
       "",
       "Learn more: https://docs.openclaw.ai/automation/hooks",
     ].join("\n"),
@@ -28,14 +25,12 @@ export async function setupInternalHooks(
   const report = buildWorkspaceHookStatus(workspaceDir, { config: cfg });
 
   // Show every eligible hook so users can opt in during setup.
-  const eligibleHooks = report.hooks.filter(
-    (h) => h.eligible && !LEGACY_ONBOARDING_HOOKS.has(h.name),
-  );
+  const eligibleHooks = report.hooks.filter((h) => h.loadable);
 
   if (eligibleHooks.length === 0) {
     await prompter.note(
-      "No recommended hooks found. You can configure hooks later in your config, including any legacy bridge-export hooks you want to enable manually.",
-      "No Recommended Hooks",
+      "No eligible hooks found. You can configure hooks later in your config.",
+      "No Hooks Available",
     );
     return cfg;
   }

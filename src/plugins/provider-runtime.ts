@@ -8,8 +8,8 @@ import {
 import {
   resolveNonBundledProviderPluginIds,
   resolveOwningPluginIdsForProvider,
-  resolvePluginProviders,
 } from "./providers.js";
+import { resolvePluginProviders } from "./providers.runtime.js";
 import { resolvePluginCacheInputs } from "./roots.js";
 import type {
   ProviderAuthDoctorHintContext,
@@ -42,60 +42,6 @@ function matchesProviderId(provider: ProviderPlugin, providerId: string): boolea
   return (provider.aliases ?? []).some((alias) => normalizeProviderId(alias) === normalized);
 }
 
-function hasExplicitPluginConfig(config?: OpenClawConfig): boolean {
-  const plugins = config?.plugins;
-  if (!plugins) {
-    return false;
-  }
-  if (typeof plugins.enabled === "boolean") {
-    return true;
-  }
-  if (Array.isArray(plugins.allow) && plugins.allow.length > 0) {
-    return true;
-  }
-  if (Array.isArray(plugins.deny) && plugins.deny.length > 0) {
-    return true;
-  }
-  if (Array.isArray(plugins.load?.paths) && plugins.load.paths.length > 0) {
-    return true;
-  }
-  if (plugins.entries && Object.keys(plugins.entries).length > 0) {
-    return true;
-  }
-  if (plugins.slots && Object.keys(plugins.slots).length > 0) {
-    return true;
-  }
-  return false;
-}
-
-function withVitestPinnedPluginConfig(params: {
-  config?: OpenClawConfig;
-  env?: NodeJS.ProcessEnv;
-  onlyPluginIds?: string[];
-}): OpenClawConfig | undefined {
-  const onlyPluginIds = params.onlyPluginIds?.filter(Boolean) ?? [];
-  if (onlyPluginIds.length === 0) {
-    return params.config;
-  }
-  const env = params.env ?? process.env;
-  if (!env.VITEST || hasExplicitPluginConfig(params.config)) {
-    return params.config;
-  }
-
-  const existingAllow = params.config?.plugins?.allow ?? [];
-  return {
-    ...params.config,
-    plugins: {
-      ...params.config?.plugins,
-      enabled: true,
-      allow: [...new Set([...existingAllow, ...onlyPluginIds])],
-      slots: {
-        ...params.config?.plugins?.slots,
-        memory: params.config?.plugins?.slots?.memory ?? "none",
-      },
-    },
-  };
-}
 let cachedHookProvidersWithoutConfig = new WeakMap<
   NodeJS.ProcessEnv,
   Map<string, ProviderPlugin[]>
@@ -143,7 +89,7 @@ function buildHookProviderCacheKey(params: {
   return `${roots.workspace ?? ""}::${roots.global}::${roots.stock ?? ""}::${JSON.stringify(params.onlyPluginIds ?? [])}`;
 }
 
-export function resetProviderRuntimeHookCacheForTest(): void {
+export function clearProviderRuntimeHookCache(): void {
   cachedHookProvidersWithoutConfig = new WeakMap<
     NodeJS.ProcessEnv,
     Map<string, ProviderPlugin[]>
@@ -153,26 +99,25 @@ export function resetProviderRuntimeHookCacheForTest(): void {
     WeakMap<NodeJS.ProcessEnv, Map<string, ProviderPlugin[]>>
   >();
 }
+
+export function resetProviderRuntimeHookCacheForTest(): void {
+  clearProviderRuntimeHookCache();
+}
+
 function resolveProviderPluginsForHooks(params: {
   config?: OpenClawConfig;
   workspaceDir?: string;
   env?: NodeJS.ProcessEnv;
   onlyPluginIds?: string[];
 }): ProviderPlugin[] {
-  const onlyPluginIds = params.onlyPluginIds?.filter(Boolean) ?? [];
   const env = params.env ?? process.env;
-  const config = withVitestPinnedPluginConfig({
-    config: params.config,
-    env,
-    onlyPluginIds,
-  });
   const cacheBucket = resolveHookProviderCacheBucket({
-    config,
+    config: params.config,
     env,
   });
   const cacheKey = buildHookProviderCacheKey({
     workspaceDir: params.workspaceDir,
-    onlyPluginIds,
+    onlyPluginIds: params.onlyPluginIds,
     env,
   });
   const cached = cacheBucket.get(cacheKey);
@@ -181,8 +126,6 @@ function resolveProviderPluginsForHooks(params: {
   }
   const resolved = resolvePluginProviders({
     ...params,
-    config,
-    onlyPluginIds,
     env,
     activate: false,
     cache: false,

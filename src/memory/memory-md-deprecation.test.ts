@@ -21,13 +21,13 @@ import {
 import { isMemoryPath, listMemoryFiles } from "./internal.js";
 
 describe("MEMORY.md deprecation", () => {
-  // --- Workspace constants ---
-  it("does not export DEFAULT_MEMORY_FILENAME from workspace", () => {
-    expect("DEFAULT_MEMORY_FILENAME" in workspace).toBe(false);
+  // --- Workspace constants (allowed for file ops, NOT as memory truth) ---
+  it("exports DEFAULT_MEMORY_FILENAME for workspace file operations", () => {
+    expect(workspace.DEFAULT_MEMORY_FILENAME).toBe("MEMORY.md");
   });
 
-  it("does not export DEFAULT_MEMORY_ALT_FILENAME from workspace", () => {
-    expect("DEFAULT_MEMORY_ALT_FILENAME" in workspace).toBe(false);
+  it("exports DEFAULT_MEMORY_ALT_FILENAME for workspace file operations", () => {
+    expect(workspace.DEFAULT_MEMORY_ALT_FILENAME).toBe("memory.md");
   });
 
   // --- System prompt ---

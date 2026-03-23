@@ -48,8 +48,30 @@ const stubManager = {
   close: vi.fn(),
 };
 
+const getMemorySearchManagerMock = vi.fn(async () => ({ manager: stubManager }));
+const readAgentMemoryFileMock = vi.fn(
+  async (params: MemoryReadParams) => await readFileImpl(params),
+);
+
 vi.mock("../../src/memory/index.js", () => ({
-  getMemorySearchManager: async () => ({ manager: stubManager }),
+  getMemorySearchManager: getMemorySearchManagerMock,
+}));
+
+vi.mock("../../src/memory/read-file.js", () => ({
+  readAgentMemoryFile: readAgentMemoryFileMock,
+}));
+
+vi.mock("../../src/agents/tools/memory-tool.runtime.js", () => ({
+  resolveMemoryBackendConfig: ({
+    cfg,
+  }: {
+    cfg?: { memory?: { backend?: string; qmd?: unknown } };
+  }) => ({
+    backend,
+    qmd: cfg?.memory?.qmd,
+  }),
+  getMemorySearchManager: getMemorySearchManagerMock,
+  readAgentMemoryFile: readAgentMemoryFileMock,
 }));
 
 export function setMemoryBackend(next: MemoryBackend): void {
@@ -91,4 +113,12 @@ export function resetMemoryToolMockState(overrides?: {
     overrides?.writeStructuredMemoryImpl ??
     (vi.fn(async () => ({ upserted: true, id: "mock-id" })) as MemoryWriteImpl);
   vi.clearAllMocks();
+}
+
+export function getMemorySearchManagerMockCalls(): number {
+  return getMemorySearchManagerMock.mock.calls.length;
+}
+
+export function getReadAgentMemoryFileMockCalls(): number {
+  return readAgentMemoryFileMock.mock.calls.length;
 }

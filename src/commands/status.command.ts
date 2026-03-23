@@ -17,7 +17,7 @@ import {
   formatPluginCompatibilityNotice,
   summarizePluginCompatibility,
 } from "../plugins/status.js";
-import type { RuntimeEnv } from "../runtime.js";
+import { type RuntimeEnv, writeRuntimeJson } from "../runtime.js";
 import { getTerminalTableWidth, renderTable } from "../terminal/table.js";
 import { theme } from "../terminal/theme.js";
 import { formatHealthChannelLines, type HealthSummary } from "./health.js";
@@ -140,7 +140,6 @@ export async function statusCommand(
     summary,
     secretDiagnostics,
     memory,
-    memoryError,
     memoryPlugin,
     pluginCompatibility,
   } = scan;
@@ -197,43 +196,36 @@ export async function statusCommand(
       getDaemonStatusSummary(),
       getNodeDaemonStatusSummary(),
     ]);
-    runtime.log(
-      JSON.stringify(
-        {
-          ...summary,
-          os: osSummary,
-          update,
-          updateChannel: channelInfo.channel,
-          updateChannelSource: channelInfo.source,
-          memory,
-          memoryError,
-          memoryPlugin,
-          gateway: {
-            mode: gatewayMode,
-            url: gatewayConnection.url,
-            urlSource: gatewayConnection.urlSource,
-            misconfigured: remoteUrlMissing,
-            reachable: gatewayReachable,
-            connectLatencyMs: gatewayProbe?.connectLatencyMs ?? null,
-            self: gatewaySelf,
-            error: gatewayProbe?.error ?? null,
-            authWarning: gatewayProbeAuthWarning ?? null,
-          },
-          gatewayService: daemon,
-          nodeService: nodeDaemon,
-          agents: agentStatus,
-          securityAudit,
-          secretDiagnostics,
-          pluginCompatibility: {
-            count: pluginCompatibility.length,
-            warnings: pluginCompatibility,
-          },
-          ...(health || usage || lastHeartbeat ? { health, usage, lastHeartbeat } : {}),
-        },
-        null,
-        2,
-      ),
-    );
+    writeRuntimeJson(runtime, {
+      ...summary,
+      os: osSummary,
+      update,
+      updateChannel: channelInfo.channel,
+      updateChannelSource: channelInfo.source,
+      memory,
+      memoryPlugin,
+      gateway: {
+        mode: gatewayMode,
+        url: gatewayConnection.url,
+        urlSource: gatewayConnection.urlSource,
+        misconfigured: remoteUrlMissing,
+        reachable: gatewayReachable,
+        connectLatencyMs: gatewayProbe?.connectLatencyMs ?? null,
+        self: gatewaySelf,
+        error: gatewayProbe?.error ?? null,
+        authWarning: gatewayProbeAuthWarning ?? null,
+      },
+      gatewayService: daemon,
+      nodeService: nodeDaemon,
+      agents: agentStatus,
+      securityAudit,
+      secretDiagnostics,
+      pluginCompatibility: {
+        count: pluginCompatibility.length,
+        warnings: pluginCompatibility,
+      },
+      ...(health || usage || lastHeartbeat ? { health, usage, lastHeartbeat } : {}),
+    });
     return;
   }
 
@@ -390,9 +382,6 @@ export async function statusCommand(
       if (memoryPlugin.slot && memoryPlugin.slot !== "memory-core") {
         return `enabled (${slot})`;
       }
-      if (memoryError) {
-        return warn(`degraded (${shortenText(String(memoryError), 96)})`);
-      }
       return muted(`enabled (${slot}) · unavailable`);
     }
     const parts: string[] = [];
@@ -420,29 +409,8 @@ export async function statusCommand(
     }
     const cache = memory.cache;
     if (cache) {
-      const cacheSummary = resolveMemoryCacheSummary(cache);
-      parts.push(colorByTone(cacheSummary.tone, cacheSummary.text));
-    }
-    const custom = memory.custom && typeof memory.custom === "object" ? memory.custom : null;
-    const searchModes =
-      custom &&
-      "searchModes" in custom &&
-      custom.searchModes &&
-      typeof custom.searchModes === "object"
-        ? (custom.searchModes as {
-            vector?: boolean;
-            lexical?: boolean;
-            hybrid?: boolean;
-          })
-        : null;
-    if (searchModes) {
-      parts.push(
-        [
-          searchModes.lexical ? "lexical on" : "lexical off",
-          searchModes.vector ? "vector on" : "vector off",
-          searchModes.hybrid ? "hybrid on" : "hybrid off",
-        ].join(", "),
-      );
+      const summary = resolveMemoryCacheSummary(cache);
+      parts.push(colorByTone(summary.tone, summary.text));
     }
     return parts.join(" · ");
   })();

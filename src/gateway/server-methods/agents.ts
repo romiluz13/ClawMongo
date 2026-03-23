@@ -10,6 +10,8 @@ import {
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
+  DEFAULT_MEMORY_ALT_FILENAME,
+  DEFAULT_MEMORY_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
@@ -59,7 +61,35 @@ const BOOTSTRAP_FILE_NAMES_POST_ONBOARDING = BOOTSTRAP_FILE_NAMES.filter(
   (name) => name !== DEFAULT_BOOTSTRAP_FILENAME,
 );
 
-const ALLOWED_FILE_NAMES = new Set<string>(BOOTSTRAP_FILE_NAMES);
+const agentsHandlerDeps = {
+  isWorkspaceSetupCompleted,
+  readLocalFileSafely,
+  resolveAgentWorkspaceFilePath,
+  writeFileWithinRoot,
+};
+
+export const __testing = {
+  setDepsForTests(
+    overrides: Partial<{
+      isWorkspaceSetupCompleted: typeof isWorkspaceSetupCompleted;
+      readLocalFileSafely: typeof readLocalFileSafely;
+      resolveAgentWorkspaceFilePath: typeof resolveAgentWorkspaceFilePath;
+      writeFileWithinRoot: typeof writeFileWithinRoot;
+    }>,
+  ) {
+    Object.assign(agentsHandlerDeps, overrides);
+  },
+  resetDepsForTests() {
+    agentsHandlerDeps.isWorkspaceSetupCompleted = isWorkspaceSetupCompleted;
+    agentsHandlerDeps.readLocalFileSafely = readLocalFileSafely;
+    agentsHandlerDeps.resolveAgentWorkspaceFilePath = resolveAgentWorkspaceFilePath;
+    agentsHandlerDeps.writeFileWithinRoot = writeFileWithinRoot;
+  },
+};
+
+const MEMORY_FILE_NAMES = [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME] as const;
+
+const ALLOWED_FILE_NAMES = new Set<string>([...BOOTSTRAP_FILE_NAMES, ...MEMORY_FILE_NAMES]);
 
 function resolveAgentWorkspaceFileOrRespondError(
   params: Record<string, unknown>,
@@ -301,6 +331,46 @@ async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: 
     }
   }
 
+  const primaryResolved = await resolveAgentWorkspaceFilePath({
+    workspaceDir,
+    name: DEFAULT_MEMORY_FILENAME,
+    allowMissing: true,
+  });
+  const primaryMeta =
+    primaryResolved.kind === "ready" ? await statFileSafely(primaryResolved.ioPath) : null;
+  if (primaryMeta) {
+    files.push({
+      name: DEFAULT_MEMORY_FILENAME,
+      path: primaryResolved.requestPath,
+      missing: false,
+      size: primaryMeta.size,
+      updatedAtMs: primaryMeta.updatedAtMs,
+    });
+  } else {
+    const altMemoryResolved = await resolveAgentWorkspaceFilePath({
+      workspaceDir,
+      name: DEFAULT_MEMORY_ALT_FILENAME,
+      allowMissing: true,
+    });
+    const altMeta =
+      altMemoryResolved.kind === "ready" ? await statFileSafely(altMemoryResolved.ioPath) : null;
+    if (altMeta) {
+      files.push({
+        name: DEFAULT_MEMORY_ALT_FILENAME,
+        path: altMemoryResolved.requestPath,
+        missing: false,
+        size: altMeta.size,
+        updatedAtMs: altMeta.updatedAtMs,
+      });
+    } else {
+      files.push({
+        name: DEFAULT_MEMORY_FILENAME,
+        path: primaryResolved.requestPath,
+        missing: true,
+      });
+    }
+  }
+
   return files;
 }
 
@@ -373,7 +443,7 @@ async function resolveWorkspaceFilePathOrRespond(params: {
   workspaceDir: string;
   name: string;
 }): Promise<ResolvedWorkspaceFilePath | undefined> {
-  const resolvedPath = await resolveAgentWorkspaceFilePath({
+  const resolvedPath = await agentsHandlerDeps.resolveAgentWorkspaceFilePath({
     workspaceDir: params.workspaceDir,
     name: params.name,
     allowMissing: true,
@@ -609,7 +679,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
     let hideBootstrap = false;
     try {
-      hideBootstrap = await isWorkspaceSetupCompleted(workspaceDir);
+      hideBootstrap = await agentsHandlerDeps.isWorkspaceSetupCompleted(workspaceDir);
     } catch {
       // Fall back to showing BOOTSTRAP if workspace state cannot be read.
     }
@@ -641,7 +711,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     }
     let safeRead: Awaited<ReturnType<typeof readLocalFileSafely>>;
     try {
-      safeRead = await readLocalFileSafely({ filePath: resolvedPath.ioPath });
+      safeRead = await agentsHandlerDeps.readLocalFileSafely({ filePath: resolvedPath.ioPath });
     } catch (err) {
       if (err instanceof SafeOpenError && err.code === "not-found") {
         respondWorkspaceFileMissing({ respond, agentId, workspaceDir, name, filePath });
@@ -698,7 +768,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     try {
-      await writeFileWithinRoot({
+      await agentsHandlerDeps.writeFileWithinRoot({
         rootDir: resolvedPath.workspaceReal,
         relativePath: relativeWritePath,
         data: content,

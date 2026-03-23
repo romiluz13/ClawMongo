@@ -1,3 +1,5 @@
+import { setTimeout as scheduleNativeTimeout } from "node:timers";
+import { setTimeout as sleep } from "node:timers/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { AcpSessionRuntimeOptions, SessionAcpMeta } from "../../config/sessions/types.js";
@@ -151,6 +153,7 @@ describe("AcpSessionManager", () => {
     vi.resetModules();
     ({ AcpSessionManager } = await import("./manager.js"));
     ({ AcpRuntimeError } = await import("../runtime/errors.js"));
+    vi.useRealTimers();
     hoisted.listAcpSessionEntriesMock.mockReset().mockResolvedValue([]);
     hoisted.readAcpSessionEntryMock.mockReset();
     hoisted.upsertAcpSessionMetaMock.mockReset().mockResolvedValue(null);
@@ -243,7 +246,7 @@ describe("AcpSessionManager", () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       try {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await sleep(10);
         yield { type: "done" };
       } finally {
         inFlight -= 1;
@@ -269,6 +272,81 @@ describe("AcpSessionManager", () => {
 
     expect(maxInFlight).toBe(1);
     expect(runtimeState.runTurn).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a queued turn promptly when its caller aborts before the actor is free", async () => {
+    const runtimeState = createRuntime();
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue({
+      sessionKey: "agent:codex:acp:session-1",
+      storeSessionKey: "agent:codex:acp:session-1",
+      acp: readySessionMeta(),
+    });
+
+    let firstTurnStarted = false;
+    let releaseFirstTurn: (() => void) | undefined;
+    runtimeState.runTurn.mockImplementation(async function* (input: { requestId: string }) {
+      if (input.requestId === "r1") {
+        firstTurnStarted = true;
+        await new Promise<void>((resolve) => {
+          releaseFirstTurn = resolve;
+        });
+      }
+      yield { type: "done" as const };
+    });
+
+    const manager = new AcpSessionManager();
+    const first = manager.runTurn({
+      cfg: baseCfg,
+      sessionKey: "agent:codex:acp:session-1",
+      text: "first",
+      mode: "prompt",
+      requestId: "r1",
+    });
+    await vi.waitFor(() => {
+      expect(firstTurnStarted).toBe(true);
+    });
+
+    const abortController = new AbortController();
+    const second = manager.runTurn({
+      cfg: baseCfg,
+      sessionKey: "agent:codex:acp:session-1",
+      text: "second",
+      mode: "prompt",
+      requestId: "r2",
+      signal: abortController.signal,
+    });
+    abortController.abort();
+
+    const secondOutcome = await Promise.race([
+      second.then(
+        () => ({ status: "resolved" as const }),
+        (error) => ({ status: "rejected" as const, error }),
+      ),
+      new Promise<{ status: "pending" }>((resolve) => {
+        scheduleNativeTimeout(() => resolve({ status: "pending" }), 100);
+      }),
+    ]);
+
+    releaseFirstTurn?.();
+    await first;
+    await vi.waitFor(() => {
+      expect(manager.getObservabilitySnapshot(baseCfg).turns.queueDepth).toBe(0);
+    });
+
+    expect(secondOutcome.status).toBe("rejected");
+    if (secondOutcome.status !== "rejected") {
+      return;
+    }
+    expect(secondOutcome.error).toBeInstanceOf(AcpRuntimeError);
+    expect(secondOutcome.error).toMatchObject({
+      code: "ACP_TURN_FAILED",
+      message: "ACP operation aborted.",
+    });
+    expect(runtimeState.runTurn).toHaveBeenCalledTimes(1);
   });
 
   it("times out a hung persistent turn without closing the session and lets queued work continue", async () => {
@@ -466,7 +544,7 @@ describe("AcpSessionManager", () => {
       inFlight += 1;
       maxInFlight = Math.max(maxInFlight, inFlight);
       try {
-        await new Promise((resolve) => setTimeout(resolve, 15));
+        await sleep(15);
         yield { type: "done" as const };
       } finally {
         inFlight -= 1;
@@ -1411,7 +1489,7 @@ describe("AcpSessionManager", () => {
       cfg: baseCfg,
       sessionKey: "agent:codex:acp:session-1",
       key: "model",
-      value: "openai-codex/gpt-5.3-codex",
+      value: "openai-codex/gpt-5.4",
     });
     expect(runtimeState.setMode).not.toHaveBeenCalled();
 
@@ -1668,7 +1746,7 @@ describe("AcpSessionManager", () => {
         ...readySessionMeta(),
         runtimeOptions: {
           runtimeMode: "plan",
-          model: "openai-codex/gpt-5.3-codex",
+          model: "openai-codex/gpt-5.4",
           permissionProfile: "strict",
           timeoutSeconds: 120,
         },
@@ -1692,7 +1770,7 @@ describe("AcpSessionManager", () => {
     expect(runtimeState.setConfigOption).toHaveBeenCalledWith(
       expect.objectContaining({
         key: "model",
-        value: "openai-codex/gpt-5.3-codex",
+        value: "openai-codex/gpt-5.4",
       }),
     );
     expect(runtimeState.setConfigOption).toHaveBeenCalledWith(
@@ -1734,7 +1812,7 @@ describe("AcpSessionManager", () => {
         cfg: baseCfg,
         sessionKey: "agent:codex:acp:session-1",
         key: "model",
-        value: "gpt-5.3-codex",
+        value: "gpt-5.4",
       }),
     ).rejects.toMatchObject({
       code: "ACP_BACKEND_UNSUPPORTED_CONTROL",
