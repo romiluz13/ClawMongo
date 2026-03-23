@@ -455,6 +455,7 @@ export async function getEpisodesByIds(params: {
   prefix: string;
   episodeIds: string[];
   agentId: string;
+  /** @deprecated searchV2 owns ids-only projection; this reopen helper always returns full episodes. */
   projection?: "full" | "ids-only";
 }): Promise<Episode[]> {
   const { db, prefix, episodeIds, agentId } = params;
@@ -463,7 +464,13 @@ export async function getEpisodesByIds(params: {
   }
   try {
     const col = episodesCollection(db, prefix);
-    const docs = await col.find({ episodeId: { $in: episodeIds }, agentId }).toArray();
+    const docs = await col
+      .find({
+        episodeId: { $in: episodeIds },
+        agentId,
+        status: { $ne: "deleted" },
+      })
+      .toArray();
     return docs as unknown as Episode[];
   } catch (err) {
     log.error(`getEpisodesByIds failed: ${err instanceof Error ? err.message : String(err)}`);

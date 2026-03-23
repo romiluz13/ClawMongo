@@ -306,6 +306,21 @@ describe("mongodb-profile", () => {
     expect(limitResult.limit).toHaveBeenCalledWith(3);
   });
 
+  it("synthesizeProfile excludes deleted episodes from recentEpisodes", async () => {
+    setupEmptyMocks();
+
+    await synthesizeProfile(defaultParams());
+
+    const epiCol = vi.mocked(episodesCollection).mock.results[0].value;
+    const findCall = vi.mocked(epiCol.find);
+    expect(findCall).toHaveBeenCalledWith({
+      agentId: AGENT_ID,
+      scope: SCOPE,
+      scopeRef: SCOPE_REF,
+      status: { $ne: "deleted" },
+    });
+  });
+
   // 10. Activity patterns from events
   it("synthesizeProfile calculates activity patterns from events", async () => {
     const activityDocs = [

@@ -208,7 +208,7 @@ export async function synthesizeProfile(params: {
       // 3. Recent episodes
       settled("episodes", () =>
         episodesCollection(db, prefix)
-          .find(scopeFilter)
+          .find({ ...scopeFilter, status: { $ne: "deleted" } })
           .sort({ "timeRange.start": -1 })
           .limit(maxEpisodes)
           .project({ title: 1, summary: 1, type: 1, timeRange: 1 })

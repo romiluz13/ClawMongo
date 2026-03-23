@@ -762,6 +762,22 @@ describe("mongodb-episodes", () => {
       const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(filter.status).toEqual({ $ne: "deleted" });
     });
+
+    it("getEpisodesByIds excludes deleted episodes", async () => {
+      const findFn = vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) });
+      const episodesCol = createMockCollection({ find: findFn });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await getEpisodesByIds({
+        db,
+        prefix: PREFIX,
+        episodeIds: ["ep-1"],
+        agentId: AGENT_ID,
+      });
+
+      const [filter] = findFn.mock.calls[0];
+      expect(filter.status).toEqual({ $ne: "deleted" });
+    });
   });
 
   // The trigger pipeline now spans real event queries plus scope-aware episode
@@ -1159,6 +1175,7 @@ describe("mongodb-episodes", () => {
       expect(findFn).toHaveBeenCalledWith({
         episodeId: { $in: ["ep-1", "ep-2"] },
         agentId: AGENT_ID,
+        status: { $ne: "deleted" },
       });
     });
 
@@ -1192,6 +1209,7 @@ describe("mongodb-episodes", () => {
       expect(findFn).toHaveBeenCalledWith({
         episodeId: { $in: ["ep-1"] },
         agentId: "other-agent",
+        status: { $ne: "deleted" },
       });
     });
   });

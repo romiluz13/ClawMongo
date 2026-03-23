@@ -241,6 +241,7 @@ clawmongo onboard --install-daemon
 ```
 
 The wizard will:
+
 1. Prompt for Voyage AI API key (if not already set)
 2. Auto-detect the atlas-local Docker container
 3. Verify MongoDB topology (mongod + mongot)
@@ -267,12 +268,12 @@ clawmongo gateway restart
 
 ### Troubleshooting
 
-| Symptom | Fix |
-|---------|-----|
-| `Connection refused` on port 27017 | Run `./docker/mongodb/start-preview.sh` |
-| `mongot not detected` | Ensure you're using `mongodb-atlas-local:preview` (not `:latest`) |
-| `VOYAGE_API_KEY not set` | `export VOYAGE_API_KEY=pa-...` then restart the Docker container |
-| Vector search returns empty | Wait 30s for auto-embedding indexing to complete |
+| Symptom                            | Fix                                                               |
+| ---------------------------------- | ----------------------------------------------------------------- |
+| `Connection refused` on port 27017 | Run `./docker/mongodb/start-preview.sh`                           |
+| `mongot not detected`              | Ensure you're using `mongodb-atlas-local:preview` (not `:latest`) |
+| `VOYAGE_API_KEY not set`           | `export VOYAGE_API_KEY=pa-...` then restart the Docker container  |
+| Vector search returns empty        | Wait 30s for auto-embedding indexing to complete                  |
 
 ### Configuration Reference
 

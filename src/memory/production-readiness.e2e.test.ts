@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { MongoClient, type Db, type Document } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 // v2 episodes
-import { materializeEpisode } from "./mongodb-episodes.js";
+import { materializeEpisode, updateEpisodeStatus } from "./mongodb-episodes.js";
 import type { EpisodeSummarizer } from "./mongodb-episodes.js";
 import { getEventsByTimeRange } from "./mongodb-events.js";
 // v2 graph functions
@@ -48,6 +48,7 @@ import {
   ensureStandardIndexes,
   eventsCollection,
   entitiesCollection,
+  episodesCollection,
   relationsCollection,
   structuredMemCollection,
   telemetryCollection,
@@ -1291,6 +1292,53 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       // Preferences and decisions were written in Phase 1
       expect(profile.preferences.length).toBeGreaterThanOrEqual(1);
       expect(profile.decisions.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("excludes deleted episodes from recentEpisodes", async () => {
+      const scopeRef = resolveScopeRef({ scope: "agent", agentId: AGENT_ID });
+      const deletedEpisode = await materializeEpisode({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        type: "topic",
+        timeRange: { start: new Date("2020-01-01"), end: new Date("2030-01-01") },
+        scope: "agent",
+        summarizer: async () => ({
+          title: "Deleted episode should not surface",
+          summary: "This episode exists only to validate deleted filtering.",
+          tags: ["deleted-test"],
+        }),
+      });
+
+      expect(deletedEpisode).not.toBeNull();
+      const deleted = await updateEpisodeStatus({
+        db,
+        prefix: PREFIX,
+        episodeId: deletedEpisode!.episodeId,
+        agentId: AGENT_ID,
+        status: "deleted",
+      });
+      expect(deleted).toBe(true);
+
+      const deletedDoc = await episodesCollection(db, PREFIX).findOne({
+        agentId: AGENT_ID,
+        episodeId: deletedEpisode!.episodeId,
+      });
+      expect(deletedDoc?.status).toBe("deleted");
+
+      const profile = await synthesizeProfile({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        scope: "agent",
+        scopeRef,
+      });
+
+      expect(
+        profile.recentEpisodes.some(
+          (episode) => episode.title === "Deleted episode should not surface",
+        ),
+      ).toBe(false);
     });
 
     it("calculates activity patterns from events", async () => {
