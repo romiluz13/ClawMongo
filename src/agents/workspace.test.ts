@@ -7,8 +7,6 @@ import {
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
-  DEFAULT_MEMORY_ALT_FILENAME,
-  DEFAULT_MEMORY_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
@@ -68,7 +66,6 @@ function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   expect(names).toContain("USER.md");
   expect(names).not.toContain("HEARTBEAT.md");
   expect(names).not.toContain("BOOTSTRAP.md");
-  expect(names).not.toContain("MEMORY.md");
 }
 
 describe("ensureAgentWorkspace", () => {
@@ -127,7 +124,6 @@ describe("ensureAgentWorkspace", () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await fs.mkdir(path.join(tempDir, "memory"), { recursive: true });
     await fs.writeFile(path.join(tempDir, "memory", "2026-02-25.md"), "# Daily log\nSome notes");
-    await fs.writeFile(path.join(tempDir, "MEMORY.md"), "# Long-term memory\nImportant stuff");
 
     await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
 
@@ -137,8 +133,6 @@ describe("ensureAgentWorkspace", () => {
     });
     const state = await readWorkspaceState(tempDir);
     expect(state.setupCompletedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
-    const memoryContent = await fs.readFile(path.join(tempDir, "MEMORY.md"), "utf-8");
-    expect(memoryContent).toBe("# Long-term memory\nImportant stuff");
   });
 
   it("treats git-backed workspaces as existing even when template files are missing", async () => {
@@ -175,42 +169,24 @@ describe("ensureAgentWorkspace", () => {
 });
 
 describe("loadWorkspaceBootstrapFiles", () => {
-  const getMemoryEntries = (files: Awaited<ReturnType<typeof loadWorkspaceBootstrapFiles>>) =>
-    files.filter((file) =>
-      [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME].includes(file.name),
-    );
-
-  const expectSingleMemoryEntry = (
-    files: Awaited<ReturnType<typeof loadWorkspaceBootstrapFiles>>,
-    content: string,
-  ) => {
-    const memoryEntries = getMemoryEntries(files);
-    expect(memoryEntries).toHaveLength(1);
-    expect(memoryEntries[0]?.missing).toBe(false);
-    expect(memoryEntries[0]?.content).toBe(content);
-  };
-
-  it("includes MEMORY.md when present", async () => {
+  it("does not include MEMORY.md even when present on disk", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await writeWorkspaceFile({ dir: tempDir, name: "MEMORY.md", content: "memory" });
 
     const files = await loadWorkspaceBootstrapFiles(tempDir);
-    expectSingleMemoryEntry(files, "memory");
+    const names = files.map((file) => file.name);
+    expect(names).not.toContain("MEMORY.md");
+    expect(names).not.toContain("memory.md");
   });
 
-  it("includes memory.md when MEMORY.md is absent", async () => {
+  it("does not include memory.md even when present on disk", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await writeWorkspaceFile({ dir: tempDir, name: "memory.md", content: "alt" });
 
     const files = await loadWorkspaceBootstrapFiles(tempDir);
-    expectSingleMemoryEntry(files, "alt");
-  });
-
-  it("omits memory entries when no memory files exist", async () => {
-    const tempDir = await makeTempWorkspace("openclaw-workspace-");
-
-    const files = await loadWorkspaceBootstrapFiles(tempDir);
-    expect(getMemoryEntries(files)).toHaveLength(0);
+    const names = files.map((file) => file.name);
+    expect(names).not.toContain("MEMORY.md");
+    expect(names).not.toContain("memory.md");
   });
 
   it("treats hardlinked bootstrap aliases as missing", async () => {
@@ -254,7 +230,6 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
     { name: "HEARTBEAT.md", path: "/w/HEARTBEAT.md", content: "", missing: false },
     { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
-    { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },
   ];
 
   it("returns all files for main session (no sessionKey)", () => {

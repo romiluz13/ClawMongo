@@ -59,7 +59,7 @@ Set `memory.backend = "mongodb"` (this is the default and only valid value).
 
 - **Canonical events**: Conversation turns persist directly to the `events` collection via `persistConversationMessageToMongo`. No disk intermediary.
 - **Chunk projection**: Events are projected into searchable chunks in the `chunks` collection.
-- **Bridge sync**: Workspace Markdown files (`MEMORY.md`, `memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval.
+- **Bridge sync**: Workspace Markdown files (`memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval.
 - **Vector search**: Handled by mongot (Atlas Search) with `$vectorSearch`. Automated embeddings via Voyage AI generate vectors at index-time and query-time.
 - **Text search**: `$text` indexes provide BM25 keyword search as a fallback when vector search is unavailable.
 - **Hybrid search**: `$rankFusion` / `$scoreFusion` combine vector and keyword results when both are available.
@@ -146,7 +146,7 @@ Notes:
 - Paths can be absolute or workspace-relative.
 - Directories are scanned recursively for `.md` files.
 - By default, only Markdown files are indexed.
-- If `memorySearch.multimodal.enabled = true`, OpenClaw also indexes supported image/audio files under `extraPaths` only. Default memory roots (`MEMORY.md`, `memory.md`, `memory/**/*.md`) stay Markdown-only.
+- If `memorySearch.multimodal.enabled = true`, OpenClaw also indexes supported image/audio files under `extraPaths` only. Default memory roots (`memory/**/*.md`) stay Markdown-only.
 - Symlinks are ignored (files or directories).
 
 ## Multimodal memory files (Gemini image + audio)
@@ -306,7 +306,7 @@ agents: {
 ## What gets indexed (and when)
 
 - **Canonical events**: Written directly to MongoDB on the runtime write path. No disk intermediary.
-- **Bridge sync**: Markdown files (`MEMORY.md`, `memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval. Watcher marks dirty (debounce 1.5s), sync runs asynchronously.
+- **Bridge sync**: Markdown files (`memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval. Watcher marks dirty (debounce 1.5s), sync runs asynchronously.
 - **Chunk projection**: Canonical events are projected into searchable chunks for retrieval.
 - **Reindex triggers**: The index stores the embedding **provider/model + endpoint fingerprint + chunking params**. If any change, ClawMongo automatically resets and reindexes.
 
@@ -451,7 +451,6 @@ With the default half-life of 30 days:
 
 **Evergreen files are never decayed:**
 
-- `MEMORY.md` (root memory file)
 - Non-dated files in `memory/` (e.g., `memory/projects.md`, `memory/network.md`)
 - These contain durable reference information that should always rank normally.
 

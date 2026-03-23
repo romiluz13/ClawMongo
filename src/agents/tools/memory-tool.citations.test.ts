@@ -28,7 +28,7 @@ beforeEach(() => {
   resetMemoryToolMockState({
     searchImpl: async () => [
       {
-        path: "MEMORY.md",
+        path: "memory/2026-03-01.md",
         startLine: 5,
         endLine: 7,
         score: 0.9,
@@ -52,8 +52,8 @@ describe("memory search citations", () => {
     }
     const result = await tool.execute("call_citations_on", { query: "notes" });
     const details = result.details as { results: Array<{ snippet: string; citation?: string }> };
-    expect(details.results[0]?.snippet).toMatch(/Source: MEMORY.md#L5-L7/);
-    expect(details.results[0]?.citation).toBe("MEMORY.md#L5-L7");
+    expect(details.results[0]?.snippet).toMatch(/Source: memory\/2026-03-01\.md#L5-L7/);
+    expect(details.results[0]?.citation).toBe("memory/2026-03-01.md#L5-L7");
   });
 
   it("leaves snippet untouched when citations are off", async () => {
@@ -110,7 +110,7 @@ describe("memory tools", () => {
   it("emits mongodb low-confidence hint for weak recall results", async () => {
     setMemorySearchImpl(async () => [
       {
-        path: "MEMORY.md",
+        path: "memory/2026-03-01.md",
         startLine: 1,
         endLine: 1,
         score: 0.05,

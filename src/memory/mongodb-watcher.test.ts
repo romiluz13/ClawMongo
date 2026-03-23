@@ -195,9 +195,9 @@ describe("MongoDBMemoryManager file watcher", () => {
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
 
-    expect(watchedPaths).toEqual(
-      expect.arrayContaining(["/workspace/MEMORY.md", "/workspace/memory.md", "/workspace/memory"]),
-    );
+    expect(watchedPaths).toEqual(expect.arrayContaining(["/workspace/memory"]));
+    expect(watchedPaths).not.toContain("/workspace/MEMORY.md");
+    expect(watchedPaths).not.toContain("/workspace/memory.md");
 
     await manager.close();
   });

@@ -1688,12 +1688,12 @@ describe("runReplyAgent memory flush", () => {
       expect(flushCall?.prompt).toContain("Write notes.");
       expect(flushCall?.prompt).toContain("NO_REPLY");
       expect(flushCall?.prompt).toContain("memory_write");
-      expect(flushCall?.prompt).toContain("MEMORY.md");
+      expect(flushCall?.prompt).not.toContain("MEMORY.md");
       expect(flushCall?.extraSystemPrompt).toContain("extra system");
       expect(flushCall?.extraSystemPrompt).toContain("Flush memory now.");
       expect(flushCall?.extraSystemPrompt).toContain("NO_REPLY");
       expect(flushCall?.extraSystemPrompt).toContain("memory_write");
-      expect(flushCall?.extraSystemPrompt).toContain("MEMORY.md");
+      expect(flushCall?.extraSystemPrompt).not.toContain("MEMORY.md");
       expect(calls[1]?.prompt).toBe("hello");
     });
   });
@@ -1816,9 +1816,9 @@ describe("runReplyAgent memory flush", () => {
       expect(calls[0]?.prompt).toContain("Pre-compaction memory flush.");
       expect(calls[0]?.prompt).toContain("Current time:");
       expect(calls[0]?.prompt).toContain("memory_write");
-      expect(calls[0]?.prompt).toContain("MEMORY.md");
+      expect(calls[0]?.prompt).not.toContain("MEMORY.md");
       expect(calls[0]?.extraSystemPrompt).toContain("memory_write");
-      expect(calls[0]?.extraSystemPrompt).toContain("MEMORY.md");
+      expect(calls[0]?.extraSystemPrompt).not.toContain("MEMORY.md");
       expect(calls[1]?.prompt).toBe("hello");
 
       const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));

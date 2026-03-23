@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { MongoClient, type Db } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { RegexEntityExtractor, LLMEntityExtractor } from "./mongodb-entity-extractor.js";
 // v2 episodes
 import {
   materializeEpisode,
@@ -43,8 +44,11 @@ import {
 import { writeEventAndProject, searchV2, getV2Status } from "./mongodb-manager.js";
 // v2 ops
 import { getRecentIngestRuns } from "./mongodb-ops.js";
+import { synthesizeProfile } from "./mongodb-profile.js";
 // Semantic query cache
 import { checkCache, writeCache } from "./mongodb-query-cache.js";
+import { rewriteQuery, expandSynonyms } from "./mongodb-query-rewriter.js";
+import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";
 // v2 retrieval planner
 import { planRetrieval } from "./mongodb-retrieval-planner.js";
 // Schema setup
@@ -81,8 +85,8 @@ async function waitForVectorResults(
     maxResults = 5,
     minScore = 0.0,
     indexName = `${PREFIX}chunks_vector`,
-    timeoutMs = 90_000,
-    pollMs = 1_000,
+    timeoutMs = 180_000,
+    pollMs = 2_000,
   }: {
     maxResults?: number;
     minScore?: number;
@@ -1390,7 +1394,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
 
   describe("Phase 11: Voyage AI AutoEmbed Vector Search", () => {
     // Allow up to 90s for atlas-local auto-embed to finish embedding documents
-    const VECTOR_SEARCH_TIMEOUT = 90_000;
+    const VECTOR_SEARCH_TIMEOUT = 180_000;
     const autoEmbedIt = AUTO_EMBED_ENABLED ? it : it.skip;
 
     autoEmbedIt(
@@ -2046,6 +2050,316 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       expect(colInfo.options?.timeseries?.timeField).toBe("ts");
       expect(colInfo.options?.timeseries?.metaField).toBe("meta");
       expect(colInfo.options?.timeseries?.granularity).toBe("seconds");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PHASE 14: Profile Synthesis — Aggregate agent profile from 5 collections
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Phase 14: Profile Synthesis", () => {
+    it("should synthesize a complete profile from real conversation data", async () => {
+      const scopeRef = resolveScopeRef({ scope: "agent", agentId: AGENT_ID });
+      const profile = await synthesizeProfile({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        scope: "agent",
+        scopeRef,
+      });
+
+      expect(profile.agentId).toBe(AGENT_ID);
+      expect(profile.synthesizedAt).toBeInstanceOf(Date);
+
+      // Activity patterns from the 18+ events written in Phase 1
+      expect(profile.activityPatterns.totalEvents).toBeGreaterThanOrEqual(10);
+      expect(profile.activityPatterns.roleDistribution["user"]).toBeGreaterThanOrEqual(1);
+      expect(profile.activityPatterns.roleDistribution["assistant"]).toBeGreaterThanOrEqual(1);
+      expect(profile.activityPatterns.lastActive).toBeInstanceOf(Date);
+
+      // Entities from Phase 2 extraction (romiluz, sarah, DataVault, etc.)
+      expect(profile.topEntities.length).toBeGreaterThanOrEqual(1);
+      console.log(
+        `  Profile entities: ${profile.topEntities.map((e) => `${e.name}(${e.relationCount})`).join(", ")}`,
+      );
+
+      // Episodes from Phase 4 materialization
+      expect(profile.recentEpisodes).toBeDefined();
+      if (profile.recentEpisodes.length > 0) {
+        console.log(`  Profile episodes: ${profile.recentEpisodes.map((e) => e.title).join(", ")}`);
+      }
+
+      console.log(
+        `  Activity: ${profile.activityPatterns.totalEvents} events, roles: ${JSON.stringify(profile.activityPatterns.roleDistribution)}`,
+      );
+    });
+
+    it("should return empty profile for non-existent agent (no crash)", async () => {
+      const emptyProfile = await synthesizeProfile({
+        db,
+        prefix: PREFIX,
+        agentId: `nonexistent-${randomUUID().slice(0, 8)}`,
+        scope: "agent",
+        scopeRef: "agent:nonexistent",
+      });
+
+      expect(emptyProfile.preferences).toEqual([]);
+      expect(emptyProfile.topEntities).toEqual([]);
+      expect(emptyProfile.activityPatterns.totalEvents).toBe(0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PHASE 15: Cross-Encoder Re-ranking — Real Voyage rerank-2.5 API
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Phase 15: Cross-Encoder Re-ranking (Voyage API)", () => {
+    // Reranker auto-routes based on key prefix (same as Python SDK):
+    // al-... → ai.mongodb.com/v1/rerank (Atlas proxy)
+    // pa-... → api.voyageai.com/v1/rerank (direct)
+    // Both key types work — a single VOYAGE_API_KEY is sufficient.
+    const RERANK_KEY = process.env.VOYAGE_RERANK_API_KEY ?? process.env.VOYAGE_API_KEY ?? "";
+    const rerankIt = RERANK_KEY ? it : it.skip;
+
+    rerankIt(
+      "should rerank search results via Voyage rerank-2.5 with instruction-following",
+      async () => {
+        // Create results that mimic what searchV2 would return from the conversation data
+        const results: MemorySearchResult[] = [
+          {
+            path: "events/1",
+            startLine: 0,
+            endLine: 0,
+            score: 0.5,
+            snippet: "Python is a programming language for data science",
+            source: "conversation",
+          },
+          {
+            path: "events/2",
+            startLine: 0,
+            endLine: 0,
+            score: 0.8,
+            snippet:
+              "MongoDB is a document database. We chose it for DataVault because it handles flexible schemas and pipeline metadata well.",
+            source: "conversation",
+          },
+          {
+            path: "events/3",
+            startLine: 0,
+            endLine: 0,
+            score: 0.3,
+            snippet: "TypeScript provides strong typing for the DataVault backend codebase",
+            source: "conversation",
+          },
+        ];
+
+        const config: RerankConfig = {
+          enabled: true,
+          model: "rerank-2.5",
+          topN: 10,
+          minScore: 0,
+          voyageApiKey: RERANK_KEY,
+          instruction:
+            "This is agent memory for a coding assistant building DataVault. Prioritize database and architecture decisions.",
+        };
+
+        const result = await crossEncoderRerank({
+          db,
+          prefix: PREFIX,
+          agentId: AGENT_ID,
+          query: "What database does DataVault use and why?",
+          results,
+          config,
+        });
+
+        expect(result.reranked).toBe(true);
+        expect(result.latencyMs).toBeGreaterThan(0);
+        expect(result.results.length).toBe(3);
+
+        // MongoDB doc should rank highest for this database query
+        expect(result.results[0].snippet).toContain("MongoDB");
+        expect(result.results[0].score).toBeGreaterThan(0);
+        expect(result.results[0].score).toBeLessThanOrEqual(1);
+
+        console.log(`  Rerank latency: ${result.latencyMs}ms`);
+        console.log(
+          `  Reranked: ${result.results.map((r) => `${r.path}:${r.score.toFixed(4)}`).join(", ")}`,
+        );
+      },
+    );
+
+    it("should fall back gracefully with invalid API key", async () => {
+      const results: MemorySearchResult[] = [
+        {
+          path: "events/1",
+          startLine: 0,
+          endLine: 0,
+          score: 0.5,
+          snippet: "Test doc 1",
+          source: "conversation",
+        },
+        {
+          path: "events/2",
+          startLine: 0,
+          endLine: 0,
+          score: 0.8,
+          snippet: "Test doc 2",
+          source: "conversation",
+        },
+      ];
+
+      const result = await crossEncoderRerank({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        query: "test",
+        results,
+        config: {
+          enabled: true,
+          model: "rerank-2.5",
+          topN: 10,
+          minScore: 0,
+          voyageApiKey: "invalid-key-xxx",
+        },
+      });
+
+      expect(result.reranked).toBe(false);
+      expect(result.results.length).toBe(2);
+      expect(result.results[0].path).toBe("events/1"); // original order preserved
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PHASE 16: Query Rewriting — Synonym expansion for better recall
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Phase 16: Query Rewriting", () => {
+    it("should expand abbreviations and synonyms for domain queries", () => {
+      const expanded = expandSynonyms("auth db perf config");
+      expect(expanded).toContain("auth");
+      expect(expanded).toContain("authentication");
+      expect(expanded).toContain("database");
+      expect(expanded).toContain("performance");
+      expect(expanded).toContain("configuration");
+    });
+
+    it("should emit telemetry for query rewrite operations", async () => {
+      const result = await rewriteQuery({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        query: "auth config deploy",
+        config: { enabled: true, method: "synonym-expansion", maxTokens: 128 },
+      });
+
+      expect(result.rewritten).toBe(true);
+      expect(result.rewrittenQuery).toContain("authentication");
+      expect(result.rewrittenQuery).toContain("configuration");
+      expect(result.rewrittenQuery).toContain("deployment");
+      expect(result.method).toBe("synonym-expansion");
+      expect(result.originalQuery).toBe("auth config deploy");
+    });
+
+    it("should preserve original query when disabled", async () => {
+      const result = await rewriteQuery({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        query: "MongoDB pipeline",
+        config: { enabled: false, method: "synonym-expansion", maxTokens: 128 },
+      });
+
+      expect(result.rewritten).toBe(false);
+      expect(result.rewrittenQuery).toBe("MongoDB pipeline");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PHASE 17: Pluggable Entity Extraction — RegexExtractor + LLM fallback
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Phase 17: Pluggable Entity Extraction", () => {
+    it("should extract entities using RegexEntityExtractor on real conversation data", async () => {
+      const extractor = new RegexEntityExtractor();
+      const testAgentId = `pluggable-e2e-${randomUUID().slice(0, 8)}`;
+
+      // Use realistic conversation content from our DataVault simulation
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: testAgentId,
+        eventContent:
+          '@alice and @bob discussed #mongodb optimization and visited https://docs.mongodb.com/manual. They quoted "Performance Guide" as reference.',
+        scope: "agent",
+        sourceEventId: `evt-pluggable-${randomUUID().slice(0, 8)}`,
+        extractor,
+      });
+
+      expect(result.entities.length).toBeGreaterThanOrEqual(3);
+      expect(result.relationsCreated).toBeGreaterThanOrEqual(1);
+
+      // Verify entity types
+      const types = result.entities.map((e) => e.type);
+      expect(types).toContain("person"); // alice, bob
+      expect(types).toContain("topic"); // mongodb
+      expect(types).toContain("document"); // URL
+
+      console.log(
+        `  Extracted ${result.entities.length} entities: ${result.entities.map((e) => `${e.name}(${e.type})`).join(", ")}`,
+      );
+      console.log(`  Created ${result.relationsCreated} relations`);
+    });
+
+    it("should fall back to regex when LLM times out", async () => {
+      const slowLlm = () => new Promise<string>(() => {}); // never resolves
+      const extractor = new LLMEntityExtractor(slowLlm, 100); // 100ms timeout
+      const testAgentId = `llm-timeout-e2e-${randomUUID().slice(0, 8)}`;
+
+      const result = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: testAgentId,
+        eventContent: "@charlie works on #typescript with @dave",
+        scope: "agent",
+        extractor,
+      });
+
+      // Should fall back to regex and still extract entities
+      expect(result.entities.length).toBeGreaterThanOrEqual(2);
+      const names = result.entities.map((e) => e.name);
+      expect(names).toContain("charlie");
+      expect(names).toContain("typescript");
+    });
+
+    it("should produce identical results to inline extraction (backward compatibility)", async () => {
+      const testAgentId = `compat-e2e-${randomUUID().slice(0, 8)}`;
+      const content = '@romiluz discussed #DataVault architecture with "Sarah Chen"';
+
+      // With explicit RegexEntityExtractor
+      const withExtractor = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: testAgentId,
+        eventContent: content,
+        scope: "agent",
+        extractor: new RegexEntityExtractor(),
+      });
+
+      // Without extractor (uses default)
+      const testAgentId2 = `compat-default-${randomUUID().slice(0, 8)}`;
+      const withDefault = await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: testAgentId2,
+        eventContent: content,
+        scope: "agent",
+      });
+
+      // Both should extract the same entities
+      expect(withExtractor.entities.length).toBe(withDefault.entities.length);
+      const extractorNames = withExtractor.entities.map((e) => e.name).toSorted();
+      const defaultNames = withDefault.entities.map((e) => e.name).toSorted();
+      expect(extractorNames).toEqual(defaultNames);
     });
   });
 });

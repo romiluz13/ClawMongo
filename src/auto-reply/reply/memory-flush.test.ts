@@ -56,9 +56,8 @@ describe("DEFAULT_MEMORY_FLUSH_PROMPT", () => {
     expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("do not use file writes");
   });
 
-  it("treats Markdown bridge notes as read-only during flushes", () => {
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("MEMORY.md");
-    expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("human-authored bridge notes");
+  it("treats bootstrap files as read-only during flushes (no MEMORY.md mention)", () => {
+    expect(DEFAULT_MEMORY_FLUSH_PROMPT).not.toContain("MEMORY.md");
     expect(DEFAULT_MEMORY_FLUSH_PROMPT).toContain("read-only");
   });
 });

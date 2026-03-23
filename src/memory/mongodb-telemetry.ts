@@ -13,7 +13,11 @@ export type TelemetryOperation =
   | "event-write"
   | "projection-run"
   | "cache-check"
-  | "graph-expansion";
+  | "graph-expansion"
+  | "profile-synthesis"
+  | "rerank"
+  | "query-rewrite"
+  | "entity-extraction";
 
 export type TelemetryMeta = {
   agentId: string;
@@ -34,6 +38,12 @@ export type TelemetryDocument = {
   itemCount?: number;
   eventType?: string;
   projectionTriggered?: boolean;
+  rerankModel?: string;
+  rerankLatencyMs?: number;
+  queryRewritten?: boolean;
+  rewriteMethod?: string;
+  extractionMethod?: string;
+  entitiesExtracted?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -76,13 +86,35 @@ export async function getLatencyStats(params: {
     matchStage["meta.operation"] = operation;
   }
 
+  // M4 audit fix: use server-side $percentile instead of $push + client-side calculation.
+  // $percentile is GA since MongoDB 7.0, available in atlas-local:preview.
   const pipeline = [
     { $match: matchStage },
     {
       $group: {
         _id: null,
-        durations: { $push: "$durationMs" },
         count: { $sum: 1 },
+        p50: {
+          $percentile: {
+            input: "$durationMs",
+            p: [0.5],
+            method: "approximate",
+          },
+        },
+        p95: {
+          $percentile: {
+            input: "$durationMs",
+            p: [0.95],
+            method: "approximate",
+          },
+        },
+        p99: {
+          $percentile: {
+            input: "$durationMs",
+            p: [0.99],
+            method: "approximate",
+          },
+        },
       },
     },
   ];
@@ -92,13 +124,11 @@ export async function getLatencyStats(params: {
     return { p50: 0, p95: 0, p99: 0, count: 0 };
   }
 
-  const sorted = (results[0].durations as number[]).toSorted((a, b) => a - b);
-  const n = sorted.length;
   return {
-    p50: sorted[Math.floor(n * 0.5)] ?? 0,
-    p95: sorted[Math.floor(n * 0.95)] ?? 0,
-    p99: sorted[Math.floor(n * 0.99)] ?? 0,
-    count: n,
+    p50: results[0].p50?.[0] ?? 0,
+    p95: results[0].p95?.[0] ?? 0,
+    p99: results[0].p99?.[0] ?? 0,
+    count: results[0].count,
   };
 }
 

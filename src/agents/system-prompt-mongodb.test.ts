@@ -12,7 +12,7 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     // Decision tree for storing information
     expect(prompt).toContain("When storing information:");
     expect(prompt).toContain("memory_write");
-    expect(prompt).toContain("MEMORY.md");
+    expect(prompt).not.toContain("MEMORY.md");
 
     // Decision tree for searching
     expect(prompt).toContain("When searching:");
@@ -107,7 +107,7 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     expect(prompt).toContain("memory_search FIRST");
     expect(prompt).toContain("memory_write");
     expect(prompt).toContain("kb_search");
-    expect(prompt).toContain("MEMORY.md is retrieval guidance only");
+    expect(prompt).not.toContain("MEMORY.md");
     expect(prompt).toContain("current situation");
     expect(prompt).toContain("active constraints");
 

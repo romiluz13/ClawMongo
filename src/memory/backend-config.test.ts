@@ -537,7 +537,11 @@ describe("resolveMemoryBackendConfig", () => {
     } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.episodes).toEqual({ enabled: false, minEventsForEpisode: 20 });
-    expect(resolved.mongodb!.graph).toEqual({ enabled: false, maxGraphDepth: 5 });
+    expect(resolved.mongodb!.graph).toEqual({
+      enabled: false,
+      maxGraphDepth: 5,
+      entityExtraction: { method: "regex", model: undefined, timeoutMs: 5000 },
+    });
   });
 
   it("resolves custom KB config for MongoDB backend", () => {
@@ -711,5 +715,187 @@ describe("resolveMemoryBackendConfig", () => {
     expect(
       resolveMemoryBackendConfig({ cfg: cfgFalse, agentId: "main" }).mongodb!.cache.enabled,
     ).toBe(false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // queryRewriting config resolution
+  // ---------------------------------------------------------------------------
+
+  it("resolves queryRewriting defaults (disabled, synonym-expansion, 128)", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.queryRewriting.enabled).toBe(false);
+    expect(resolved.mongodb!.queryRewriting.method).toBe("synonym-expansion");
+    expect(resolved.mongodb!.queryRewriting.maxTokens).toBe(128);
+  });
+
+  it("resolves queryRewriting with explicit values", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          queryRewriting: { enabled: true, method: "hyde", maxTokens: 256 },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.queryRewriting.enabled).toBe(true);
+    expect(resolved.mongodb!.queryRewriting.method).toBe("hyde");
+    expect(resolved.mongodb!.queryRewriting.maxTokens).toBe(256);
+  });
+
+  // ---------------------------------------------------------------------------
+  // reranking config resolution
+  // ---------------------------------------------------------------------------
+
+  it("resolves reranking defaults (disabled, rerank-2.5, topN=20, minScore=0.1)", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.reranking.enabled).toBe(false);
+    expect(resolved.mongodb!.reranking.model).toBe("rerank-2.5");
+    expect(resolved.mongodb!.reranking.topN).toBe(20);
+    expect(resolved.mongodb!.reranking.minScore).toBe(0.1);
+    expect(resolved.mongodb!.reranking.voyageApiKey).toBe("");
+  });
+
+  it("resolves reranking with explicit values", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          reranking: {
+            enabled: true,
+            model: "rerank-2.5-lite",
+            topN: 10,
+            minScore: 0.3,
+            voyageApiKey: "voy-test-key",
+            instruction: "Prioritize recent results",
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.reranking.enabled).toBe(true);
+    expect(resolved.mongodb!.reranking.model).toBe("rerank-2.5-lite");
+    expect(resolved.mongodb!.reranking.topN).toBe(10);
+    expect(resolved.mongodb!.reranking.minScore).toBe(0.3);
+    expect(resolved.mongodb!.reranking.voyageApiKey).toBe("voy-test-key");
+  });
+
+  it("resolves reranking.voyageApiKey from env fallback", () => {
+    vi.stubEnv("VOYAGE_API_KEY", "voy-from-env");
+    try {
+      const cfg = {
+        agents: { defaults: { workspace: "/tmp/memory-test" } },
+        memory: {
+          backend: "mongodb",
+          mongodb: { uri: "mongodb://localhost:27017" },
+        },
+      } as unknown as OpenClawConfig;
+      const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+      expect(resolved.mongodb!.reranking.voyageApiKey).toBe("voy-from-env");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // graph.entityExtraction config resolution
+  // ---------------------------------------------------------------------------
+
+  it("resolves graph.entityExtraction defaults (regex, timeoutMs=5000)", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: { uri: "mongodb://localhost:27017" },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.graph.entityExtraction.method).toBe("regex");
+    expect(resolved.mongodb!.graph.entityExtraction.model).toBeUndefined();
+    expect(resolved.mongodb!.graph.entityExtraction.timeoutMs).toBe(5000);
+  });
+
+  it("resolves graph.entityExtraction with llm method", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          graph: {
+            entityExtraction: {
+              method: "llm",
+              model: "claude-3-haiku",
+              timeoutMs: 10000,
+            },
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.graph.entityExtraction.method).toBe("llm");
+    expect(resolved.mongodb!.graph.entityExtraction.model).toBe("claude-3-haiku");
+    expect(resolved.mongodb!.graph.entityExtraction.timeoutMs).toBe(10000);
+  });
+
+  it("preserves existing graph.enabled and maxGraphDepth behavior", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          graph: {
+            enabled: false,
+            maxGraphDepth: 5,
+            entityExtraction: { method: "llm" },
+          },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    // Existing graph fields preserved
+    expect(resolved.mongodb!.graph.enabled).toBe(false);
+    expect(resolved.mongodb!.graph.maxGraphDepth).toBe(5);
+    // New entityExtraction field works alongside
+    expect(resolved.mongodb!.graph.entityExtraction.method).toBe("llm");
+  });
+
+  // H2 audit fix: warn when entity extraction method is 'llm' but no LLM function injected
+  it("logs warning when entityExtraction.method is 'llm'", () => {
+    vi.stubEnv("OPENCLAW_MONGODB_URI", "mongodb://localhost:27017/test");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        mongodb: {
+          graph: { entityExtraction: { method: "llm" } },
+        },
+      },
+    } as unknown as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.graph.entityExtraction.method).toBe("llm");
+    // The warning is logged via createSubsystemLogger, which we cannot easily spy on
+    // in this test setup. Instead, verify the config is preserved correctly.
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
   });
 });

@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { DEFAULT_AGENTS_FILENAME, DEFAULT_MEMORY_FILENAME } from "../agents/workspace.js";
+import { DEFAULT_AGENTS_FILENAME } from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type {
   MemoryMongoDBDeploymentProfile,
@@ -51,14 +51,19 @@ async function setupMongoDBMemory(
 ): Promise<OpenClawConfig> {
   // --- Voyage AI Key Prompt (before Docker start) ---
   // ClawMongo uses automated embeddings via mongot + Voyage AI.
-  // Prompt for the key early so it can be passed to the Docker container.
+  // atlas-local:preview routes through ai.mongodb.com — needs an Atlas Model API Key.
+  // Create one at: cloud.mongodb.com → AI Models → Create model API key
+  // Direct Voyage keys (pa-...) also work for direct API calls (reranker auto-routes).
   if (isClawMongo && !process.env.VOYAGE_API_KEY) {
     const voyageKey = await prompter.text({
-      message: "Enter your Voyage AI API key (required for auto-embeddings)",
-      placeholder: "pa-...",
+      message:
+        "Enter your Voyage AI API key (Atlas Model API Key recommended — create at cloud.mongodb.com → AI Models)",
+      placeholder: "al-...",
       validate: (val) => (!val?.trim() ? "Voyage AI API key is required" : undefined),
     });
-    if (typeof voyageKey === "symbol") throw new WizardCancelledError();
+    if (typeof voyageKey === "symbol") {
+      throw new WizardCancelledError();
+    }
     process.env.VOYAGE_API_KEY = voyageKey.trim();
     await prompter.note(
       "VOYAGE_API_KEY set for this session. Add it to your shell profile for persistence:\n  export VOYAGE_API_KEY=" +
@@ -386,30 +391,19 @@ This workspace uses the MongoDB memory backend. The agent should prefer MongoDB 
 - **Recall**: Use \`memory_search\` (not file reads) as the primary recall mechanism
 - **Store**: Use \`memory_write\` for structured data (decisions, preferences, facts)
 - **Reference**: Use \`kb_search\` for imported documents and reference materials
-- **MEMORY.md**: Keep as a human-authored bridge note only — NOT agent-written runtime memory
+- **MongoDB is the sole memory store** — do not use workspace files for runtime memory
 
 The MongoDB backend provides persistent, searchable, multi-instance memory with vector search,
 knowledge base ingestion, and structured agent memory.
 `;
 
-const MONGODB_MEMORY_SEED = `# Memory Notes
-
-This workspace uses the MongoDB memory backend.
-
-- Use \`memory_search\` for recall (not file reads)
-- Use \`memory_write\` for structured data (decisions, preferences, facts)
-- Use \`kb_search\` for reference documents
-- This file is a human-authored bridge note, not the runtime memory store
-`;
-
 /**
  * Customize workspace files for the MongoDB memory backend.
  * - Appends a MongoDB section to AGENTS.md (idempotent)
- * - Seeds MEMORY.md with correct initial content (does not overwrite)
+ * - MEMORY.md is no longer created (MongoDB is the sole memory store)
  */
 export async function customizeWorkspaceForMongoDB(workspaceDir: string): Promise<void> {
   const agentsPath = path.join(workspaceDir, DEFAULT_AGENTS_FILENAME);
-  const memoryPath = path.join(workspaceDir, DEFAULT_MEMORY_FILENAME);
 
   // --- AGENTS.md: append MongoDB section (idempotent) ---
   try {
@@ -419,16 +413,5 @@ export async function customizeWorkspaceForMongoDB(workspaceDir: string): Promis
     }
   } catch {
     // AGENTS.md doesn't exist or can't be read — skip
-  }
-
-  // --- MEMORY.md: seed with MongoDB-aware content (exclusive create) ---
-  try {
-    await fs.writeFile(memoryPath, MONGODB_MEMORY_SEED, { flag: "wx" });
-  } catch (err) {
-    // EEXIST is expected — file already exists, don't overwrite
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
-      // Re-throw unexpected errors (but caller wraps in try/catch anyway)
-      throw err;
-    }
   }
 }

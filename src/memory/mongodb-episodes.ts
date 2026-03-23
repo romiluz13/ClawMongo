@@ -19,6 +19,8 @@ const log = createSubsystemLogger("memory:mongodb:episodes");
 
 export type EpisodeType = "daily" | "weekly" | "thread" | "topic" | "decision";
 
+export type EpisodeStatus = "active" | "archived" | "deleted";
+
 export type Episode = {
   episodeId: string;
   type: EpisodeType;
@@ -31,6 +33,7 @@ export type Episode = {
   sourceEventCount: number;
   sourceEventIds?: string[];
   tags?: string[];
+  status?: EpisodeStatus;
   updatedAt: Date;
 };
 
@@ -213,7 +216,10 @@ export async function materializeEpisode(params: {
     };
     const updateResult = await col.updateOne(
       identityFilter,
-      { $set: setDoc, $setOnInsert: { episodeId, createdAt: now } },
+      {
+        $set: setDoc,
+        $setOnInsert: { episodeId, createdAt: now, status: "active" as EpisodeStatus },
+      },
       { upsert: true },
     );
 
@@ -291,10 +297,12 @@ export async function getEpisodesByTimeRange(params: {
     const col = episodesCollection(db, prefix);
 
     // Overlap condition: episode.timeRange.start <= query.end AND episode.timeRange.end >= query.start
+    // Status filter: $ne "deleted" matches docs where field is absent OR any value other than "deleted"
     const filter: Document = {
       agentId,
       "timeRange.start": { $lte: end },
       "timeRange.end": { $gte: start },
+      status: { $ne: "deleted" },
     };
     if (type) {
       filter.type = type;
@@ -337,6 +345,7 @@ export async function getEpisodesByType(params: {
       .find({
         agentId,
         type,
+        status: { $ne: "deleted" },
         ...(scope ? { scope } : {}),
         ...(scopeRef ? { scopeRef } : {}),
       })
@@ -384,6 +393,7 @@ export async function searchEpisodes(params: {
 
     const filter: Document = {
       agentId,
+      status: { $ne: "deleted" },
       $or: [{ title: { $regex: regex } }, { summary: { $regex: regex } }],
     };
     if (scope) {
@@ -407,6 +417,56 @@ export async function searchEpisodes(params: {
     return docs as unknown as Episode[];
   } catch (err) {
     log.error(`searchEpisodes failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update episode status (active/archived/deleted)
+// ---------------------------------------------------------------------------
+
+export async function updateEpisodeStatus(params: {
+  db: Db;
+  prefix: string;
+  episodeId: string;
+  agentId: string;
+  status: EpisodeStatus;
+}): Promise<boolean> {
+  const { db, prefix, episodeId, agentId, status } = params;
+  try {
+    const col = episodesCollection(db, prefix);
+    const result = await col.updateOne(
+      { episodeId, agentId },
+      { $set: { status, updatedAt: new Date() } },
+    );
+    return result.matchedCount > 0;
+  } catch (err) {
+    log.error(`updateEpisodeStatus failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Get episodes by ID list (Phase 9: tiered retrieval)
+// ---------------------------------------------------------------------------
+
+export async function getEpisodesByIds(params: {
+  db: Db;
+  prefix: string;
+  episodeIds: string[];
+  agentId: string;
+  projection?: "full" | "ids-only";
+}): Promise<Episode[]> {
+  const { db, prefix, episodeIds, agentId } = params;
+  if (episodeIds.length === 0) {
+    return [];
+  }
+  try {
+    const col = episodesCollection(db, prefix);
+    const docs = await col.find({ episodeId: { $in: episodeIds }, agentId }).toArray();
+    return docs as unknown as Episode[];
+  } catch (err) {
+    log.error(`getEpisodesByIds failed: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   }
 }

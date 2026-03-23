@@ -2,6 +2,7 @@ import type { ClientSession, Collection, Db, Document, MongoClient } from "mongo
 import type { MemoryMongoDBEmbeddingMode, MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
+import { recordMutation } from "./mongodb-mutations.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection, structuredMemRevisionsCollection } from "./mongodb-schema.js";
@@ -94,6 +95,22 @@ type StructuredMemoryRevision = {
   createdAt?: Date;
   updatedAt: Date;
 };
+
+function computeChangedFields(oldDoc: Document, newDoc: Document): string[] {
+  const fields = new Set<string>();
+  const allKeys = new Set([...Object.keys(oldDoc), ...Object.keys(newDoc)]);
+  for (const key of allKeys) {
+    if (key === "_id" || key === "updatedAt" || key === "createdAt") {
+      continue;
+    }
+    const oldVal = JSON.stringify(oldDoc[key] ?? null);
+    const newVal = JSON.stringify(newDoc[key] ?? null);
+    if (oldVal !== newVal) {
+      fields.add(key);
+    }
+  }
+  return Array.from(fields);
+}
 
 function arraysEqual(left: string[] | undefined, right: string[] | undefined): boolean {
   const a = left ?? [];
@@ -403,10 +420,14 @@ export async function writeStructuredMemory(params: {
     key: entry.key,
   };
 
+  // Captured for fire-and-forget audit after persist completes
+  let existingBeforeWrite: Document | null = null;
+
   const persist = async (
     session?: ClientSession,
   ): Promise<{ upserted: boolean; id: string; revision: number }> => {
     const existing = await collection.findOne(identityFilter, session ? { session } : undefined);
+    existingBeforeWrite = existing;
     if (!existing) {
       const result = await collection.updateOne(
         identityFilter,
@@ -517,6 +538,29 @@ export async function writeStructuredMemory(params: {
   log.info(
     `structured memory ${outcome.upserted ? "created" : "updated"}: type=${entry.type} key=${entry.key} revision=${outcome.revision}`,
   );
+
+  // Fire-and-forget: record mutation audit trail (non-blocking)
+  const oldSnapshot = existingBeforeWrite;
+  const changedFields = oldSnapshot != null ? computeChangedFields(oldSnapshot, setDoc) : undefined;
+  Promise.allSettled([
+    recordMutation({
+      db,
+      prefix,
+      mutation: {
+        collectionName: "structured_mem",
+        documentId: entry.key,
+        operation: oldSnapshot == null ? "create" : "update",
+        agentId: entry.agentId,
+        oldValue: oldSnapshot ?? null,
+        newValue: setDoc,
+        changedFields,
+        actorRole: "system",
+      },
+    }),
+  ]).catch((err) => {
+    log.warn(`structured memory audit failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+
   return { upserted: outcome.upserted, id: outcome.id };
 }
 

@@ -52,10 +52,7 @@ function buildMongoDBBridgeSection(params: {
   if (!tools || tools.has("kb_search")) {
     lines.push("- To find reference docs: use kb_search");
   }
-  lines.push("- MEMORY.md is retrieval guidance only, not a runtime knowledge store");
-  lines.push(
-    "- Treat MEMORY.md and memory/*.md as human-authored bridge notes, not agent-written durable memory",
-  );
+  lines.push("- Do not write runtime memory to workspace files");
   lines.push("");
   return lines;
 }

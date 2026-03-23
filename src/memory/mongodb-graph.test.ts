@@ -16,6 +16,7 @@ import {
   getEntitiesByType,
   expandGraph,
   deleteEntity,
+  deleteEntityConservative,
   extractAndUpsertEntities,
   type Entity,
   type Relation,
@@ -29,6 +30,13 @@ import { emitTelemetry } from "./mongodb-telemetry.js";
 function createMockCollection(overrides: Partial<Record<string, unknown>> = {}): Collection {
   return {
     updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1, matchedCount: 0, modifiedCount: 0 }),
+    bulkWrite: vi.fn().mockResolvedValue({
+      insertedCount: 0,
+      matchedCount: 0,
+      modifiedCount: 0,
+      deletedCount: 0,
+      upsertedCount: 1,
+    }),
     find: vi.fn().mockReturnValue({
       sort: vi.fn().mockReturnValue({
         limit: vi.fn().mockReturnValue({
@@ -929,7 +937,7 @@ describe("mongodb-graph", () => {
       expect(result.entities).toHaveLength(0);
     });
 
-    it("creates candidate_same links for ambiguous person mentions without merging them", async () => {
+    it("creates candidate_same links for ambiguous person mentions via bulkWrite", async () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
       const entityLinksCol = createMockCollection();
@@ -948,14 +956,85 @@ describe("mongodb-graph", () => {
         sourceEventId: "evt-1",
       });
 
-      const linkCalls = (entityLinksCol.updateOne as ReturnType<typeof vi.fn>).mock.calls;
-      expect(linkCalls.length).toBeGreaterThan(0);
-      const candidateCall = linkCalls.find(
-        (call: unknown[]) => (call[0] as Record<string, unknown>).linkType === "candidate_same",
+      // H1 audit fix: entity links now use bulkWrite instead of sequential updateOne
+      const bulkCalls = (entityLinksCol.bulkWrite as ReturnType<typeof vi.fn>).mock.calls;
+      expect(bulkCalls.length).toBeGreaterThan(0);
+      const ops = bulkCalls[0][0] as Array<{
+        updateOne: { filter: Record<string, unknown>; update: Record<string, unknown> };
+      }>;
+      expect(ops.length).toBeGreaterThan(0);
+      const candidateOp = ops.find((op) => op.updateOne.filter.linkType === "candidate_same");
+      expect(candidateOp).toBeDefined();
+      expect(
+        (candidateOp!.updateOne.update as Record<string, Record<string, unknown>>).$set.status,
+      ).toBe("active");
+      expect(
+        (candidateOp!.updateOne.update as Record<string, Record<string, unknown>>).$set.provenance,
+      ).toBeDefined();
+    });
+
+    // H1 audit fix: verify bulkWrite is used instead of sequential upsertEntity
+    it("uses bulkWrite for entity upserts (H1 audit fix)", async () => {
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
+      });
+
+      await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "@alice mentioned @bob working on #projectX",
+        scope: "agent",
+        sourceEventId: "ev1",
+      });
+
+      // Should call bulkWrite once instead of N sequential upsertEntity calls
+      const bulkCalls = (entitiesCol.bulkWrite as ReturnType<typeof vi.fn>).mock.calls;
+      expect(bulkCalls.length).toBe(1);
+      const ops = bulkCalls[0][0];
+      expect(ops.length).toBeGreaterThanOrEqual(2); // at least alice + bob
+      // Each op should be updateOne with upsert: true
+      for (const op of ops) {
+        expect(op).toHaveProperty("updateOne");
+        expect(op.updateOne.upsert).toBe(true);
+      }
+    });
+
+    // H6 audit fix: verify entity-extraction telemetry is emitted
+    it("emits entity-extraction telemetry (H6 audit fix)", async () => {
+      vi.clearAllMocks();
+      const entitiesCol = createMockCollection();
+      const relationsCol = createMockCollection();
+      const entityLinksCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}entity_links`]: entityLinksCol,
+      });
+
+      await extractAndUpsertEntities({
+        db,
+        prefix: PREFIX,
+        agentId: "agent-1",
+        eventContent: "@alice",
+        scope: "agent",
+      });
+
+      expect(emitTelemetry).toHaveBeenCalledWith(
+        db,
+        PREFIX,
+        expect.objectContaining({
+          meta: { agentId: "agent-1", operation: "entity-extraction" },
+          ok: true,
+          extractionMethod: "regex",
+          entitiesExtracted: 1,
+        }),
       );
-      expect(candidateCall).toBeDefined();
-      expect(candidateCall?.[1].$set.status).toBe("active");
-      expect(candidateCall?.[1].$set.provenance.heuristic).toBe("shared-name-tokens");
     });
   });
 
@@ -1002,6 +1081,162 @@ describe("mongodb-graph", () => {
           durationMs: expect.any(Number),
         }),
       );
+    });
+  });
+
+  describe("deleteEntityConservative", () => {
+    it("returns conflict when entity has relations and force is not set", async () => {
+      const entitiesCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(makeEntity()),
+        deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
+      });
+      const relationsCol = createMockCollection({
+        countDocuments: vi.fn().mockResolvedValue(3),
+        deleteMany: vi.fn().mockResolvedValue({ deletedCount: 3 }),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await deleteEntityConservative({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+      });
+
+      expect(result.deletedEntity).toBe(false);
+      expect(result.conflictDetected).toBe(true);
+      expect(result.conflictingRelationCount).toBe(3);
+      expect(result.deletedRelations).toBe(0);
+      // Should NOT have called deleteOne
+      expect(entitiesCol.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it("deletes entity with no relations and records audit", async () => {
+      const entityDoc = makeEntity();
+      const entitiesCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(entityDoc),
+        deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
+      });
+      const relationsCol = createMockCollection({
+        countDocuments: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ deletedCount: 0 }),
+      });
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockResolvedValue({ insertedId: "mut-1" }),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
+
+      const result = await deleteEntityConservative({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+      });
+
+      expect(result.deletedEntity).toBe(true);
+      expect(result.conflictDetected).toBe(false);
+      expect(result.deletedRelations).toBe(0);
+      expect(result.auditRecorded).toBe(true);
+    });
+
+    it("deletes entity with relations when force=true and records audit", async () => {
+      const entityDoc = makeEntity();
+      const entitiesCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(entityDoc),
+        deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
+      });
+      const relationsCol = createMockCollection({
+        countDocuments: vi.fn().mockResolvedValue(5),
+        deleteMany: vi.fn().mockResolvedValue({ deletedCount: 5 }),
+      });
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockResolvedValue({ insertedId: "mut-1" }),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
+
+      const result = await deleteEntityConservative({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+        force: true,
+      });
+
+      expect(result.deletedEntity).toBe(true);
+      expect(result.conflictDetected).toBe(false);
+      expect(result.deletedRelations).toBe(5);
+      expect(result.auditRecorded).toBe(true);
+    });
+
+    it("returns not-found when entity does not exist", async () => {
+      const entitiesCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(null),
+        deleteOne: vi.fn().mockResolvedValue({ deletedCount: 0 }),
+      });
+      const relationsCol = createMockCollection({
+        countDocuments: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ deletedCount: 0 }),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await deleteEntityConservative({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-nonexistent",
+        agentId: "agent-1",
+      });
+
+      expect(result.deletedEntity).toBe(false);
+      expect(result.conflictDetected).toBe(false);
+      expect(result.deletedRelations).toBe(0);
+      expect(result.auditRecorded).toBe(false);
+    });
+
+    it("still deletes when audit recording fails (fire-and-forget)", async () => {
+      const entityDoc = makeEntity();
+      const entitiesCol = createMockCollection({
+        findOne: vi.fn().mockResolvedValue(entityDoc),
+        deleteOne: vi.fn().mockResolvedValue({ deletedCount: 1 }),
+      });
+      const relationsCol = createMockCollection({
+        countDocuments: vi.fn().mockResolvedValue(0),
+        deleteMany: vi.fn().mockResolvedValue({ deletedCount: 0 }),
+      });
+      // Mutations collection throws on insertOne (audit failure)
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockRejectedValue(new Error("audit write failed")),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
+
+      const result = await deleteEntityConservative({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+      });
+
+      // Deletion still succeeded despite audit failure
+      expect(result.deletedEntity).toBe(true);
+      expect(result.conflictDetected).toBe(false);
+      expect(result.auditRecorded).toBe(false);
     });
   });
 });

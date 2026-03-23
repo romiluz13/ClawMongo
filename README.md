@@ -42,24 +42,36 @@ ClawMongo is **not** a memory library. It is a complete personal AI assistant wi
 
 MongoDB is uniquely suited for agent memory because it combines document flexibility, vector search, full-text search, graph traversal, and operational guarantees in a single platform. No other database offers all of these without bolting on external services.
 
-ClawMongo uses 14 MongoDB capabilities. Each one solves a specific agent memory problem:
+ClawMongo uses 26 MongoDB capabilities. Each one solves a specific agent memory problem:
 
-| #   | Capability                 | Why It Matters                                                                 | How It Works                                                                                         |
-| --- | -------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| 1   | **Automated Embeddings**   | No application-side embedding code, no batch jobs, no model version management | mongot calls Voyage AI API at index time and query time via `autoEmbed`                              |
-| 2   | **Vector Search**          | Semantic recall over conversation history and knowledge base                   | `$vectorSearch` with HNSW indexing on `voyage-4-large` (1024 dimensions)                             |
-| 3   | **Full-Text Search**       | Keyword recall when the user asks for exact terms                              | mongot text indexes with Lucene standard analyzer                                                    |
-| 4   | **Hybrid Search**          | Neither vector nor keyword alone is sufficient for agent memory                | `$rankFusion` / `$scoreFusion` (MongoDB 8.0+/8.2+), with manual RRF fallback                         |
-| 5   | **Knowledge Graph**        | Agents need to traverse relationships, not just match strings                  | `$graphLookup` with bi-directional expansion via `$facet`                                            |
-| 6   | **Event-Sourcing**         | Every write must be auditable and replayable                                   | Canonical `events` collection with derived projections (chunks, entities, episodes)                  |
-| 7   | **Schema Validation**      | Garbage in, garbage out -- agent memory must be structurally consistent        | JSON Schema (`$jsonSchema`) on all 17 validated collections                                          |
-| 8   | **Change Streams**         | Multiple gateway instances must stay in sync                                   | Real-time cross-instance notification via MongoDB change streams                                     |
-| 9   | **TTL Indexes**            | Embedding caches and telemetry data should expire automatically                | `expireAfterSeconds` on `embedding_cache`, `relevance_runs`, `relevance_artifacts`                   |
-| 10  | **Multi-Tenant Isolation** | One database, many agents, zero data leakage                                   | Compound indexes with `agentId` prefix + `$graphLookup` `restrictSearchWithMatch`                    |
-| 11  | **Idempotent Upserts**     | Network retries and replays must not corrupt memory                            | `$setOnInsert` for creation-time fields + `$set` for mutable fields on unique compound keys          |
-| 12  | **Relevance Telemetry**    | You cannot improve retrieval quality without measuring it                      | `explain`-driven diagnostics across `relevance_runs`, `relevance_artifacts`, `relevance_regressions` |
-| 13  | **Semantic Query Cache**   | Identical or near-identical queries skip the full retrieval pipeline           | SHA-256 exact match + `$vectorSearch` cosine >= 0.95, per-document TTL, fire-and-forget writes       |
-| 14  | **Time Series Telemetry**  | Operational visibility into every memory operation with automatic retention    | Time series collection with `granularity: "seconds"`, P50/P95/P99 latency, cache hit rates           |
+| #   | Capability                      | Why It Matters                                                                 | How It Works                                                                                             |
+| --- | ------------------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| 1   | **Automated Embeddings**        | No application-side embedding code, no batch jobs, no model version management | mongot calls Voyage AI API at index time and query time via `autoEmbed`                                  |
+| 2   | **Vector Search**               | Semantic recall over conversation history and knowledge base                   | `$vectorSearch` with HNSW indexing on `voyage-4-large` (1024 dimensions)                                 |
+| 3   | **Full-Text Search**            | Keyword recall when the user asks for exact terms                              | mongot text indexes with Lucene standard analyzer                                                        |
+| 4   | **Hybrid Search**               | Neither vector nor keyword alone is sufficient for agent memory                | `$rankFusion` / `$scoreFusion` (MongoDB 8.0+/8.2+), with manual RRF fallback                             |
+| 5   | **Knowledge Graph**             | Agents need to traverse relationships, not just match strings                  | `$graphLookup` with bi-directional expansion via `$facet`                                                |
+| 6   | **Event-Sourcing**              | Every write must be auditable and replayable                                   | Canonical `events` collection with derived projections (chunks, entities, episodes)                      |
+| 7   | **Schema Validation**           | Garbage in, garbage out -- agent memory must be structurally consistent        | JSON Schema (`$jsonSchema`) on all 18 validated collections                                              |
+| 8   | **Change Streams**              | Multiple gateway instances must stay in sync                                   | Real-time cross-instance notification via MongoDB change streams                                         |
+| 9   | **TTL Indexes**                 | Embedding caches and telemetry data should expire automatically                | `expireAfterSeconds` on `embedding_cache`, `relevance_runs`, `relevance_artifacts`                       |
+| 10  | **Multi-Tenant Isolation**      | One database, many agents, zero data leakage                                   | Compound indexes with `agentId` prefix + `$graphLookup` `restrictSearchWithMatch`                        |
+| 11  | **Idempotent Upserts**          | Network retries and replays must not corrupt memory                            | `$setOnInsert` for creation-time fields + `$set` for mutable fields on unique compound keys              |
+| 12  | **Relevance Telemetry**         | You cannot improve retrieval quality without measuring it                      | `explain`-driven diagnostics across `relevance_runs`, `relevance_artifacts`, `relevance_regressions`     |
+| 13  | **Semantic Query Cache**        | Identical or near-identical queries skip the full retrieval pipeline           | SHA-256 exact match + `$vectorSearch` cosine >= 0.95, per-document TTL, fire-and-forget writes           |
+| 14  | **Time Series Telemetry**       | Operational visibility into every memory operation with automatic retention    | Time series collection with `granularity: "seconds"`, P50/P95/P99 latency, cache hit rates               |
+| 15  | **Profile Synthesis**           | Dynamic agent profile from structured memory, entities, episodes, and events   | `$facet` + `$lookup` aggregation across 5 collections, ~5-50ms                                           |
+| 16  | **Cross-Encoder Re-ranking**    | Voyage rerank-2.5 precision pass on search results with instruction-following  | Two-stage: `$vectorSearch` recall then rerank-2.5 precision, 8-11% accuracy boost with instructions      |
+| 17  | **Query Rewriting**             | Synonym expansion for improved vector search recall on terse queries           | Deterministic abbreviation + synonym expansion before embedding, planner sees original query             |
+| 18  | **Pluggable Entity Extraction** | Regex default with LLM upgrade path for richer knowledge graphs                | `EntityExtractor` interface, `RegexEntityExtractor` + `LLMEntityExtractor` with timeout + fallback       |
+| 19  | **Mutation Audit Trail**        | Every memory write tracked with before/after snapshots                         | `memory_mutations` collection, fire-and-forget `recordMutation`, 90-day TTL auto-cleanup                 |
+| 20  | **Status Lifecycle**            | Episodes and chunks have active/archived/deleted states                        | `status` field + `{ $ne: "deleted" }` filter on all query paths (backward compatible with existing data) |
+| 21  | **Procedural Memory Evolution** | Procedures track version history, success/fail counts                          | Atomic `$inc` counters + `$push` with `$slice: -20` for bounded evolution history                        |
+| 22  | **Conservative Graph Deletion** | Conflict detection prevents accidental data loss in knowledge graphs           | Relation count check before delete, `force` override, audit trail on every deletion                      |
+| 23  | **Working Memory Bounds**       | Configurable session event capacity for context window management              | `$sort` + `$limit` optimization (MongoDB coalesces adjacent stages), default 50 events                   |
+| 24  | **Temporal Grounding**          | Entity extraction captures dates and times as first-class concepts             | `DATE_REGEX` patterns + `extractedAt` timestamps on entities, dates stored as type "concept"             |
+| 25  | **Role-Based Extraction**       | Separate extraction prompts for user vs assistant messages                     | `buildUserExtractionPrompt` / `buildAssistantExtractionPrompt` + `sourceRole` tracking on entities       |
+| 26  | **Tiered Retrieval**            | IDs-only projection mode for 10x token reduction in large memory spaces        | `$project` after `$vectorSearch` returns lightweight results, full content fetched on demand             |
 
 For the full technical deep-dive on each capability with code examples: [MongoDB Capabilities in ClawMongo](docs/reference/mongodb-capabilities.md)
 
@@ -84,7 +96,7 @@ For the full technical deep-dive on each capability with code examples: [MongoDB
 | Multi-tenant isolation | Filesystem separation                 | Compound indexes with agentId prefix                                         |
 | Operational visibility | Limited                               | Ingest runs, projection runs, relevance telemetry, time series observability |
 | Query caching          | None                                  | Two-tier semantic cache (SHA-256 exact + cosine similarity)                  |
-| Data model             | Flat files + SQLite rows              | 22 collections, 58 indexes                                                   |
+| Data model             | Flat files + SQLite rows              | 23 collections, 66 indexes + 9 search indexes                                |
 
 **Decision rule:** If your workload is one user with small memory files, OpenClaw's default memory is fine. If you need retrieval quality SLOs, operational visibility, knowledge graphs, or team-scale agent memory, ClawMongo is the practical path.
 
@@ -101,31 +113,32 @@ Write Path:
   Message / tool output -> writeEventAndProject()
                            +-> events       (canonical, append-only)
                            +-> chunks       (projected, searchable)
-                           +-> ingest_runs  (audit trail)
-                           +-> extractAndUpsertEntities()
-                                +-> entities   (@mentions, #tags, URLs, quoted names)
+                           +-> ingest_runs  (operational audit)
+                           +-> extractAndUpsertEntities(role)
+                                +-> entities   (@mentions, #tags, URLs, dates, quoted names)
                                 +-> relations  (links between entities, weighted)
+                                +-> memory_mutations (before/after snapshots, 90-day TTL)
                            +-> checkAutoEpisodeTriggers()
-                                +-> episodes   (materialized from event windows)
+                                +-> episodes   (materialized, status lifecycle)
 
 Retrieval Path:
   Query -> checkCache() -> HIT? return cached results
                         -> MISS -> planRetrieval() -> score 8 paths by keyword heuristics
            +-> active-critical  (high-salience recent)
            +-> structured       (facts, preferences)
-           +-> episodic         (summarized threads)
-           +-> graph            ($graphLookup traversal)
+           +-> episodic         (summarized threads, status-filtered)
+           +-> graph            ($graphLookup, conservative delete)
            +-> kb               (knowledge base docs)
            +-> hybrid           ($rankFusion vector+text)
-           +-> raw-window       (recent events)
-           +-> procedural       (workflows)
-           -> rerankResults() -> deduplicate -> writeCache() -> return to agent
+           +-> raw-window       (bounded working memory, $sort+$limit)
+           +-> procedural       (versioned workflows, success tracking)
+           -> crossEncoderRerank() -> deduplicate -> writeCache() -> return to agent
 
 Observability:
   All paths emit to memory_telemetry (time series, fire-and-forget, 7-day TTL)
 ```
 
-### 22 Collections
+### 23 Collections
 
 | Group               | Collections                                                      |
 | ------------------- | ---------------------------------------------------------------- |
@@ -137,9 +150,10 @@ Observability:
 | v2 event system     | `events`, `entities`, `relations`, `entity_links`, `episodes`    |
 | Operational         | `ingest_runs`, `projection_runs`                                 |
 | Query cache         | `query_cache`                                                    |
+| Audit trail         | `memory_mutations` (90-day TTL)                                  |
 | Observability       | `memory_telemetry` (time series)                                 |
 
-All backed by **58 standard indexes** and **up to 9 MongoDB Search indexes** (4 text + 5 vector autoEmbed).
+All backed by **66 standard indexes** and **up to 9 MongoDB Search indexes** (4 text + 5 vector autoEmbed). Reranking via Voyage rerank-2.5 enabled by default (2s timeout, graceful fallback).
 
 ### 8 Retrieval Paths
 
@@ -156,13 +170,13 @@ The retrieval planner (`planRetrieval`) scores paths based on query analysis:
 | `kb`              | Reference material queries                                     |
 | `hybrid`          | Broad lexical + vector fallback                                |
 
-After retrieval, `rerankResults` applies source diversity penalty, episode boost, deduplication, and backstop execution.
+After retrieval, `crossEncoderRerank` (Voyage rerank-2.5, on by default) applies cross-encoder precision scoring with a 2-second timeout and graceful fallback, followed by `rerankResults` for source diversity, episode boost, deduplication, and backstop execution.
 
 ### Test Coverage
 
-- 205 v2 memory unit tests
-- 573 total memory tests
-- 53 live e2e tests against MongoDB 8.2 + Voyage AI
+- ~300 v2 memory unit tests
+- 1000+ total memory tests across 59 test files
+- 82 live e2e tests against real MongoDB 8.2 + Voyage AI (production-readiness suite)
 
 ---
 

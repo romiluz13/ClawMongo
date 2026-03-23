@@ -15,6 +15,7 @@ import {
   getEpisodesByType,
   searchEpisodes,
   checkAutoEpisodeTriggers,
+  getEpisodesByIds,
   type Episode,
   type EpisodeSummarizer,
 } from "./mongodb-episodes.js";
@@ -390,7 +391,7 @@ describe("mongodb-episodes", () => {
       expect(results[0].type).toBe("daily");
 
       const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(filter).toEqual({ agentId: AGENT_ID, type: "daily" });
+      expect(filter).toEqual({ agentId: AGENT_ID, type: "daily", status: { $ne: "deleted" } });
     });
   });
 
@@ -646,6 +647,120 @@ describe("mongodb-episodes", () => {
           agentId: AGENT_ID,
         }),
       ).rejects.toThrow("db read failed");
+    });
+  });
+
+  describe("status lifecycle", () => {
+    it("updateEpisodeStatus sets status field on episode", async () => {
+      const episodesCol = createMockCollection({
+        updateOne: vi.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const { updateEpisodeStatus } = await import("./mongodb-episodes.js");
+      const result = await updateEpisodeStatus({
+        db,
+        prefix: PREFIX,
+        episodeId: "ep-1",
+        agentId: AGENT_ID,
+        status: "archived",
+      });
+
+      expect(result).toBe(true);
+      const [filter, update] = (episodesCol.updateOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter).toEqual({ episodeId: "ep-1", agentId: AGENT_ID });
+      expect(update).toEqual({ $set: { status: "archived", updatedAt: expect.any(Date) } });
+    });
+
+    it("updateEpisodeStatus returns false when episode not found", async () => {
+      const episodesCol = createMockCollection({
+        updateOne: vi.fn().mockResolvedValue({ matchedCount: 0, modifiedCount: 0 }),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const { updateEpisodeStatus } = await import("./mongodb-episodes.js");
+      const result = await updateEpisodeStatus({
+        db,
+        prefix: PREFIX,
+        episodeId: "nonexistent",
+        agentId: AGENT_ID,
+        status: "deleted",
+      });
+
+      expect(result).toBe(false);
+    });
+
+    it("getEpisodesByTimeRange excludes deleted episodes", async () => {
+      const findResult = {
+        sort: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      };
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue(findResult),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await getEpisodesByTimeRange({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        start: new Date("2026-03-15T08:00:00Z"),
+        end: new Date("2026-03-15T11:00:00Z"),
+      });
+
+      const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter.status).toEqual({ $ne: "deleted" });
+    });
+
+    it("getEpisodesByType excludes deleted episodes", async () => {
+      const findResult = {
+        sort: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      };
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue(findResult),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await getEpisodesByType({
+        db,
+        prefix: PREFIX,
+        agentId: AGENT_ID,
+        type: "daily",
+      });
+
+      const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter.status).toEqual({ $ne: "deleted" });
+    });
+
+    it("searchEpisodes excludes deleted episodes", async () => {
+      const findResult = {
+        sort: vi.fn().mockReturnValue({
+          limit: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([]),
+          }),
+        }),
+      };
+      const episodesCol = createMockCollection({
+        find: vi.fn().mockReturnValue(findResult),
+      });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await searchEpisodes({
+        db,
+        prefix: PREFIX,
+        query: "standup",
+        agentId: AGENT_ID,
+      });
+
+      const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(filter.status).toEqual({ $ne: "deleted" });
     });
   });
 
@@ -1010,6 +1125,74 @@ describe("mongodb-episodes", () => {
 
       expect(result.triggered).toBe(false);
       expect(result.reason).toBe("insufficient_events");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tests: getEpisodesByIds (Phase 9 — Tiered Retrieval)
+  // ---------------------------------------------------------------------------
+
+  describe("getEpisodesByIds", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("returns episodes matching the given IDs", async () => {
+      const mockEpisodes: Partial<Episode>[] = [
+        { episodeId: "ep-1", title: "Episode 1", agentId: AGENT_ID },
+        { episodeId: "ep-2", title: "Episode 2", agentId: AGENT_ID },
+      ];
+
+      const toArrayFn = vi.fn().mockResolvedValue(mockEpisodes);
+      const findFn = vi.fn().mockReturnValue({ toArray: toArrayFn });
+      const episodesCol = createMockCollection({ find: findFn });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await getEpisodesByIds({
+        db,
+        prefix: PREFIX,
+        episodeIds: ["ep-1", "ep-2"],
+        agentId: AGENT_ID,
+      });
+
+      expect(result).toHaveLength(2);
+      expect(findFn).toHaveBeenCalledWith({
+        episodeId: { $in: ["ep-1", "ep-2"] },
+        agentId: AGENT_ID,
+      });
+    });
+
+    it("returns empty array for empty IDs", async () => {
+      const episodesCol = createMockCollection();
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      const result = await getEpisodesByIds({
+        db,
+        prefix: PREFIX,
+        episodeIds: [],
+        agentId: AGENT_ID,
+      });
+
+      expect(result).toEqual([]);
+    });
+
+    it("respects agentId filter", async () => {
+      const toArrayFn = vi.fn().mockResolvedValue([]);
+      const findFn = vi.fn().mockReturnValue({ toArray: toArrayFn });
+      const episodesCol = createMockCollection({ find: findFn });
+      const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
+
+      await getEpisodesByIds({
+        db,
+        prefix: PREFIX,
+        episodeIds: ["ep-1"],
+        agentId: "other-agent",
+      });
+
+      expect(findFn).toHaveBeenCalledWith({
+        episodeId: { $in: ["ep-1"] },
+        agentId: "other-agent",
+      });
     });
   });
 });

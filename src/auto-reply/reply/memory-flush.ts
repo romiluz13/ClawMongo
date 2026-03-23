@@ -13,22 +13,14 @@ export const DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
 
 const MEMORY_FLUSH_TARGET_HINT =
   "Store durable structured memories with memory_write only; do not use file writes for runtime memory.";
-const MEMORY_FLUSH_APPEND_ONLY_HINT =
-  "Use MEMORY.md and memory/*.md only as human-authored bridge notes; do not append agent-generated durable memory to them.";
 const MEMORY_FLUSH_READ_ONLY_HINT =
-  "Treat workspace bootstrap/reference files such as MEMORY.md, SOUL.md, TOOLS.md, and AGENTS.md as read-only during this flush; never overwrite, replace, or edit them.";
-const MEMORY_FLUSH_REQUIRED_HINTS = [
-  MEMORY_FLUSH_TARGET_HINT,
-  MEMORY_FLUSH_APPEND_ONLY_HINT,
-  MEMORY_FLUSH_READ_ONLY_HINT,
-];
+  "Treat workspace bootstrap files (SOUL.md, TOOLS.md, AGENTS.md) as read-only during this flush; never overwrite, replace, or edit them.";
+const MEMORY_FLUSH_REQUIRED_HINTS = [MEMORY_FLUSH_TARGET_HINT, MEMORY_FLUSH_READ_ONLY_HINT];
 
 export const DEFAULT_MEMORY_FLUSH_PROMPT = [
   "Pre-compaction memory flush.",
   MEMORY_FLUSH_TARGET_HINT,
   MEMORY_FLUSH_READ_ONLY_HINT,
-  MEMORY_FLUSH_APPEND_ONLY_HINT,
-  "do not overwrite or replace bridge note files.",
   "Write only durable facts, decisions, preferences, todos, people, projects, or architecture notes worth keeping.",
   `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
 ].join(" ");
@@ -38,7 +30,6 @@ export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
   "The session is near auto-compaction; capture durable memories in MongoDB.",
   MEMORY_FLUSH_TARGET_HINT,
   MEMORY_FLUSH_READ_ONLY_HINT,
-  MEMORY_FLUSH_APPEND_ONLY_HINT,
   `You may reply, but usually ${SILENT_REPLY_TOKEN} is correct.`,
 ].join(" ");
 

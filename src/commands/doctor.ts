@@ -60,7 +60,6 @@ import {
 import { maybeRepairUiProtocolFreshness } from "./doctor-ui.js";
 import { maybeOfferUpdateBeforeDoctor } from "./doctor-update.js";
 import { noteWorkspaceStatus } from "./doctor-workspace-status.js";
-import { MEMORY_SYSTEM_PROMPT, shouldSuggestMemorySystem } from "./doctor-workspace.js";
 import { noteOpenAIOAuthTlsPrerequisites } from "./oauth-tls-preflight.js";
 import { applyWizardMetadata, printWizardHeader, randomToken } from "./onboard-helpers.js";
 import { ensureSystemdUserLingerInteractive } from "./systemd-linger.js";
@@ -367,9 +366,6 @@ export async function doctorCommand(
   if (options.workspaceSuggestions !== false) {
     const workspaceDir = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
     noteWorkspaceBackupTip(workspaceDir);
-    if (await shouldSuggestMemorySystem(workspaceDir)) {
-      note(MEMORY_SYSTEM_PROMPT, "Workspace");
-    }
   }
 
   const finalSnapshot = await readConfigFileSnapshot();

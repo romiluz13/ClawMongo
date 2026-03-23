@@ -25,7 +25,7 @@ import {
   type Entity,
   type RelationType,
 } from "./mongodb-graph.js";
-import { normalizeSearchResults, type SearchMethod } from "./mongodb-hybrid.js";
+import { normalizeSearchResults, rrfScore, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
 import {
   recordIngestRun,
@@ -37,7 +37,9 @@ import {
 } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
 import { searchProcedures } from "./mongodb-procedures.js";
+import { synthesizeProfile, type ProfileSynthesis } from "./mongodb-profile.js";
 import { checkCache, writeCache } from "./mongodb-query-cache.js";
+import { rewriteQuery, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -47,6 +49,7 @@ import {
   type RelevanceSampleState,
   type RelevanceSourceScope,
 } from "./mongodb-relevance.js";
+import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";
 import {
   planRetrieval,
   type RetrievalPath,
@@ -507,6 +510,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     return {
       source: { $in: ["conversation", "sessions"] },
       agentId: this.agentId,
+      status: { $ne: "deleted" },
     };
   }
 
@@ -516,6 +520,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       agentId: this.agentId,
       scope: "workspace",
       scopeRef: this.workspaceScopeRef,
+      status: { $ne: "deleted" },
     };
   }
 
@@ -784,6 +789,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           bridgeMaxResults: this.getBridgeChunkBudget(maxResults),
           scope: "agent",
           scopeRef: this.agentScopeRef,
+          rerankConfig: mongoCfg.reranking,
+          queryRewriteConfig: mongoCfg.queryRewriting,
         },
       });
 
@@ -810,9 +817,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         this.setLastSearchMode("v2", v2Details);
         // Fire-and-forget cache write
         if (mongoCfg.cache.enabled) {
-          const ttlSec = mongoCfg.kb.enabled
-            ? mongoCfg.cache.kbTtlSec
-            : mongoCfg.cache.conversationTtlSec;
+          // H4 audit fix: derive TTL from actual paths executed (not static config)
+          const hasKbPath = v2.metadata.pathsExecuted.includes("kb");
+          const ttlSec = hasKbPath ? mongoCfg.cache.kbTtlSec : mongoCfg.cache.conversationTtlSec;
           writeCache({
             db: this.db,
             prefix: this.prefix,
@@ -1761,6 +1768,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const episode = await episodesCollection(this.db, this.prefix).findOne({
       agentId: this.agentId,
       episodeId,
+      status: { $ne: "deleted" },
     });
     if (!episode) {
       return {
@@ -2018,8 +2026,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const mongoCfg = this.config.mongodb!;
     const debounceMs = mongoCfg.watchDebounceMs;
     const watchPaths = new Set<string>([
-      path.join(this.workspaceDir, "MEMORY.md"),
-      path.join(this.workspaceDir, "memory.md"),
       path.join(this.workspaceDir, "memory"),
       ...this.extraMemoryPaths,
     ]);
@@ -2124,6 +2130,30 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
   async getDetailedStatus(): Promise<V2Status> {
     return getV2Status(this.db, this.prefix, this.agentId);
+  }
+
+  // C2-manager audit fix: synthesizeProfile delegation to standalone function
+  async synthesizeProfile(
+    params: {
+      scope?: MemoryScope;
+      scopeRef?: string;
+      maxPerType?: number;
+      maxEntities?: number;
+      maxEpisodes?: number;
+      activityWindowMs?: number;
+    } = {},
+  ): Promise<ProfileSynthesis> {
+    return synthesizeProfile({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      scope: params.scope ?? "agent",
+      scopeRef: params.scopeRef ?? this.agentScopeRef,
+      maxPerType: params.maxPerType,
+      maxEntities: params.maxEntities,
+      maxEpisodes: params.maxEpisodes,
+      activityWindowMs: params.activityWindowMs,
+    });
   }
 
   private enqueueDerivedWork(task: () => Promise<void>): void {
@@ -2363,6 +2393,7 @@ export async function writeEventAndProject(
     hash?: string;
     metadata?: Record<string, unknown>;
   },
+  options?: { extractor?: import("./mongodb-entity-extractor.js").EntityExtractor },
 ): Promise<{ eventId: string; chunksCreated: number }> {
   const startMs = Date.now();
   try {
@@ -2411,6 +2442,7 @@ export async function writeEventAndProject(
       scope: event.scope as MemoryScope,
       scopeRef: written.scopeRef,
       sourceEventId: written.eventId,
+      extractor: options?.extractor,
     }).catch((projErr) => {
       log.warn("entity projection failed during writeEventAndProject", { error: projErr });
     });
@@ -2468,6 +2500,8 @@ export type V2SearchMetadata = {
   plan: RetrievalPlan;
   pathsExecuted: RetrievalPath[];
   resultsByPath: Record<string, number>;
+  reranked?: boolean;
+  queryRewritten?: boolean;
 };
 
 function graphRelationPriority(type: RelationType): number {
@@ -2593,6 +2627,9 @@ export async function searchV2(
       scope?: MemoryScope;
       scopeRef?: string;
       allowHybridBackstop?: boolean;
+      rerankConfig?: RerankConfig;
+      queryRewriteConfig?: QueryRewriteConfig;
+      projection?: "full" | "ids-only";
     };
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
@@ -2606,6 +2643,7 @@ export async function searchV2(
     const conversationChunkFilter: Document = context.searchOptions?.conversationFilter ?? {
       source: { $in: ["conversation", "sessions"] },
       agentId,
+      status: { $ne: "deleted" },
     };
     const bridgeChunkFilter = context.searchOptions?.bridgeFilter;
     const maxResults = context.maxResults ?? 20;
@@ -2628,6 +2666,25 @@ export async function searchV2(
       hasEpisodes: context.hasEpisodes,
       hasGraphData: context.hasGraphData,
     });
+
+    // Rewrite query for search execution (NOT for planner or cache key):
+    const qrConfig = context.searchOptions?.queryRewriteConfig;
+    let searchQuery = query;
+    let wasQueryRewritten = false;
+    if (qrConfig?.enabled) {
+      const rewriteResult = await rewriteQuery({
+        db,
+        prefix,
+        agentId,
+        query,
+        config: qrConfig,
+      });
+      if (rewriteResult.rewritten) {
+        searchQuery = rewriteResult.rewrittenQuery;
+        wasQueryRewritten = true;
+      }
+    }
+
     const constrainedGraphCandidates =
       plan.constraints?.entities?.names && plan.constraints.entities.names.length > 0
         ? plan.constraints.entities.names
@@ -2661,6 +2718,8 @@ export async function searchV2(
     const results: MemorySearchResult[] = [];
     const pathsExecuted: RetrievalPath[] = [];
     const resultsByPath: Record<string, number> = {};
+    // C3 audit fix: track per-path results for RRF score normalization
+    const perPathResults: Record<string, MemorySearchResult[]> = {};
 
     // Execute the top planned paths first, but keep hybrid as the backstop when
     // specialized paths come back weak or empty.
@@ -2674,7 +2733,7 @@ export async function searchV2(
           case "active-critical": {
             const criticalHits = await searchStructuredMemory(
               structuredMemCollection(db, prefix),
-              query,
+              searchQuery,
               null,
               {
                 maxResults: context.maxResults ?? 10,
@@ -2695,7 +2754,7 @@ export async function searchV2(
           case "structured": {
             const structuredHits = await searchStructuredMemory(
               structuredMemCollection(db, prefix),
-              query,
+              searchQuery,
               null,
               {
                 maxResults: context.maxResults ?? 10,
@@ -2714,6 +2773,8 @@ export async function searchV2(
             break;
           }
           case "raw-window": {
+            // M2 audit fix: cap raw-window events at 50 to avoid unbounded result sets
+            const rawWindowLimit = 50;
             const events = await getEventsByTimeRange({
               db,
               prefix,
@@ -2722,6 +2783,7 @@ export async function searchV2(
               end: timeRange?.end ?? new Date(),
               scope,
               scopeRef: agentScopeRef,
+              limit: rawWindowLimit,
             });
             const recentFirst = [...events].toSorted(
               (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
@@ -2771,7 +2833,8 @@ export async function searchV2(
                     startLine: 0,
                     endLine: 0,
                     snippet: `${graph.rootEntity.name} ${c.relation.type} ${c.entity.name}`,
-                    score:
+                    score: Math.min(
+                      1.0,
                       Math.max(
                         0.25,
                         0.9 -
@@ -2779,6 +2842,7 @@ export async function searchV2(
                           i * 0.02 -
                           (4 - graphRelationPriority(c.relation.type)) * 0.05,
                       ) + Math.min(c.relation.weight ?? 0, 0.15),
+                    ),
                     source: "conversation" as MemorySource,
                   }));
                 }
@@ -2787,6 +2851,7 @@ export async function searchV2(
             break;
           }
           case "episodic": {
+            // Use original query for regex-based episodic search (synonym expansion breaks regex matching)
             const episodes = await searchEpisodes({
               db,
               prefix,
@@ -2810,7 +2875,7 @@ export async function searchV2(
           case "procedural": {
             const procedureHits = await searchProcedures(
               proceduresCollection(db, prefix),
-              query,
+              searchQuery,
               null,
               {
                 maxResults: context.maxResults ?? 10,
@@ -2832,7 +2897,7 @@ export async function searchV2(
             const searches: Array<Promise<MemorySearchResult[]>> = [];
             if (conversationChunkFilter) {
               searches.push(
-                mongoSearch(chunksCollection(db, prefix), query, null, {
+                mongoSearch(chunksCollection(db, prefix), searchQuery, null, {
                   maxResults: context.maxResults ?? 10,
                   minScore,
                   numCandidates,
@@ -2853,7 +2918,7 @@ export async function searchV2(
             }
             if (bridgeChunkFilter) {
               searches.push(
-                mongoSearch(chunksCollection(db, prefix), query, null, {
+                mongoSearch(chunksCollection(db, prefix), searchQuery, null, {
                   maxResults: bridgeMaxResults,
                   minScore,
                   numCandidates,
@@ -2876,7 +2941,7 @@ export async function searchV2(
             break;
           }
           case "kb": {
-            const kbHits = await searchKB(kbChunksCollection(db, prefix), query, null, {
+            const kbHits = await searchKB(kbChunksCollection(db, prefix), searchQuery, null, {
               maxResults: Math.max(3, Math.floor((context.maxResults ?? 10) / 3)),
               minScore,
               ...(kbFilter ? { filter: kbFilter } : {}),
@@ -2898,6 +2963,7 @@ export async function searchV2(
         if (pathResults.length > 0) {
           pathsExecuted.push(path);
           resultsByPath[path] = pathResults.length;
+          perPathResults[path] = pathResults;
           results.push(...pathResults);
         }
       } catch (pathErr) {
@@ -2916,7 +2982,7 @@ export async function searchV2(
       try {
         const procedureFallback = await searchProcedures(
           proceduresCollection(db, prefix),
-          query,
+          searchQuery,
           null,
           {
             maxResults: context.maxResults ?? 10,
@@ -2931,6 +2997,7 @@ export async function searchV2(
         if (procedureFallback.length > 0) {
           pathsExecuted.push("procedural");
           resultsByPath.procedural = procedureFallback.length;
+          perPathResults.procedural = procedureFallback;
           deduped = deduplicateSearchResults([...deduped, ...procedureFallback]);
         }
       } catch (err) {
@@ -2945,30 +3012,85 @@ export async function searchV2(
       deduped.length < Math.max(2, Math.ceil(maxResults / 3));
     if (needsHybridBackstop) {
       try {
-        const fallback = await searchV2(db, prefix, query, agentId, {
+        // Use searchQuery (already rewritten) for the backstop, but disable rewriting
+        // to prevent double-expansion (idempotent for synonyms but breaks future LLM/HyDE)
+        const fallback = await searchV2(db, prefix, searchQuery, agentId, {
           ...context,
           availablePaths: new Set(["hybrid"]),
           maxResults,
           searchOptions: {
             ...context.searchOptions,
             allowHybridBackstop: false,
+            queryRewriteConfig: undefined, // already rewritten — don't rewrite again
           },
         });
         if (fallback.results.length > 0) {
           pathsExecuted.push("hybrid");
           resultsByPath.hybrid = fallback.results.length;
+          perPathResults.hybrid = fallback.results;
           deduped = deduplicateSearchResults([...deduped, ...fallback.results]);
         }
       } catch (err) {
         log.warn(`searchV2 hybrid backstop failed: ${String(err)}`);
       }
     }
-    const reranked = rerankResults(deduped, query);
-    const finalResults = reranked.slice(0, maxResults);
+    // C3 audit fix: RRF score normalization across paths before reranking.
+    // Replace raw scores (incomparable across paths: vector 0-1, BM25 0-inf, episode 0.85-synthetic)
+    // with rank-based scores summed across paths. Uses existing rrfScore() from mongodb-hybrid.ts.
+    if (Object.keys(perPathResults).length > 1) {
+      const rrfMap = new Map<string, number>();
+      for (const [_pathName, pathRes] of Object.entries(perPathResults)) {
+        for (let rank = 0; rank < pathRes.length; rank++) {
+          const key = pathRes[rank].snippet;
+          rrfMap.set(key, (rrfMap.get(key) ?? 0) + rrfScore(rank + 1));
+        }
+      }
+      for (const r of deduped) {
+        const rrfVal = rrfMap.get(r.snippet);
+        if (rrfVal !== undefined) {
+          r.score = rrfVal;
+        }
+      }
+      deduped.sort((a, b) => b.score - a.score);
+    }
+
+    const heuristicReranked = rerankResults(deduped, query);
+
+    // Cross-encoder re-ranking via Voyage API (after heuristic, before final slice)
+    const rerankCfg = context.searchOptions?.rerankConfig;
+    let finalResults = heuristicReranked;
+    let wasReranked = false;
+    if (rerankCfg?.enabled) {
+      const rerankResult = await crossEncoderRerank({
+        db,
+        prefix,
+        agentId,
+        query,
+        results: heuristicReranked,
+        config: rerankCfg,
+      });
+      if (rerankResult.reranked) {
+        finalResults = rerankResult.results;
+        wasReranked = true;
+      }
+    }
+
+    const sliced = finalResults.slice(0, maxResults);
+
+    // Phase 9: Tiered retrieval — strip text for ids-only projection mode
+    const projectionMode = context.searchOptions?.projection ?? "full";
+    const projected =
+      projectionMode === "ids-only" ? sliced.map((r) => ({ ...r, snippet: "" })) : sliced;
 
     return {
-      results: finalResults,
-      metadata: { plan, pathsExecuted, resultsByPath },
+      results: projected,
+      metadata: {
+        plan,
+        pathsExecuted,
+        resultsByPath,
+        reranked: wasReranked,
+        queryRewritten: wasQueryRewritten,
+      },
     };
   } catch (err) {
     log.error("searchV2 failed", { query, error: err });

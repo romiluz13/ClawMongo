@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { type EntityExtractor, RegexEntityExtractor } from "./mongodb-entity-extractor.js";
+import { recordMutation } from "./mongodb-mutations.js";
 import { recordProjectionRun } from "./mongodb-ops.js";
 import {
   entitiesCollection,
@@ -25,7 +27,10 @@ export type EntityType =
   | "feature"
   | "issue"
   | "document"
-  | "custom";
+  | "custom"
+  | "location"
+  | "system"
+  | "concept";
 
 export type Entity = {
   entityId: string;
@@ -214,6 +219,26 @@ export async function upsertEntity(params: {
 
     const upserted = result.upsertedCount > 0;
     log.info(`entity ${upserted ? "created" : "updated"}: ${entity.entityId} name=${entity.name}`);
+
+    // Fire-and-forget: record mutation audit trail (non-blocking)
+    Promise.allSettled([
+      recordMutation({
+        db,
+        prefix,
+        mutation: {
+          collectionName: "entities",
+          documentId: entity.entityId,
+          operation: upserted ? "create" : "update",
+          agentId: entity.agentId,
+          oldValue: null,
+          newValue: setDoc,
+          actorRole: "system",
+        },
+      }),
+    ]).catch((err) => {
+      log.warn(`entity audit failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     return { upserted };
   } catch (err) {
     log.error(`upsertEntity failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -273,6 +298,26 @@ export async function upsertRelation(params: {
     log.info(
       `relation ${upserted ? "created" : "updated"}: ${relation.fromEntityId} -[${relation.type}]-> ${relation.toEntityId}`,
     );
+
+    // Fire-and-forget: record mutation audit trail (non-blocking)
+    Promise.allSettled([
+      recordMutation({
+        db,
+        prefix,
+        mutation: {
+          collectionName: "relations",
+          documentId: `${relation.fromEntityId}:${relation.toEntityId}`,
+          operation: upserted ? "create" : "update",
+          agentId: relation.agentId,
+          oldValue: null,
+          newValue: setDoc,
+          actorRole: "system",
+        },
+      }),
+    ]).catch((err) => {
+      log.warn(`relation audit failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
     return { upserted };
   } catch (err) {
     log.error(`upsertRelation failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -411,7 +456,7 @@ export async function getEntityLinks(params: {
 
   const docs = await collection
     .find(filter)
-    .sort({ confidence: -1, updatedAt: -1 })
+    .toSorted({ confidence: -1, updatedAt: -1 })
     .limit(limit ?? 50)
     .toArray();
   return docs as unknown as EntityLink[];
@@ -796,79 +841,127 @@ export async function deleteEntity(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Conservative delete entity (conflict detection + audit trail)
+// ---------------------------------------------------------------------------
+
+/**
+ * Safe wrapper around `deleteEntity` that checks for conflicting relations
+ * before proceeding. If the entity has relations and `force` is not set,
+ * the delete is blocked and the conflict is reported.
+ *
+ * When the delete proceeds:
+ * - The entity doc is read first (for audit oldValue snapshot)
+ * - `deleteEntity` is called (cascade deletes relations)
+ * - A mutation audit record is written (fire-and-forget)
+ *
+ * Audit failures never prevent the deletion from succeeding.
+ */
+export async function deleteEntityConservative(params: {
+  db: Db;
+  prefix: string;
+  entityId: string;
+  agentId: string;
+  force?: boolean;
+}): Promise<{
+  deletedEntity: boolean;
+  deletedRelations: number;
+  conflictDetected: boolean;
+  conflictingRelationCount?: number;
+  auditRecorded: boolean;
+}> {
+  const { db, prefix, entityId, agentId, force } = params;
+  try {
+    const entCol = entitiesCollection(db, prefix);
+    const relCol = relationsCollection(db, prefix);
+
+    // 1. Check for conflicting relations
+    const relationCount = await relCol.countDocuments({
+      $or: [{ fromEntityId: entityId }, { toEntityId: entityId }],
+      agentId,
+    });
+
+    // 2. If relations exist and force is not true, block the delete
+    if (relationCount > 0 && force !== true) {
+      log.info(
+        `deleteEntityConservative: blocked deletion of entity=${entityId} — ${relationCount} conflicting relation(s)`,
+      );
+      return {
+        deletedEntity: false,
+        deletedRelations: 0,
+        conflictDetected: true,
+        conflictingRelationCount: relationCount,
+        auditRecorded: false,
+      };
+    }
+
+    // 3. Read entity doc before delete (for audit oldValue snapshot)
+    const entityDoc = await entCol.findOne({ entityId, agentId });
+    if (!entityDoc) {
+      log.info(`deleteEntityConservative: entity=${entityId} not found for agent=${agentId}`);
+      return {
+        deletedEntity: false,
+        deletedRelations: 0,
+        conflictDetected: false,
+        auditRecorded: false,
+      };
+    }
+
+    // 4. Proceed with delete via existing deleteEntity
+    const deleteResult = await deleteEntity({ db, prefix, entityId, agentId });
+
+    // 5. Fire-and-forget audit record
+    let auditRecorded = false;
+    try {
+      const [auditResult] = await Promise.allSettled([
+        recordMutation({
+          db,
+          prefix,
+          mutation: {
+            collectionName: "entities",
+            documentId: entityId,
+            operation: "delete",
+            agentId,
+            oldValue: entityDoc as unknown as Document,
+            newValue: null,
+            actorRole: "system",
+          },
+        }),
+      ]);
+      auditRecorded = auditResult.status === "fulfilled";
+    } catch (err) {
+      log.warn(
+        `deleteEntityConservative audit failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    log.info(
+      `deleteEntityConservative: deleted entity=${entityId}, relations=${deleteResult.deletedRelations}, audit=${auditRecorded}`,
+    );
+
+    return {
+      deletedEntity: deleteResult.deletedEntity,
+      deletedRelations: deleteResult.deletedRelations,
+      conflictDetected: false,
+      auditRecorded,
+    };
+  } catch (err) {
+    log.error(
+      `deleteEntityConservative failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Rule-based entity extraction
 // ---------------------------------------------------------------------------
 
-// Stop words for quoted name filtering
-const STOP_WORDS = new Set([
-  "the",
-  "a",
-  "an",
-  "is",
-  "are",
-  "was",
-  "were",
-  "be",
-  "been",
-  "being",
-  "have",
-  "has",
-  "had",
-  "do",
-  "does",
-  "did",
-  "will",
-  "would",
-  "could",
-  "should",
-  "may",
-  "might",
-  "can",
-  "shall",
-  "must",
-  "need",
-  "not",
-  "and",
-  "or",
-  "but",
-  "if",
-  "then",
-  "else",
-  "when",
-  "where",
-  "how",
-  "what",
-  "which",
-  "who",
-  "whom",
-  "this",
-  "that",
-  "these",
-  "those",
-  "it",
-  "its",
-  "i",
-  "me",
-  "my",
-  "we",
-  "our",
-  "you",
-  "your",
-  "he",
-  "she",
-  "him",
-  "her",
-  "they",
-  "them",
-  "their",
-]);
+// STOP_WORDS: canonical source is now mongodb-entity-extractor.ts
+// Previously defined inline here, now imported by RegexEntityExtractor
 
-// Regex patterns for structural entity extraction
-const MENTION_REGEX = /@(\w{3,})/g;
-const TAG_REGEX = /#(\w{3,})/g;
-const URL_REGEX = /https?:\/\/[^\s)]+/g;
-const FILE_PATH_REGEX = /(?:^|\s)((?:[\w.-]+\/)+[\w.-]+\.\w+)/g;
-const QUOTED_NAME_REGEX = /"([^"]{3,})"/g;
+// Default entity extractor instance (shared, stateless)
+// Regex patterns now live in RegexEntityExtractor (mongodb-entity-extractor.ts)
+const defaultExtractor = new RegexEntityExtractor();
 
 function makeEntityId(
   name: string,
@@ -887,8 +980,7 @@ type ExtractedEntity = { entityId: string; name: string; type: EntityType };
 
 /**
  * Extract structural entities from event content and upsert them.
- * Regex patterns: @mentions->person, #tags->topic, URLs->document,
- * file paths->document, "quoted names"->person.
+ * Uses a pluggable EntityExtractor (defaults to RegexEntityExtractor).
  *
  * Deterministic entityIds via hash of name.toLowerCase() + type.
  * Fire-and-forget: caller decides whether to await.
@@ -902,57 +994,26 @@ export async function extractAndUpsertEntities(params: {
   scope: MemoryScope;
   scopeRef?: string;
   sourceEventId?: string;
+  extractor?: EntityExtractor;
+  role?: "user" | "assistant" | "system" | "tool";
 }): Promise<{ entities: ExtractedEntity[]; relationsCreated: number }> {
-  const { db, prefix, agentId, eventContent, scope, sourceEventId } = params;
+  const { db, prefix, agentId, eventContent, scope, sourceEventId, role } = params;
   const startMs = Date.now();
   const scopeRef = resolveScopeRef({ scope, scopeRef: params.scopeRef, agentId });
 
-  const extracted: ExtractedEntity[] = [];
-  const seen = new Set<string>(); // dedup by entityId
+  // Use provided extractor or default to RegexEntityExtractor
+  const extractor = params.extractor ?? defaultExtractor;
+  const extractorContext = role ? { agentId, scope, scopeRef, role } : undefined;
+  const extractorResults = await extractor.extract(eventContent, extractorContext);
 
-  // Helper to add an entity (dedup by entityId)
-  function addEntity(name: string, type: EntityType): void {
-    const entityId = makeEntityId(name, type, agentId, scope, scopeRef);
+  // Bridge: compute entityId for each extracted entity (existing makeEntityId logic)
+  const extracted: ExtractedEntity[] = [];
+  const seen = new Set<string>();
+  for (const r of extractorResults) {
+    const entityId = makeEntityId(r.name, r.type, agentId, scope, scopeRef);
     if (!seen.has(entityId)) {
       seen.add(entityId);
-      extracted.push({ entityId, name, type });
-    }
-  }
-
-  // 1. @mentions -> person
-  for (const match of eventContent.matchAll(MENTION_REGEX)) {
-    const name = match[1];
-    if (name && !STOP_WORDS.has(name.toLowerCase())) {
-      addEntity(name, "person");
-    }
-  }
-
-  // 2. #tags -> topic
-  for (const match of eventContent.matchAll(TAG_REGEX)) {
-    const name = match[1];
-    if (name && !STOP_WORDS.has(name.toLowerCase())) {
-      addEntity(name, "topic");
-    }
-  }
-
-  // 3. URLs -> document
-  for (const match of eventContent.matchAll(URL_REGEX)) {
-    addEntity(match[0], "document");
-  }
-
-  // 4. File paths -> document
-  for (const match of eventContent.matchAll(FILE_PATH_REGEX)) {
-    const filePath = match[1];
-    if (filePath) {
-      addEntity(filePath, "document");
-    }
-  }
-
-  // 5. "Quoted names" -> person (min 3 chars, stop-word filtered)
-  for (const match of eventContent.matchAll(QUOTED_NAME_REGEX)) {
-    const name = match[1];
-    if (name && name.trim().length >= 3 && !STOP_WORDS.has(name.toLowerCase().trim())) {
-      addEntity(name.trim(), "person");
+      extracted.push({ entityId, name: r.name, type: r.type as EntityType });
     }
   }
 
@@ -984,64 +1045,147 @@ export async function extractAndUpsertEntities(params: {
     return { entities: [], relationsCreated: 0 };
   }
 
-  // Upsert entities
+  // H1 audit fix: batch upsert entities via bulkWrite (replaces sequential upsertEntity loop)
   try {
-    for (const entity of extracted) {
-      await upsertEntity({
-        db,
-        prefix,
-        entity: {
-          entityId: entity.entityId,
-          name: entity.name,
-          type: entity.type,
-          agentId,
-          scope,
-          scopeRef,
-          updatedAt: new Date(),
-          ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
+    const now = new Date();
+    // Resolve sourceRole for entity upserts (Phase 8: role-based extraction)
+    const validSourceRole = role === "user" || role === "assistant" ? role : undefined;
+    const entityOps = extracted.map((entity) => ({
+      updateOne: {
+        filter: { entityId: entity.entityId, agentId, scope, scopeRef },
+        update: {
+          $set: {
+            entityId: entity.entityId,
+            name: entity.name,
+            type: entity.type,
+            agentId,
+            scope,
+            scopeRef,
+            updatedAt: now,
+            ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
+            ...(validSourceRole ? { sourceRole: validSourceRole } : {}),
+          },
+          $setOnInsert: {
+            createdAt: now,
+            extractedAt: now,
+          },
         },
-      });
+        upsert: true,
+      },
+    }));
+    if (entityOps.length > 0) {
+      try {
+        await entitiesCollection(db, prefix).bulkWrite(entityOps, { ordered: false });
+      } catch (bulkErr) {
+        log.warn("bulkWrite entity upserts partial failure", { error: bulkErr });
+      }
     }
 
-    // Create relationship edges and explicit, auditable entity-link records
-    // without collapsing identity into one hidden canonical entity.
+    // H1 audit fix: batch relation + entity-link upserts (replaces sequential loops)
     let relationsCreated = 0;
     if (extracted.length >= 2) {
+      const relationOps: Array<{
+        updateOne: {
+          filter: Record<string, unknown>;
+          update: Record<string, unknown>;
+          upsert: boolean;
+        };
+      }> = [];
+      const linkOps: Array<{
+        updateOne: {
+          filter: Record<string, unknown>;
+          update: Record<string, unknown>;
+          upsert: boolean;
+        };
+      }> = [];
+
       for (let i = 0; i < extracted.length - 1 && i < 5; i++) {
         for (let j = i + 1; j < extracted.length && j < 6; j++) {
           const link = inferEntityLinkType(extracted[i], extracted[j]);
-          await upsertEntityLink({
-            db,
-            prefix,
-            link: {
-              fromEntityId: extracted[i].entityId,
-              toEntityId: extracted[j].entityId,
-              linkType: link.linkType,
-              status: "active",
-              confidence: link.confidence,
-              provenance: link.provenance,
-              agentId,
-              scope,
-              scopeRef,
-              ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
+          const pair = canonicalizeEntityPair(extracted[i].entityId, extracted[j].entityId);
+          const linkId = makeEntityLinkId({
+            ...pair,
+            linkType: link.linkType,
+            agentId,
+            scope,
+            scopeRef,
+          });
+
+          // Entity link op (same 6-field filter as upsertEntityLink)
+          linkOps.push({
+            updateOne: {
+              filter: {
+                agentId,
+                scope,
+                scopeRef,
+                fromEntityId: pair.fromEntityId,
+                toEntityId: pair.toEntityId,
+                linkType: link.linkType,
+              },
+              update: {
+                $set: {
+                  linkId,
+                  ...pair,
+                  linkType: link.linkType,
+                  status: "active",
+                  confidence: link.confidence,
+                  agentId,
+                  scope,
+                  scopeRef,
+                  updatedAt: now,
+                  ...(link.provenance ? { provenance: link.provenance } : {}),
+                  ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
+                },
+                $setOnInsert: { createdAt: now },
+              },
+              upsert: true,
             },
           });
-          await upsertRelation({
-            db,
-            prefix,
-            relation: {
-              fromEntityId: extracted[i].entityId,
-              toEntityId: extracted[j].entityId,
-              type: "mentioned_with",
-              weight: 0.2,
-              agentId,
-              scope,
-              scopeRef,
-              updatedAt: new Date(),
-              ...(sourceEventId && { sourceEventIds: [sourceEventId] }),
+
+          // Relation op (same filter as upsertRelation)
+          relationOps.push({
+            updateOne: {
+              filter: {
+                fromEntityId: extracted[i].entityId,
+                toEntityId: extracted[j].entityId,
+                type: "mentioned_with",
+                agentId,
+                scope,
+                scopeRef,
+              },
+              update: {
+                $set: {
+                  fromEntityId: extracted[i].entityId,
+                  toEntityId: extracted[j].entityId,
+                  type: "mentioned_with",
+                  weight: 0.2,
+                  agentId,
+                  scope,
+                  scopeRef,
+                  updatedAt: now,
+                  ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
+                },
+                $setOnInsert: { createdAt: now },
+              },
+              upsert: true,
             },
           });
           relationsCreated++;
+        }
+      }
+
+      if (relationOps.length > 0) {
+        try {
+          await relationsCollection(db, prefix).bulkWrite(relationOps, { ordered: false });
+        } catch (bulkErr) {
+          log.warn("bulkWrite relation upserts partial failure", { error: bulkErr });
+        }
+      }
+      if (linkOps.length > 0) {
+        try {
+          await entityLinksCollection(db, prefix).bulkWrite(linkOps, { ordered: false });
+        } catch (bulkErr) {
+          log.warn("bulkWrite entity-link upserts partial failure", { error: bulkErr });
         }
       }
     }
@@ -1049,6 +1193,16 @@ export async function extractAndUpsertEntities(params: {
     log.info(
       `extracted ${extracted.length} entities and ${relationsCreated} relations from event content for agent=${agentId}`,
     );
+
+    // H6 audit fix: emit entity-extraction telemetry
+    emitTelemetry(db, prefix, {
+      meta: { agentId, operation: "entity-extraction" },
+      durationMs: Date.now() - startMs,
+      ok: true,
+      extractionMethod: extractorResults[0]?.extractionMethod ?? "regex",
+      entitiesExtracted: extracted.length,
+    });
+
     await Promise.allSettled([
       recordProjectionRun({
         db,
@@ -1075,6 +1229,15 @@ export async function extractAndUpsertEntities(params: {
     ]);
     return { entities: extracted, relationsCreated };
   } catch (err) {
+    // H6 audit fix: emit entity-extraction telemetry on failure
+    emitTelemetry(db, prefix, {
+      meta: { agentId, operation: "entity-extraction" },
+      durationMs: Date.now() - startMs,
+      ok: false,
+      extractionMethod: extractor instanceof RegexEntityExtractor ? "regex" : "llm",
+      entitiesExtracted: 0,
+    });
+
     await Promise.allSettled([
       recordProjectionRun({
         db,

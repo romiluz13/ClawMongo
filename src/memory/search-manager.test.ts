@@ -47,7 +47,19 @@ function makeConfig(overrides?: Partial<ResolvedMongoDBConfig>): ResolvedMongoDB
       benchmark: { enabled: false, datasetPath: "" },
     },
     episodes: { enabled: false, minEventsForEpisode: 10 },
-    graph: { enabled: false, maxGraphDepth: 2 },
+    graph: {
+      enabled: false,
+      maxGraphDepth: 2,
+      entityExtraction: { method: "regex" as const, model: undefined, timeoutMs: 5000 },
+    },
+    queryRewriting: { enabled: false, method: "synonym-expansion" as const, maxTokens: 128 },
+    reranking: {
+      enabled: false,
+      model: "rerank-2.5" as const,
+      topN: 20,
+      minScore: 0.1,
+      voyageApiKey: "",
+    },
     cache: { enabled: true, conversationTtlSec: 300, kbTtlSec: 3600, similarityThreshold: 0.95 },
     sources: {
       reference: { enabled: true },

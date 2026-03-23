@@ -568,13 +568,15 @@ describe("MongoDB runtime write e2e", () => {
       },
     });
 
+    await fs.mkdir(path.join(workspaceA, "memory"), { recursive: true });
     await fs.writeFile(
-      path.join(workspaceA, "MEMORY.md"),
+      path.join(workspaceA, "memory", "note.md"),
       `Workspace A note ${markerA}\n`,
       "utf-8",
     );
+    await fs.mkdir(path.join(workspaceB, "memory"), { recursive: true });
     await fs.writeFile(
-      path.join(workspaceB, "MEMORY.md"),
+      path.join(workspaceB, "memory", "note.md"),
       `Workspace B note ${markerB}\n`,
       "utf-8",
     );
@@ -615,8 +617,8 @@ describe("MongoDB runtime write e2e", () => {
     const leakIntoA = await managerA.search(markerB, { maxResults: 5, minScore: 0 });
     const leakIntoB = await managerB.search(markerA, { maxResults: 5, minScore: 0 });
 
-    expect(resultsA.some((result) => result.path === "MEMORY.md")).toBe(true);
-    expect(resultsB.some((result) => result.path === "MEMORY.md")).toBe(true);
+    expect(resultsA.some((result) => result.path === "memory/note.md")).toBe(true);
+    expect(resultsB.some((result) => result.path === "memory/note.md")).toBe(true);
     expect(leakIntoA.some((result) => result.snippet.includes(markerB))).toBe(false);
     expect(leakIntoB.some((result) => result.snippet.includes(markerA))).toBe(false);
 

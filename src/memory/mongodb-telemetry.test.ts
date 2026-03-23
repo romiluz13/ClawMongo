@@ -156,10 +156,17 @@ describe("getLatencyStats", () => {
     vi.mocked(telemetryCollection).mockReturnValue(mockCol);
   });
 
-  it("returns percentiles for matching documents", async () => {
-    // Simulate 10 durations: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-    const durations = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
-    const toArrayFn = vi.fn().mockResolvedValue([{ _id: null, durations, count: 10 }]);
+  it("returns percentiles from $percentile aggregation (M4 audit fix)", async () => {
+    // M4: server-side $percentile returns arrays with one element per percentile
+    const toArrayFn = vi.fn().mockResolvedValue([
+      {
+        _id: null,
+        count: 10,
+        p50: [55],
+        p95: [95],
+        p99: [99],
+      },
+    ]);
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const stats = await getLatencyStats({
@@ -169,9 +176,24 @@ describe("getLatencyStats", () => {
     });
 
     expect(stats.count).toBe(10);
-    expect(stats.p50).toBe(durations[Math.floor(10 * 0.5)]); // index 5 = 60
-    expect(stats.p95).toBe(durations[Math.floor(10 * 0.95)]); // index 9 = 100
-    expect(stats.p99).toBe(durations[Math.floor(10 * 0.99)]); // index 9 = 100
+    expect(stats.p50).toBe(55);
+    expect(stats.p95).toBe(95);
+    expect(stats.p99).toBe(99);
+  });
+
+  it("uses $percentile in pipeline, not $push (M4 audit fix)", async () => {
+    const toArrayFn = vi.fn().mockResolvedValue([]);
+    vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
+
+    await getLatencyStats({ db: {} as Db, prefix: PREFIX, agentId: AGENT_ID });
+
+    const [pipeline] = vi.mocked(mockCol.aggregate).mock.calls[0];
+    const groupStage = (pipeline as Record<string, unknown>[])[1].$group as Record<string, unknown>;
+    // Should NOT have $push durations
+    expect(groupStage.durations).toBeUndefined();
+    // Should have $percentile fields
+    expect(groupStage.p50).toBeDefined();
+    expect((groupStage.p50 as Record<string, unknown>).$percentile).toBeDefined();
   });
 
   it("returns zeros when no documents match", async () => {

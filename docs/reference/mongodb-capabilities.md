@@ -1,6 +1,6 @@
 # MongoDB Capabilities in ClawMongo
 
-ClawMongo uses 12 MongoDB capabilities that together make MongoDB the best agentic data layer. This page explains **why** each capability matters for agent memory and **how** ClawMongo implements it.
+ClawMongo uses 26 MongoDB capabilities that together make MongoDB the best agentic data layer. This page explains **why** each capability matters for agent memory and **how** ClawMongo implements it.
 
 ---
 
@@ -294,7 +294,7 @@ Events are append-only for the canonical fields. The `projectedAt` and `consolid
 
 Agent memory is written by both application code and LLM-generated tool calls. LLMs produce unpredictable output. Without schema validation, a malformed memory write silently corrupts the database. With it, the write fails fast and the application can handle the error.
 
-ClawMongo applies JSON Schema validation (`$jsonSchema`) to 17 collections with `validationAction: "error"`, so invalid documents are rejected at write time rather than silently accepted.
+ClawMongo applies JSON Schema validation (`$jsonSchema`) to 19 collections with `validationAction: "error"`, so invalid documents are rejected at write time rather than silently accepted.
 
 ### How It Works
 
@@ -323,7 +323,7 @@ Schema validation catches common LLM mistakes: missing required fields, wrong ty
 
 ### Collections Using This
 
-All 17 validated collections: `chunks`, `knowledge_base`, `kb_chunks`, `structured_mem`, `structured_mem_revisions`, `procedures`, `procedure_revisions`, `relevance_runs`, `relevance_artifacts`, `relevance_regressions`, `events`, `entities`, `relations`, `entity_links`, `episodes`, `ingest_runs`, `projection_runs`.
+All 19 validated collections: `chunks`, `knowledge_base`, `kb_chunks`, `structured_mem`, `structured_mem_revisions`, `procedures`, `procedure_revisions`, `relevance_runs`, `relevance_artifacts`, `relevance_regressions`, `events`, `entities`, `relations`, `entity_links`, `episodes`, `ingest_runs`, `projection_runs`, `query_cache`, `memory_mutations`.
 
 ---
 
@@ -426,7 +426,7 @@ The `VALID_SCOPES` and `VALID_ROLES` ReadonlySet patterns validate scope and rol
 
 ### Collections Using This
 
-All 20 collections use `agentId`-prefixed indexes. The `scope` and `scopeRef` fields add a second level of isolation within each agent (session, user, workspace, tenant, global).
+All 23 collections use `agentId`-prefixed indexes. The `scope` and `scopeRef` fields add a second level of isolation within each agent (session, user, workspace, tenant, global).
 
 ---
 
@@ -521,9 +521,233 @@ The CLI surface (`memory relevance *`) exposes this data for operators. Sampling
 
 ---
 
+## 13. Semantic Query Cache
+
+### Why This Matters
+
+Identical or near-identical queries should not re-execute the full retrieval pipeline. The semantic cache provides two tiers: SHA-256 exact match (sub-millisecond) and cosine similarity >= 0.95 (catches paraphrases). Cache hits skip search, reranking, and fusion entirely.
+
+### How It Works
+
+`checkCache()` runs before `searchV2()`. On miss, results are written back via fire-and-forget `writeCache()` with per-source TTL (conversation: 300s, KB: 3600s). Hit counts and timestamps tracked for observability.
+
+### Collections Using This
+
+- `query_cache` (SHA-256 hash index + vector search index + TTL index)
+
+---
+
+## 14. Time Series Telemetry
+
+### Why This Matters
+
+Every memory operation (search, entity extraction, rerank, profile synthesis, cache check) emits a telemetry document. Time series collections provide columnar storage, automatic bucketing, and server-side percentile computation (`$percentile`) for P50/P95/P99 latency dashboards.
+
+### How It Works
+
+`emitTelemetry()` is fire-and-forget. `getLatencyStats()` uses `$percentile` with `method: "approximate"`. `getOperationDistribution()` and `getCacheHitRate()` provide operational dashboards.
+
+### Collections Using This
+
+- `memory_telemetry` (time series, 7-day TTL, `granularity: "seconds"`)
+
+---
+
+## 15. Profile Synthesis
+
+### Why This Matters
+
+A single API call generates a comprehensive agent profile from structured memory (preferences, decisions, facts), top entities ranked by relation count, recent episodes, and activity patterns (event counts, role distribution, last active). This is the "who is this user" answer for long-running agents.
+
+### How It Works
+
+`synthesizeProfile()` runs parallel queries across 5 collections using `$facet` for structured memory grouping, `$lookup` for entity enrichment, and `$group` for activity pattern computation. Returns in ~5-50ms.
+
+### Collections Using This
+
+- `structured_mem`, `entities`, `relations`, `episodes`, `events`
+
+---
+
+## 16. Cross-Encoder Re-ranking
+
+### Why This Matters
+
+First-stage retrieval (vector + lexical) optimizes for recall. Cross-encoder re-ranking via Voyage rerank-2.5 optimizes for precision -- 8-11% accuracy improvement with instruction-following support. ON by default with 2-second timeout and graceful fallback to heuristic ranking.
+
+### How It Works
+
+`crossEncoderRerank()` sends query + document pairs to Voyage API. Three-bucket split: above minScore, overflow, below threshold. Empty snippets filtered before API call. `AbortSignal.timeout(2_000)` ensures chat-friendly latency.
+
+### Collections Using This
+
+- Operates on search results (no dedicated collection)
+
+---
+
+## 17. Query Rewriting
+
+### Why This Matters
+
+Terse queries ("auth config") miss relevant results. Synonym expansion ("auth" -> "authentication, login, oauth") and abbreviation expansion ("ts" -> "TypeScript") improve vector search recall without LLM calls.
+
+### How It Works
+
+`rewriteQuery()` applies deterministic synonym + abbreviation maps with a 3x expansion cap. Planner sees the original query; only the embedding stage sees the expanded version.
+
+### Collections Using This
+
+- Operates on queries (no dedicated collection)
+
+---
+
+## 18. Pluggable Entity Extraction
+
+### Why This Matters
+
+Knowledge graphs are only as good as their entity extraction. ClawMongo provides `RegexEntityExtractor` (fast, deterministic: @mentions, #tags, URLs, quoted names, dates) with an `LLMEntityExtractor` upgrade path (richer type classification, relationship inference). Both implement the `EntityExtractor` interface.
+
+### How It Works
+
+`extractAndUpsertEntities()` accepts a `role` parameter for role-based prompt selection. Entities are upserted via `bulkWrite` with `$setOnInsert` for creation-time fields. Relations capped at C(6,2)=15 per extraction.
+
+### Collections Using This
+
+- `entities`, `relations`, `entity_links`
+
+---
+
+## 19. Mutation Audit Trail
+
+### Why This Matters
+
+When memory is wrong, you need to know why. Every structured memory, entity, and relation write produces an audit record with before/after snapshots, operation type (create/update/delete), changed fields, and actor role. 90-day TTL auto-cleanup prevents unbounded growth.
+
+### How It Works
+
+`recordMutation()` is called fire-and-forget (via `Promise.allSettled`) after every write in `writeStructuredMemory`, `upsertEntity`, `upsertRelation`, and `deleteEntityConservative`. `getMutationHistory()` queries with agentId, collectionName, documentId, limit, and since filters.
+
+### Collections Using This
+
+- `memory_mutations` (compound query index + TTL 90-day index + per-document history index)
+
+---
+
+## 20. Status Lifecycle
+
+### Why This Matters
+
+Not all memories are equal. Archived episodes remain queryable for historical context but don't clutter active search. Deleted records are soft-deleted -- tombstoned, not removed -- preserving audit trails while excluding from retrieval.
+
+### How It Works
+
+Episodes and chunks get an optional `status` field: `active | archived | deleted`. All retrieval queries add `{ status: { $ne: "deleted" } }` which is backward compatible -- documents without the field match (MongoDB `$ne` semantics). `updateEpisodeStatus()` transitions episodes between states. `materializeEpisode()` sets `status: "active"` via `$setOnInsert`.
+
+### Collections Using This
+
+- `episodes`, `chunks` (7 query paths updated)
+
+---
+
+## 21. Procedural Memory Evolution
+
+### Why This Matters
+
+Agents that track workflow success rates improve over time. Procedures store version history, success/fail counts with timestamps, and bounded evolution history. When a procedure fails, you can trace what changed and when.
+
+### How It Works
+
+`recordProcedureOutcome()` uses atomic `$inc` for counters and `$set` for timestamps. `evolveProcedure()` bumps version, updates steps, and appends to evolution history using `$push` + `$slice: -20` for bounded arrays. `writeProcedure()` initializes defaults via `$setOnInsert` (version: 1, successCount: 0, failCount: 0, evolutionHistory: []).
+
+### Collections Using This
+
+- `procedures`
+
+---
+
+## 22. Conservative Graph Deletion
+
+### Why This Matters
+
+Accidental deletion of well-connected entities destroys knowledge graph integrity. Conservative deletion checks relation count before deleting -- if relations exist, it returns `conflictDetected: true` instead of deleting. A `force: true` override is available for intentional cleanup.
+
+### How It Works
+
+`deleteEntityConservative()` queries `relations` for `{ $or: [{ fromEntityId }, { toEntityId }] }` count. If > 0 and `force` is not set, returns without deleting. On deletion, records audit via `recordMutation` with the entity snapshot as `oldValue`.
+
+### Collections Using This
+
+- `entities`, `relations`, `memory_mutations`
+
+---
+
+## 23. Working Memory Bounds
+
+### Why This Matters
+
+Long sessions accumulate thousands of events. Without bounds, context injection blows the LLM token window. Working memory bounds return only the N most recent events, leveraging MongoDB's `$sort` + `$limit` optimization (the optimizer coalesces adjacent stages for top-N efficiency).
+
+### How It Works
+
+`getSessionEventsWithBound()` queries with `.sort({ timestamp: -1 }).limit(bound)` then reverses for chronological order. Default bound is 50, minimum clamped to 1 via `Math.max(1, bound)`. Uses existing compound index `{ agentId: 1, timestamp: -1 }`.
+
+### Collections Using This
+
+- `events`
+
+---
+
+## 24. Temporal Grounding
+
+### Why This Matters
+
+"Met with Sarah on May 7" is more useful than "Met with Sarah" -- dates anchor memories in time. Temporal grounding extracts dates from conversation text as first-class concept entities with `extractedAt` timestamps.
+
+### How It Works
+
+`RegexEntityExtractor` includes `DATE_REGEX` matching ISO dates (2023-05-07), natural dates (May 7, 2023), and US dates (5/7/2023). Extracted as type "concept" with confidence 0.7. `LLMEntityExtractor` prompt includes temporal grounding instruction. Entity upsert sets `extractedAt` via `$setOnInsert`.
+
+### Collections Using This
+
+- `entities`
+
+---
+
+## 25. Role-Based Extraction
+
+### Why This Matters
+
+"I prefer Python" from a user means something different than "I used Python" from an assistant. Role-based extraction uses different prompts -- user prompts focus on preferences, goals, and relationships; assistant prompts focus on capabilities, tools, and approaches. Prevents the LLM from hallucinating user preferences from assistant responses.
+
+### How It Works
+
+`LLMEntityExtractor.extract()` checks `context.role`: `"assistant"` -> `buildAssistantExtractionPrompt()`, everything else -> `buildUserExtractionPrompt()`. Entities get a `sourceRole` field ("user" | "assistant") tracked in the schema. `extractAndUpsertEntities()` accepts an optional `role` parameter.
+
+### Collections Using This
+
+- `entities`
+
+---
+
+## 26. Tiered Retrieval
+
+### Why This Matters
+
+Returning full document content for every search hit wastes tokens. In large memory spaces (1000+ episodes), this can consume the entire context window. Tiered retrieval returns IDs + scores first (~50-100 tokens), then fetches full content only for the top results on demand.
+
+### How It Works
+
+`searchV2` accepts `projection: "ids-only"` in search options. When set, result snippets are empty strings -- only `_id` and `score` are populated. `getEpisodesByIds()` fetches full content for selected episode IDs. Default behavior (`projection: "full"`) is unchanged.
+
+### Collections Using This
+
+- `episodes`, `chunks` (via `$project` after `$vectorSearch`)
+
+---
+
 ## The Full Picture
 
-All 12 capabilities work together in a single query/write cycle:
+All 26 capabilities work together in a single query/write cycle:
 
 ```text
 Write path:
@@ -532,20 +756,33 @@ Write path:
     -> Event-Sourcing writes canonical event               [6]
     -> Idempotent Upsert prevents duplicate writes         [11]
     -> Automated Embeddings index the text                 [1]
-    -> Entity extraction builds Knowledge Graph            [5]
+    -> Entity extraction (role-based prompts)              [18,25]
+       -> Temporal grounding captures dates                [24]
+       -> Knowledge Graph built from entities              [5]
+    -> Mutation Audit Trail tracks before/after            [19]
     -> Episode triggers consolidate event windows          [6]
+       -> Status Lifecycle assigns active state            [20]
     -> Multi-Tenant Isolation scopes everything by agent   [10]
     -> Change Streams notify other gateway instances       [8]
 
 Read path:
   query arrives
-    -> Retrieval planner selects paths
+    -> Semantic Query Cache: HIT? return cached            [13]
+    -> MISS: Query Rewriting expands synonyms              [17]
+    -> Retrieval planner selects from 8 paths
     -> Vector Search finds semantically similar content    [2]
     -> Full-Text Search finds exact keyword matches        [3]
     -> Hybrid Search fuses both result sets                [4]
     -> Knowledge Graph traverses entity relationships      [5]
-    -> Relevance Telemetry records what happened           [12]
+    -> Working Memory Bounds cap session context           [23]
+    -> Procedural Memory returns versioned workflows       [21]
+    -> Status Lifecycle excludes deleted records           [20]
+    -> Tiered Retrieval: IDs-only or full content          [26]
+    -> Cross-Encoder Re-ranking (Voyage rerank-2.5)        [16]
+    -> Profile Synthesis aggregates across 5 collections   [15]
+    -> Time Series Telemetry records what happened         [14]
+    -> Relevance Telemetry measures quality                [12]
     -> TTL Indexes keep caches and telemetry bounded       [9]
 ```
 
-This is why MongoDB is the best agentic data layer: one database, one operational surface, 12 capabilities that would otherwise require 5-6 separate services.
+This is why MongoDB is the best agentic data layer: one database, one operational surface, 26 capabilities that would otherwise require 5-6 separate services.

@@ -119,7 +119,7 @@ The onboarding wizard walks you through:
 1. **Model provider selection** -- choose Anthropic, OpenAI, Google, or another supported provider
 2. **API key entry** -- enter your LLM provider API key
 3. **Gateway setup** -- configures the gateway daemon on port 18789
-4. **Collection bootstrap** -- creates all 20 MongoDB collections and 53 standard indexes
+4. **Collection bootstrap** -- creates all 23 MongoDB collections and 66 standard indexes
 5. **Search index creation** -- creates text and vector search indexes (requires mongot)
 
 The `--install-daemon` flag installs the gateway as a system service (launchd on macOS, systemd on Linux) so it stays running.

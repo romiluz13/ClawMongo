@@ -25,11 +25,11 @@ Both are valid choices. The default memory is simpler to set up. ClawMongo is mo
 | **Retrieval paths**        | 1 (search)                                                 | 8 (active-critical, procedural, structured, raw-window, graph, episodic, kb, hybrid) |
 | **Retrieval planning**     | Simple search dispatch                                     | Pure-function planner scoring paths based on query analysis                          |
 | **Reranking**              | MMR (Maximal Marginal Relevance)                           | Source diversity penalty + episode boost + deduplication                             |
-| **Schema validation**      | None                                                       | JSON Schema (`$jsonSchema`) on 17 collections                                        |
+| **Schema validation**      | None                                                       | JSON Schema (`$jsonSchema`) on 19 collections                                        |
 | **Multi-tenant isolation** | Filesystem separation                                      | Compound indexes with `agentId` prefix                                               |
 | **Cross-instance sync**    | File sync (rsync, git)                                     | MongoDB replica set + change streams                                                 |
 | **Operational visibility** | Limited                                                    | Ingest runs, projection runs, relevance telemetry (3 collections)                    |
-| **Data model**             | Flat files + SQLite rows                                   | 20 collections, 53 standard indexes, up to 8 search indexes                          |
+| **Data model**             | Flat files + SQLite rows                                   | 23 collections, 66 standard indexes, up to 9 search indexes                          |
 | **Entity extraction**      | None                                                       | Rule-based from conversations (@mentions, #tags, URLs, paths, quoted names)          |
 | **Graph traversal**        | None                                                       | `$graphLookup` with `restrictSearchWithMatch` for tenant isolation                   |
 | **Memory lifecycle**       | Manual                                                     | TTL indexes for caches/telemetry, consolidation lifecycle for events                 |

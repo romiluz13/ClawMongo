@@ -1261,7 +1261,7 @@ export function registerMemoryCli(program: Command) {
 
   memory
     .command("migrate-markdown")
-    .description("Import legacy MEMORY.md and memory/*.md into Mongo reference corpus")
+    .description("Import legacy memory/*.md files into Mongo reference corpus")
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--force", "Force re-import of already-imported content", false)
     .option("--category <name>", "Reference category label", "legacy-markdown-memory")

@@ -272,10 +272,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 22 collections when none exist (21 regular + 1 time series)", async () => {
+  it("creates all 23 collections when none exist (22 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(22);
+    expect(db.createCollection).toHaveBeenCalledTimes(23);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -314,7 +314,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(20);
+    expect(db.createCollection).toHaveBeenCalledTimes(21);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -363,6 +363,7 @@ describe("ensureCollections", () => {
       "oc_ingest_runs",
       "oc_projection_runs",
       "oc_query_cache",
+      "oc_memory_mutations",
       "oc_memory_telemetry",
     ]);
     await ensureCollections(db, "oc_");
@@ -409,10 +410,11 @@ describe("ensureStandardIndexes", () => {
 
     // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 7 structured (6 + 1 v2 scope) +
     // 1 structured revisions + 3 relevance_runs + 2 relevance_artifacts +
-    // 2 relevance_regressions + 6 events + 3 entities + 3 relations + 2 entity links +
+    // 2 relevance_regressions + 6 events + 3 entities + 4 relations + 2 entity links +
     // 3 episodes + 1 ingest_runs + 1 projection_runs + 4 procedures +
-    // 1 procedure_revisions + 3 query_cache + 2 telemetry = 58
-    expect(count).toBe(58);
+    // 1 procedure_revisions + 3 query_cache + 2 telemetry
+    // + 3 memory_mutations (compound + TTL + per-document) = 62
+    expect(count).toBe(62);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
@@ -447,7 +449,7 @@ describe("ensureStandardIndexes", () => {
     };
     expect(events.createIndex).toHaveBeenCalledTimes(6);
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
-    expect(relations.createIndex).toHaveBeenCalledTimes(3);
+    expect(relations.createIndex).toHaveBeenCalledTimes(4);
     expect(entityLinks.createIndex).toHaveBeenCalledTimes(2);
     expect(episodes.createIndex).toHaveBeenCalledTimes(3);
     expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1);
@@ -610,10 +612,11 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 27 (v1 base) + 6 events + 3 entities + 3 relations + 2 entity links + 3 episodes +
+    // 27 (v1 base) + 6 events + 3 entities + 4 relations + 2 entity links + 3 episodes +
     // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions +
-    // 4 procedures + 1 procedure_revisions + 3 query_cache + 2 telemetry = 58
-    expect(count).toBe(58);
+    // 4 procedures + 1 procedure_revisions + 3 query_cache + 2 telemetry
+    // + 3 memory_mutations (compound + TTL + per-document) = 62
+    expect(count).toBe(62);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -1230,8 +1233,8 @@ describe("ensureCollections total count with query_cache and telemetry", () => {
   it("creates 22 collections total when none exist (21 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    // 21 from needed array + 1 time series (memory_telemetry) = 22
-    expect(db.createCollection).toHaveBeenCalledTimes(22);
+    // 22 from needed array + 1 time series (memory_telemetry) = 23
+    expect(db.createCollection).toHaveBeenCalledTimes(23);
   });
 });
 
@@ -1239,8 +1242,9 @@ describe("ensureStandardIndexes total count with query_cache and telemetry", () 
   it("returns updated total index count including query_cache and telemetry indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // Previous: 53 standard indexes
-    // + 3 query_cache (unique + TTL + hitCount) + 2 telemetry (agent_ts + op_ts) = 58
-    expect(count).toBe(58);
+    // Previous: 53 standard indexes + 1 toEntityId index
+    // + 3 query_cache (unique + TTL + hitCount) + 2 telemetry (agent_ts + op_ts)
+    // + 3 memory_mutations (compound + TTL + per-document) = 62
+    expect(count).toBe(62);
   });
 });

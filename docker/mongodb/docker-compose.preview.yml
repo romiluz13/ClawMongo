@@ -3,7 +3,12 @@
 #
 # Usage:
 #   docker compose -f docker/mongodb/docker-compose.preview.yml up -d
-#   VOYAGE_API_KEY=your-key docker compose -f docker/mongodb/docker-compose.preview.yml up -d
+#   VOYAGE_API_KEY=al-xxxxx docker compose -f docker/mongodb/docker-compose.preview.yml up -d
+#
+# IMPORTANT: VOYAGE_API_KEY must be an Atlas Model API Key (al-... prefix).
+# Create one at: cloud.mongodb.com → AI Models → Create model API key
+# Direct Voyage keys (pa-...) will NOT work — mongot routes through ai.mongodb.com.
+# See: https://www.mongodb.com/docs/voyageai/management/api-keys/
 #
 # What's included (single container):
 #   - mongod (MongoDB 8.x, single-node replica set)

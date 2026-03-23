@@ -71,7 +71,28 @@ export type ResolvedMongoDBConfig = {
     };
   };
   episodes: { enabled: boolean; minEventsForEpisode: number };
-  graph: { enabled: boolean; maxGraphDepth: number };
+  graph: {
+    enabled: boolean;
+    maxGraphDepth: number;
+    entityExtraction: {
+      method: "regex" | "llm";
+      model?: string;
+      timeoutMs: number;
+    };
+  };
+  queryRewriting: {
+    enabled: boolean;
+    method: "synonym-expansion" | "llm" | "hyde";
+    maxTokens: number;
+  };
+  reranking: {
+    enabled: boolean;
+    model: "rerank-2.5" | "rerank-2.5-lite";
+    topN: number;
+    minScore: number;
+    voyageApiKey: string;
+    instruction?: string;
+  };
   cache: {
     enabled: boolean;
     conversationTtlSec: number;
@@ -330,6 +351,43 @@ export function resolveMemoryBackendConfig(params: {
             mongoCfg.graph.maxGraphDepth > 0
               ? Math.floor(mongoCfg.graph.maxGraphDepth)
               : 2,
+          entityExtraction: {
+            method: mongoCfg?.graph?.entityExtraction?.method ?? "regex",
+            model: mongoCfg?.graph?.entityExtraction?.model,
+            timeoutMs:
+              typeof mongoCfg?.graph?.entityExtraction?.timeoutMs === "number" &&
+              Number.isFinite(mongoCfg.graph.entityExtraction.timeoutMs) &&
+              mongoCfg.graph.entityExtraction.timeoutMs > 0
+                ? Math.floor(mongoCfg.graph.entityExtraction.timeoutMs)
+                : 5000,
+          },
+        },
+        queryRewriting: {
+          enabled: mongoCfg?.queryRewriting?.enabled === true,
+          method: mongoCfg?.queryRewriting?.method ?? "synonym-expansion",
+          maxTokens:
+            typeof mongoCfg?.queryRewriting?.maxTokens === "number" &&
+            Number.isFinite(mongoCfg.queryRewriting.maxTokens) &&
+            mongoCfg.queryRewriting.maxTokens > 0
+              ? Math.floor(mongoCfg.queryRewriting.maxTokens)
+              : 128,
+        },
+        reranking: {
+          enabled: mongoCfg?.reranking?.enabled !== false,
+          model: mongoCfg?.reranking?.model ?? "rerank-2.5",
+          topN:
+            typeof mongoCfg?.reranking?.topN === "number" &&
+            Number.isFinite(mongoCfg.reranking.topN) &&
+            mongoCfg.reranking.topN > 0
+              ? Math.floor(mongoCfg.reranking.topN)
+              : 20,
+          minScore:
+            typeof mongoCfg?.reranking?.minScore === "number" &&
+            Number.isFinite(mongoCfg.reranking.minScore)
+              ? Math.min(1, Math.max(0, mongoCfg.reranking.minScore))
+              : 0.1,
+          voyageApiKey: mongoCfg?.reranking?.voyageApiKey ?? process.env.VOYAGE_API_KEY ?? "",
+          instruction: mongoCfg?.reranking?.instruction,
         },
         cache: {
           enabled: mongoCfg?.cache?.enabled !== false,
@@ -367,6 +425,14 @@ export function resolveMemoryBackendConfig(params: {
       log.warn(
         `numDimensions=${resolvedNumDims} may not match expected dimensions for ${defaultModel} (${expectedDims}). ` +
           "Mismatched dimensions will cause vector search errors.",
+      );
+    }
+
+    // H2 audit fix: warn when entity extraction method is 'llm' but no LLM function injected
+    if (result.mongodb!.graph.entityExtraction.method === "llm") {
+      log.warn(
+        "entity extraction method 'llm' configured but LLM function not injected — regex extractor will be used at runtime. " +
+          "Set graph.entityExtraction.method to 'regex' to suppress this warning.",
       );
     }
 

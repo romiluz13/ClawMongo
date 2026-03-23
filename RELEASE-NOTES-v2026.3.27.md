@@ -28,8 +28,8 @@ ClawMongo now runs entirely on `mongodb-atlas-local:preview` -- a single Docker 
 ### README and Documentation
 
 - **Architecture diagrams**: ASCII flow diagrams for Write Path and Retrieval Path
-- **12 MongoDB capabilities table**: Each capability with "why it matters" and "how it works"
-- **20 collections and 8 retrieval paths**: Full data model documentation
+- **26 MongoDB capabilities table**: Each capability with "why it matters" and "how it works"
+- **23 collections and 8 retrieval paths**: Full data model documentation
 
 ### Upstream Sync
 

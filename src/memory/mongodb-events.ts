@@ -227,6 +227,41 @@ export async function getUnconsolidatedEvents(params: {
     .toArray()) as unknown as CanonicalEvent[];
 }
 
+// ---------------------------------------------------------------------------
+// Session events with working memory bound
+// ---------------------------------------------------------------------------
+
+export async function getSessionEventsWithBound(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  sessionId: string;
+  bound?: number;
+  scope?: MemoryScope;
+  scopeRef?: string;
+}): Promise<CanonicalEvent[]> {
+  const { db, prefix, agentId, sessionId, scope, scopeRef } = params;
+  const effectiveBound = Math.max(1, params.bound ?? 50);
+  const collection = eventsCollection(db, prefix);
+  const filter: Document = { agentId, sessionId };
+  if (scope) {
+    filter.scope = scope;
+  }
+  if (scopeRef) {
+    filter.scopeRef = scopeRef;
+  }
+
+  const events = (await collection
+    .find(filter)
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+    .sort({ timestamp: -1 })
+    .limit(effectiveBound)
+    .toArray()) as unknown as CanonicalEvent[];
+
+  // Reverse to chronological order (oldest first)
+  return events.toReversed();
+}
+
 /**
  * Project unprojected events into the chunks collection.
  * Each event becomes a conversation chunk at `events/{eventId}` using a

@@ -20,7 +20,6 @@ Before doing anything else:
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
 3. Use `memory_search` for recent runtime context before answering questions about prior work, decisions, dates, people, preferences, or todos
-4. **If in MAIN SESSION** (direct chat with your human): Read `MEMORY.md` only as bridge guidance when it is relevant
 
 Don't ask permission. Just do it.
 
@@ -30,20 +29,16 @@ You wake up fresh each session. Continuity comes from both MongoDB memory and a
 small set of human-authored workspace files:
 
 - **Daily bridge notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — optional human-authored raw notes
-- **Bridge guidance:** `MEMORY.md` — curated human-authored notes for the main/private session
-- **Runtime durable memory:** use `memory_write` when available; MongoDB is the canonical runtime memory store
+- **Runtime durable memory:** use `memory_write` when available; MongoDB is the sole runtime memory store
 
 Capture what matters in the right place. Instructions and policy live in
 Markdown. Durable runtime facts and decisions live in MongoDB.
 
-### 🧠 MEMORY.md - Your Bridge Notes
+### Runtime Memory
 
-- **ONLY load in main session** (direct chats with your human)
-- **DO NOT load in shared contexts** (Discord, group chats, sessions with other people)
-- This is for **security** — contains personal context that shouldn't leak to strangers
-- Treat `MEMORY.md` as human-authored bridge guidance, not the canonical runtime memory store
+- MongoDB is the sole runtime memory store
 - Prefer `memory_write` for durable runtime facts, decisions, preferences, todos, people, projects, and architecture notes
-- Touch `MEMORY.md` only when you are intentionally maintaining bridge guidance, not as a default memory sink
+- Do not use workspace files as a memory store
 
 ### 📝 Write It Down - No "Mental Notes"!
 
@@ -216,7 +211,7 @@ Weekly promotion cycle:
 
 - **Daily notes** (`memory/YYYY-MM-DD.md`) are raw capture -- ephemeral by nature
 - **Structured memory** (MongoDB via `memory_write`) is durable -- survives compaction and session resets
-- **MEMORY.md** remains human-authored bridge guidance only -- do not treat it as a memory store
+- **MongoDB** is the sole runtime memory store -- do not use workspace files as a memory store
 
 The goal: important facts graduate from daily notes to MongoDB structured memory within a week. Bridge notes stay small. MongoDB stays canonical.
 

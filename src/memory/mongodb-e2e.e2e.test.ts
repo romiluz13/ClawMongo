@@ -1800,3 +1800,6 @@ describe("E2E v2: health semantics", () => {
     );
   });
 });
+
+// Supermemory-inspired feature tests live in real-e2e-v2.e2e.test.ts (Phases 14-17)
+// which uses the realistic multi-session conversation dataset for proper integration testing.

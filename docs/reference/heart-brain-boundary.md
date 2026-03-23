@@ -16,18 +16,18 @@ The contract is:
 
 - Workspace markdown defines who the agent is.
 - MongoDB defines what the agent can remember and retrieve.
-- `MEMORY.md` and `memory/*.md` are the bridge between the two.
+- `memory/*.md` files are the bridge between the two.
 
 This boundary is not optional. If the boundary drifts, ClawMongo stops being
 OpenClaw with a MongoDB-first memory system and becomes a competing agent model.
 
 ## Ownership map
 
-| Layer  | Authority                               | Allowed data                                                   | Must not own                                    |
-| ------ | --------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------- |
-| Heart  | Workspace bootstrap markdown            | identity, persona, rules, operator guidance, startup cadence   | structured facts, KB docs, retrieval indexes    |
-| Bridge | `MEMORY.md`, `memory.md`, `memory/*.md` | operator-authored notes, informal observations, daily logs     | identity canon, DB-native structured records    |
-| Brain  | MongoDB                                 | recall, sessions, KB, structured memory, retrieval diagnostics | persona, bootstrap policy, agent identity canon |
+| Layer  | Authority                    | Allowed data                                                   | Must not own                                    |
+| ------ | ---------------------------- | -------------------------------------------------------------- | ----------------------------------------------- |
+| Heart  | Workspace bootstrap markdown | identity, persona, rules, operator guidance, startup cadence   | structured facts, KB docs, retrieval indexes    |
+| Bridge | `memory/*.md`                | operator-authored notes, informal observations, daily logs     | identity canon, DB-native structured records    |
+| Brain  | MongoDB                      | recall, sessions, KB, structured memory, retrieval diagnostics | persona, bootstrap policy, agent identity canon |
 
 ## Heart files
 
@@ -58,8 +58,6 @@ Rules:
 
 These files remain human-authored markdown and may be synchronized into MongoDB:
 
-- `MEMORY.md`
-- `memory.md`
 - `memory/*.md`
 
 Rules:
@@ -103,8 +101,8 @@ These invariants should hold for every ClawMongo release:
 
 1. `src/agents/workspace.ts` stays aligned with upstream OpenClaw for the
    canonical bootstrap file set unless a change is explicitly justified.
-2. `src/memory/internal.ts` must continue to treat only `MEMORY.md`, `memory.md`,
-   and `memory/` as default memory corpus paths.
+2. `src/memory/internal.ts` must continue to treat only `memory/` as the default
+   memory corpus path (root `MEMORY.md` is deprecated).
 3. `src/agents/system-prompt.ts` may add a MongoDB routing bridge, but that
    bridge must not replace the heart-file roles defined above.
 4. `memory_search` may search across bridge files, sessions, KB, and structured

@@ -240,7 +240,14 @@ export async function writeProcedure(params: {
         identityFilter,
         {
           $set: { ...setDoc, revision: 1, validFrom: now },
-          $setOnInsert: { createdAt: now, openedCount: 0 },
+          $setOnInsert: {
+            createdAt: now,
+            openedCount: 0,
+            version: 1,
+            successCount: 0,
+            failCount: 0,
+            evolutionHistory: [],
+          },
         },
         { upsert: true, ...(session ? { session } : {}) },
       );
@@ -320,6 +327,125 @@ export async function writeProcedure(params: {
     `procedure ${outcome.upserted ? "created" : "updated"}: id=${entry.procedureId} revision=${outcome.revision}`,
   );
   return { upserted: outcome.upserted, id: outcome.id };
+}
+
+// ---------------------------------------------------------------------------
+// Procedure evolution (version tracking + outcome recording)
+// ---------------------------------------------------------------------------
+
+/**
+ * Record a success or failure outcome on an existing procedure.
+ * Uses atomic $inc for counters and $set for timestamp.
+ * Returns false if procedure not found (no upsert).
+ */
+export async function recordProcedureOutcome(params: {
+  db: Db;
+  prefix: string;
+  procedureId: string;
+  agentId: string;
+  scope: MemoryScope;
+  scopeRef?: string;
+  success: boolean;
+}): Promise<boolean> {
+  const { db, prefix, procedureId, agentId, scope, scopeRef, success } = params;
+  const collection = proceduresCollection(db, prefix);
+  const now = new Date();
+  const filter: Document = { procedureId, agentId, scope };
+  if (scopeRef !== undefined) {
+    filter.scopeRef = scopeRef;
+  }
+  try {
+    const update: Document = {
+      $inc: success ? { successCount: 1 } : { failCount: 1 },
+      $set: success
+        ? { lastSuccessAt: now, updatedAt: now }
+        : { lastFailureAt: now, updatedAt: now },
+    };
+    const result = await collection.updateOne(filter, update);
+    if (result.matchedCount === 0) {
+      log.warn(`recordProcedureOutcome: procedure not found: ${procedureId}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    log.error("recordProcedureOutcome failed", { procedureId, error: err });
+    throw err;
+  }
+}
+
+/**
+ * Evolve a procedure: bump version, update steps, and record in
+ * bounded evolutionHistory ($push + $slice: -20).
+ * Throws if procedure not found.
+ */
+export async function evolveProcedure(params: {
+  db: Db;
+  prefix: string;
+  procedureId: string;
+  agentId: string;
+  scope: MemoryScope;
+  scopeRef?: string;
+  newSteps: string[];
+  changeType: string;
+  changeDescription: string;
+}): Promise<{ newVersion: number }> {
+  const {
+    db,
+    prefix,
+    procedureId,
+    agentId,
+    scope,
+    scopeRef,
+    newSteps,
+    changeType,
+    changeDescription,
+  } = params;
+  const collection = proceduresCollection(db, prefix);
+  const now = new Date();
+  const filter: Document = { procedureId, agentId, scope };
+  if (scopeRef !== undefined) {
+    filter.scopeRef = scopeRef;
+  }
+  try {
+    // Read current version to record in history entry
+    const existing = await collection.findOne(filter);
+    if (!existing) {
+      throw new Error(`Procedure not found: ${procedureId}`);
+    }
+    const currentVersion =
+      typeof existing.version === "number" && Number.isFinite(existing.version)
+        ? existing.version
+        : 1;
+
+    const historyEntry = {
+      version: currentVersion,
+      changeType,
+      changeDescription,
+      timestamp: now,
+    };
+
+    const update: Document = {
+      $inc: { version: 1 },
+      $set: { steps: newSteps, updatedAt: now },
+      $push: {
+        evolutionHistory: {
+          $each: [historyEntry],
+          $slice: -20,
+        },
+      },
+    };
+
+    await collection.updateOne(filter, update);
+    const newVersion = currentVersion + 1;
+    log.info(`evolveProcedure: ${procedureId} v${currentVersion} -> v${newVersion}`);
+    return { newVersion };
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("Procedure not found")) {
+      throw err;
+    }
+    log.error("evolveProcedure failed", { procedureId, error: err });
+    throw err;
+  }
 }
 
 function toProcedureResult(doc: Document): MemorySearchResult {

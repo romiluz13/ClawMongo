@@ -123,6 +123,10 @@ export function telemetryCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "memory_telemetry");
 }
 
+export function mutationsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "memory_mutations");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -326,6 +330,24 @@ const PROCEDURES_SCHEMA: Document = {
       openedAt: { bsonType: "date" },
       openedCount: { bsonType: "number", minimum: 0 },
       lastUsedAt: { bsonType: "date" },
+      version: { bsonType: "number", minimum: 1, description: "Current version number" },
+      successCount: { bsonType: "number", minimum: 0 },
+      failCount: { bsonType: "number", minimum: 0 },
+      lastSuccessAt: { bsonType: "date" },
+      lastFailureAt: { bsonType: "date" },
+      evolutionHistory: {
+        bsonType: "array",
+        items: {
+          bsonType: "object",
+          properties: {
+            version: { bsonType: "number" },
+            changeType: { bsonType: "string" },
+            changeDescription: { bsonType: "string" },
+            timestamp: { bsonType: "date" },
+          },
+        },
+        description: "Capped at 20 entries via $push + $slice: -20",
+      },
       createdAt: { bsonType: "date" },
       updatedAt: { bsonType: "date" },
     },
@@ -393,6 +415,10 @@ const CHUNKS_SCHEMA: Document = {
       embedding: { bsonType: "array" },
       model: { bsonType: "string" },
       updatedAt: { bsonType: "date" },
+      status: {
+        enum: ["active", "archived", "deleted"],
+        description: "Lifecycle status (default: active)",
+      },
     },
   },
 };
@@ -509,6 +535,11 @@ const ENTITIES_SCHEMA: Document = {
       },
       attributes: { bsonType: "object", description: "Arbitrary key-value attributes" },
       confidence: { bsonType: "number", minimum: 0, maximum: 1 },
+      extractedAt: { bsonType: "date", description: "When this entity was extracted" },
+      sourceRole: {
+        enum: ["user", "assistant"],
+        description: "Role of the event that produced this entity",
+      },
     },
   },
 };
@@ -605,6 +636,10 @@ const EPISODES_SCHEMA: Document = {
       updatedAt: { bsonType: "date" },
       eventIds: { bsonType: "array", items: { bsonType: "string" } },
       tags: { bsonType: "array", items: { bsonType: "string" } },
+      status: {
+        enum: ["active", "archived", "deleted"],
+        description: "Lifecycle status (default: active)",
+      },
     },
   },
 };
@@ -695,6 +730,38 @@ const QUERY_CACHE_SCHEMA: Document = {
   },
 };
 
+const MEMORY_MUTATIONS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["mutationId", "collectionName", "documentId", "operation", "agentId", "timestamp"],
+    properties: {
+      mutationId: { bsonType: "string", description: "Unique mutation identifier" },
+      collectionName: {
+        bsonType: "string",
+        description: "Target collection (structured_mem, entities, relations, procedures)",
+      },
+      documentId: { bsonType: "string", description: "_id or entityId of the modified document" },
+      operation: {
+        enum: ["create", "update", "delete"],
+        description: "Mutation operation type",
+      },
+      agentId: { bsonType: "string", description: "Agent that performed the mutation" },
+      oldValue: { description: "Document state before mutation (null for creates)" },
+      newValue: { description: "Document state after mutation (null for deletes)" },
+      changedFields: {
+        bsonType: "array",
+        items: { bsonType: "string" },
+        description: "Field names that changed (for updates)",
+      },
+      timestamp: { bsonType: "date", description: "When the mutation occurred" },
+      actorRole: {
+        enum: ["user", "assistant", "system"],
+        description: "Role of the actor that triggered the mutation",
+      },
+    },
+  },
+};
+
 const VALIDATED_COLLECTIONS: Record<string, Document> = {
   chunks: CHUNKS_SCHEMA,
   knowledge_base: KB_SCHEMA,
@@ -714,6 +781,7 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   ingest_runs: INGEST_RUNS_SCHEMA,
   projection_runs: PROJECTION_RUNS_SCHEMA,
   query_cache: QUERY_CACHE_SCHEMA,
+  memory_mutations: MEMORY_MUTATIONS_SCHEMA,
 };
 
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
@@ -745,6 +813,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "ingest_runs",
     "projection_runs",
     "query_cache",
+    "memory_mutations",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -1099,6 +1168,13 @@ export async function ensureStandardIndexes(
     { name: "idx_relations_agent_scope_scoperef" },
   );
   applied++;
+  // C2/M3 audit fix: toEntityId-prefixed index for correlated $lookup in profile synthesis.
+  // $expr $eq in $lookup can only use indexes when the foreign field is a prefix key.
+  await relations.createIndex(
+    { toEntityId: 1, agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "idx_relations_to_entity_scope" },
+  );
+  applied++;
 
   const entityLinks = entityLinksCollection(db, prefix);
   await entityLinks.createIndex(
@@ -1207,6 +1283,24 @@ export async function ensureStandardIndexes(
     const msg = err instanceof Error ? err.message : String(err);
     log.warn(`telemetry index creation skipped: ${msg}`);
   }
+
+  // Mutation audit trail indexes
+  const mutations = mutationsCollection(db, prefix);
+  await mutations.createIndex(
+    { agentId: 1, collectionName: 1, timestamp: -1 },
+    { name: "idx_mutations_agent_collection_ts" },
+  );
+  applied++;
+  await mutations.createIndex(
+    { timestamp: 1 },
+    { name: "idx_mutations_ttl", expireAfterSeconds: 7776000 },
+  );
+  applied++;
+  await mutations.createIndex(
+    { documentId: 1, collectionName: 1, timestamp: -1 },
+    { name: "idx_mutations_doc_collection_ts" },
+  );
+  applied++;
 
   log.info(`ensured ${applied} standard indexes`);
   return applied;

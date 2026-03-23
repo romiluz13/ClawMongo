@@ -74,6 +74,39 @@ export type MemoryMongoDBConfig = {
     enabled?: boolean;
     /** Max depth for $graphLookup. Default: 2 */
     maxGraphDepth?: number;
+    /** Entity extraction configuration */
+    entityExtraction?: {
+      /** Extraction strategy. Default: "regex" */
+      method?: "regex" | "llm";
+      /** LLM model for extraction (when method="llm"). Uses agent default if omitted */
+      model?: string;
+      /** Timeout for LLM extraction in ms. Default: 5000 */
+      timeoutMs?: number;
+    };
+  };
+  /** Query rewriting configuration */
+  queryRewriting?: {
+    /** Enable query rewriting before search. Default: false */
+    enabled?: boolean;
+    /** Rewriting strategy. Default: "synonym-expansion" */
+    method?: "synonym-expansion" | "llm" | "hyde";
+    /** Maximum rewritten query length in tokens. Default: 128 */
+    maxTokens?: number;
+  };
+  /** Cross-encoder re-ranking configuration */
+  reranking?: {
+    /** Enable cross-encoder re-ranking. Default: false */
+    enabled?: boolean;
+    /** Re-ranking model. Default: "rerank-2.5" */
+    model?: "rerank-2.5" | "rerank-2.5-lite";
+    /** Maximum documents to send to reranker. Default: 20 */
+    topN?: number;
+    /** Minimum retrieval score to be eligible for re-ranking. Default: 0.1 */
+    minScore?: number;
+    /** Voyage API key. Env fallback: VOYAGE_API_KEY */
+    voyageApiKey?: string;
+    /** Optional instruction prepended to query for rerank-2.5 instruction-following (8-11% accuracy boost). */
+    instruction?: string;
   };
   /** Semantic query cache configuration */
   cache?: {

@@ -104,11 +104,6 @@ These are the standard files OpenClaw expects inside the workspace:
   - Human-authored or explicitly exported only; not the canonical runtime memory store.
   - Recommended to read today + yesterday on session start.
 
-- `MEMORY.md` (optional)
-  - Curated bridge guidance.
-  - Human-authored only; MongoDB is the canonical runtime memory system.
-  - Only load in the main, private session (not shared/group contexts).
-
 See [Memory](/concepts/memory) for the workflow and automatic memory flush.
 See [Heart brain boundary](/reference/heart-brain-boundary) for the ownership
 contract between workspace files and MongoDB memory.

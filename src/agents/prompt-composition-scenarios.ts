@@ -558,7 +558,7 @@ async function createMaintenanceScenario(workspaceDir: string): Promise<PromptSc
     name: "AGENTS.md",
     content: [
       "## Session Startup",
-      "Read AGENTS.md and MEMORY.md before responding.",
+      "Read AGENTS.md before responding.",
       "",
       "## Red Lines",
       "Do not delete production data.",
@@ -570,7 +570,7 @@ async function createMaintenanceScenario(workspaceDir: string): Promise<PromptSc
   const memoryFlushPrompt = [
     "Pre-compaction memory flush.",
     "Store durable structured memories with memory_write only; do not use file writes for runtime memory.",
-    "Treat workspace bootstrap/reference files such as MEMORY.md, SOUL.md, TOOLS.md, and AGENTS.md as read-only during this flush; never overwrite, replace, or edit them.",
+    "Treat workspace bootstrap files (SOUL.md, TOOLS.md, AGENTS.md) as read-only during this flush; never overwrite, replace, or edit them.",
     "If nothing to store, reply with NO_REPLY.",
     "Current time: Sunday, March 15th, 2026 — 9:30 PM (America/Los_Angeles) / 2026-03-16 04:30 UTC",
   ].join("\n");
@@ -591,7 +591,7 @@ async function createMaintenanceScenario(workspaceDir: string): Promise<PromptSc
     "Critical rules from AGENTS.md:",
     "",
     "## Session Startup",
-    "Read AGENTS.md and MEMORY.md before responding.",
+    "Read AGENTS.md before responding.",
     "",
     "## Red Lines",
     "Do not delete production data.",

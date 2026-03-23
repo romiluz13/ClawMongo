@@ -10,8 +10,6 @@ import {
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
-  DEFAULT_MEMORY_ALT_FILENAME,
-  DEFAULT_MEMORY_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
@@ -61,9 +59,7 @@ const BOOTSTRAP_FILE_NAMES_POST_ONBOARDING = BOOTSTRAP_FILE_NAMES.filter(
   (name) => name !== DEFAULT_BOOTSTRAP_FILENAME,
 );
 
-const MEMORY_FILE_NAMES = [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME] as const;
-
-const ALLOWED_FILE_NAMES = new Set<string>([...BOOTSTRAP_FILE_NAMES, ...MEMORY_FILE_NAMES]);
+const ALLOWED_FILE_NAMES = new Set<string>(BOOTSTRAP_FILE_NAMES);
 
 function resolveAgentWorkspaceFileOrRespondError(
   params: Record<string, unknown>,
@@ -302,46 +298,6 @@ async function listAgentFiles(workspaceDir: string, options?: { hideBootstrap?: 
       });
     } else {
       files.push({ name, path: filePath, missing: true });
-    }
-  }
-
-  const primaryResolved = await resolveAgentWorkspaceFilePath({
-    workspaceDir,
-    name: DEFAULT_MEMORY_FILENAME,
-    allowMissing: true,
-  });
-  const primaryMeta =
-    primaryResolved.kind === "ready" ? await statFileSafely(primaryResolved.ioPath) : null;
-  if (primaryMeta) {
-    files.push({
-      name: DEFAULT_MEMORY_FILENAME,
-      path: primaryResolved.requestPath,
-      missing: false,
-      size: primaryMeta.size,
-      updatedAtMs: primaryMeta.updatedAtMs,
-    });
-  } else {
-    const altMemoryResolved = await resolveAgentWorkspaceFilePath({
-      workspaceDir,
-      name: DEFAULT_MEMORY_ALT_FILENAME,
-      allowMissing: true,
-    });
-    const altMeta =
-      altMemoryResolved.kind === "ready" ? await statFileSafely(altMemoryResolved.ioPath) : null;
-    if (altMeta) {
-      files.push({
-        name: DEFAULT_MEMORY_ALT_FILENAME,
-        path: altMemoryResolved.requestPath,
-        missing: false,
-        size: altMeta.size,
-        updatedAtMs: altMeta.updatedAtMs,
-      });
-    } else {
-      files.push({
-        name: DEFAULT_MEMORY_FILENAME,
-        path: primaryResolved.requestPath,
-        missing: true,
-      });
     }
   }
 

@@ -28,19 +28,13 @@ The standard workspace files keep their upstream roles:
 - `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`
   - Prompt/bootstrap context files.
   - These are not DB-native memory records.
-- `MEMORY.md` or `memory.md`
-  - Human-authored bridge notes.
-  - Injected according to the normal OpenClaw bootstrap rules.
-  - Guidance only, not canonical runtime memory.
 - `memory/YYYY-MM-DD.md`
   - Human-authored daily bridge log.
   - Read today + yesterday at session start.
   - Not the durable runtime memory target for agent-written facts.
-- `MEMORY.md` (optional)
-  - Curated bridge guidance for direct/private sessions.
-  - If both `MEMORY.md` and `memory.md` exist at the workspace root, OpenClaw only loads `MEMORY.md`.
-  - Lowercase `memory.md` is only used as a fallback when `MEMORY.md` is absent.
-  - **Only load in the main, private session** (never in group contexts).
+- `memory/*.md`
+  - Human-authored bridge notes in the `memory/` subdirectory.
+  - MongoDB is the sole runtime memory store; workspace files are supplementary guidance only.
 
 See [Agent workspace](/concepts/agent-workspace) for the full workspace map.
 For the ownership contract between workspace files and MongoDB, see
@@ -93,7 +87,7 @@ Routing guidance:
 - imported reference docs: `kb_search`
 - exact item returned by search: `memory_get`
 - durable structured fact/decision/preference: `memory_write`
-- informal operator note: `MEMORY.md` or `memory/YYYY-MM-DD.md`
+- informal operator note: `memory/YYYY-MM-DD.md`
   - keep these human-authored; do not use them as the canonical durable runtime store
 
 ## MongoDB deployment model
@@ -156,7 +150,7 @@ The intuition contract is:
 1. heart/bootstrap Markdown teaches the agent how to use memory well
 2. MongoDB runtime memory tells the agent what is currently true
 3. questions about current situation, active constraints, major ongoing context, crises, or "what matters now" should prioritize active runtime memory before generic background recall
-4. `MEMORY.md` and `memory/*.md` may inform recall, but they do not override MongoDB-backed current truth
+4. `memory/*.md` files may inform recall, but they do not override MongoDB-backed current truth
 
 The backend tries the best available path for the supported deployment:
 
@@ -208,7 +202,7 @@ Details:
 - the flush runs once per compaction cycle
 - it is skipped when the workspace is read-only
 - it writes durable runtime memory through `memory_write`
-- it treats `MEMORY.md` and `memory/*.md` as human-authored bridge notes, not
+- it treats `memory/*.md` files as human-authored bridge notes, not
   as the durable runtime store
 
 For the full compaction lifecycle, see

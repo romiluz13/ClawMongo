@@ -17,6 +17,7 @@ import {
   markEventsConsolidated,
   getUnconsolidatedEvents,
   projectChunksFromEvents,
+  getSessionEventsWithBound,
   type CanonicalEvent,
 } from "./mongodb-events.js";
 import { eventsCollection, chunksCollection } from "./mongodb-schema.js";
@@ -787,5 +788,186 @@ describe("getUnconsolidatedEvents", () => {
     });
 
     expect(limitFn).toHaveBeenCalledWith(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: getSessionEventsWithBound (Phase 6 — Working Memory Bounds)
+// ---------------------------------------------------------------------------
+
+describe("getSessionEventsWithBound", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns at most bound events", async () => {
+    const mockEvents: CanonicalEvent[] = Array.from({ length: 5 }, (_, i) => ({
+      eventId: `e${i}`,
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      role: "user" as const,
+      body: `Message ${i}`,
+      scope: "agent" as const,
+      scopeRef: "agent:agent-1",
+      timestamp: new Date(2025, 0, 1, 0, i),
+    }));
+
+    const toArrayFn = vi.fn(async () => mockEvents);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      bound: 3,
+    });
+
+    expect(limitFn).toHaveBeenCalledWith(3);
+  });
+
+  it("defaults bound to 50", async () => {
+    const toArrayFn = vi.fn(async () => []);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+    });
+
+    expect(limitFn).toHaveBeenCalledWith(50);
+  });
+
+  it("clamps bound=0 to 1", async () => {
+    const toArrayFn = vi.fn(async () => []);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      bound: 0,
+    });
+
+    expect(limitFn).toHaveBeenCalledWith(1);
+  });
+
+  it("returns all events when fewer than bound", async () => {
+    const mockEvents: CanonicalEvent[] = [
+      {
+        eventId: "e1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        role: "user",
+        body: "Hello",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        timestamp: new Date(2025, 0, 1, 0, 0),
+      },
+    ];
+
+    const toArrayFn = vi.fn(async () => mockEvents);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    const result = await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      bound: 100,
+    });
+
+    expect(result).toHaveLength(1);
+  });
+
+  it("returns events in chronological order (reversed from desc)", async () => {
+    const mockEvents: CanonicalEvent[] = [
+      {
+        eventId: "e3",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        role: "user",
+        body: "Third",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        timestamp: new Date(2025, 0, 1, 0, 2),
+      },
+      {
+        eventId: "e1",
+        agentId: "agent-1",
+        sessionId: "sess-1",
+        role: "user",
+        body: "First",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        timestamp: new Date(2025, 0, 1, 0, 0),
+      },
+    ];
+
+    const toArrayFn = vi.fn(async () => mockEvents);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    const result = await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-1",
+      sessionId: "sess-1",
+      bound: 5,
+    });
+
+    // Sort is desc (-1), so the function must reverse to chronological
+    expect(sortFn).toHaveBeenCalledWith({ timestamp: -1 });
+    // After reversal, e1 (oldest) should come first
+    expect(result[0].eventId).toBe("e1");
+    expect(result[1].eventId).toBe("e3");
+  });
+
+  it("respects agentId filter", async () => {
+    const toArrayFn = vi.fn(async () => []);
+    const limitFn = vi.fn(() => ({ toArray: toArrayFn }));
+    const sortFn = vi.fn(() => ({ limit: limitFn }));
+    const findFn = vi.fn(() => ({ sort: sortFn }));
+
+    const col = Object.assign(createMockEventsCol(), { find: findFn });
+    vi.mocked(eventsCollection).mockReturnValue(col);
+
+    await getSessionEventsWithBound({
+      db: mockDb(),
+      prefix: "test_",
+      agentId: "agent-99",
+      sessionId: "sess-1",
+    });
+
+    expect(findFn).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "agent-99", sessionId: "sess-1" }),
+    );
   });
 });
