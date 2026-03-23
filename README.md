@@ -199,6 +199,99 @@ For Docker-based MongoDB setup, detailed configuration, and verification steps: 
 
 ---
 
+## For Agents: Install ClawMongo
+
+If you are an AI agent (Claude, GPT, Cursor, Windsurf, etc.) helping a user set up ClawMongo, follow these steps exactly:
+
+### Prerequisites Check
+
+```bash
+node --version        # Must be 22+ (24 recommended)
+docker --version      # Docker Desktop must be installed and running
+```
+
+### Step 1: Start MongoDB (atlas-local:preview)
+
+```bash
+# Set Voyage AI API key (required for automated embeddings)
+export VOYAGE_API_KEY="pa-..."
+
+# Start the single-container MongoDB stack
+# This bundles mongod + mongot + Atlas Search + Vector Search + auto-embeddings
+./docker/mongodb/start-preview.sh
+
+# Verify it's healthy
+docker inspect --format='{{.State.Health.Status}}' clawmongo-preview
+# Expected: "healthy"
+```
+
+> **Critical:** Use the `:preview` tag only. The `:latest`, `:8.0`, and `:8.2` tags do NOT include the community mongot with Voyage AI auto-embeddings.
+
+### Step 2: Install ClawMongo
+
+```bash
+npm install -g @romiluz/clawmongo@latest
+clawmongo --version
+```
+
+### Step 3: Run Onboarding
+
+```bash
+clawmongo onboard --install-daemon
+```
+
+The wizard will:
+1. Prompt for Voyage AI API key (if not already set)
+2. Auto-detect the atlas-local Docker container
+3. Verify MongoDB topology (mongod + mongot)
+4. Bootstrap 23 collections + 66 indexes + 9 search indexes
+5. Configure LLM provider (Anthropic Claude recommended)
+6. Optionally import knowledge base documents
+
+### Step 4: Verify
+
+```bash
+clawmongo doctor                    # Check MongoDB + mongot + Voyage AI
+clawmongo channels status --probe   # Check channel connectivity
+clawmongo agent --message "Hello, remember my name is Alice" --thinking low
+clawmongo agent --message "What is my name?" --thinking low
+```
+
+### Step 5: Connect a Channel (Optional)
+
+```bash
+# Telegram (quickest)
+clawmongo config set channels.telegram.botToken "YOUR_BOT_TOKEN"
+clawmongo gateway restart
+```
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Connection refused` on port 27017 | Run `./docker/mongodb/start-preview.sh` |
+| `mongot not detected` | Ensure you're using `mongodb-atlas-local:preview` (not `:latest`) |
+| `VOYAGE_API_KEY not set` | `export VOYAGE_API_KEY=pa-...` then restart the Docker container |
+| Vector search returns empty | Wait 30s for auto-embedding indexing to complete |
+
+### Configuration Reference
+
+Minimal `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "agent": { "model": "anthropic/claude-opus-4-6" },
+  "memory": {
+    "mongodb": {
+      "uri": "mongodb://localhost:27017/openclaw?directConnection=true",
+      "embeddingMode": "automated"
+    }
+  }
+}
+```
+
+---
+
 ## The Full OpenClaw Platform
 
 ClawMongo inherits the entire OpenClaw platform. Everything below works identically.
