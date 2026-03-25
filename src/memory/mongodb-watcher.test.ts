@@ -46,6 +46,15 @@ vi.mock("./mongodb-schema.js", () => ({
     findOne: vi.fn().mockResolvedValue(null),
     updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1 }),
   })),
+  queryCacheCollection: vi.fn(() => ({
+    findOne: vi.fn().mockResolvedValue(null),
+    findOneAndUpdate: vi.fn().mockResolvedValue(null),
+    aggregate: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) })),
+    updateOne: vi.fn().mockResolvedValue({ acknowledged: true }),
+  })),
+  telemetryCollection: vi.fn(() => ({
+    insertOne: vi.fn().mockResolvedValue({ acknowledged: true }),
+  })),
   detectCapabilities: vi.fn().mockResolvedValue({
     vectorSearch: false,
     textSearch: false,
@@ -89,13 +98,15 @@ vi.mock("../logging/subsystem.js", () => ({
   })),
 }));
 
-import chokidar from "chokidar";
 import type { ResolvedMemoryBackendConfig } from "./backend-config.js";
-import { MongoDBMemoryManager } from "./mongodb-manager.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+async function getChokidarMock() {
+  return (await import("chokidar")).default;
+}
 
 function makeConfig(
   overrides?: Partial<ResolvedMemoryBackendConfig["mongodb"]>,
@@ -124,6 +135,49 @@ function makeConfig(
       autoImportPaths: [],
       maxDocumentSize: 10 * 1024 * 1024,
       autoRefreshHours: 24,
+    },
+    sources: {
+      reference: { enabled: true },
+      conversation: { enabled: true },
+      structured: { enabled: true },
+    },
+    cache: {
+      enabled: true,
+      conversationTtlSec: 300,
+      kbTtlSec: 3600,
+      similarityThreshold: 0.95,
+    },
+    queryRewriting: {
+      enabled: false,
+      method: "synonym-expansion",
+      maxTokens: 128,
+    },
+    reranking: {
+      enabled: true,
+      model: "rerank-2.5",
+      topN: 20,
+      minScore: 0.1,
+      voyageApiKey: "",
+    },
+    graph: {
+      enabled: true,
+      maxDepth: 2,
+      maxNeighbors: 10,
+      entityExtraction: {
+        enabled: true,
+        method: "regex",
+        timeoutMs: 5000,
+      },
+    },
+    episodes: {
+      enabled: true,
+      recentWindowDays: 14,
+      similarityThreshold: 0.78,
+      maxRelated: 5,
+      autoMaterialize: {
+        enabled: true,
+        everyNEvents: 25,
+      },
     },
     relevance: {
       enabled: true,
@@ -155,8 +209,9 @@ function makeConfig(
 
 async function createManager(
   configOverrides?: Partial<ResolvedMemoryBackendConfig["mongodb"]>,
-): Promise<MongoDBMemoryManager> {
+): Promise<import("./mongodb-manager.js").MongoDBMemoryManager> {
   const resolved = makeConfig(configOverrides);
+  const { MongoDBMemoryManager } = await import("./mongodb-manager.js");
   const manager = await MongoDBMemoryManager.create({
     cfg: {
       agents: { defaults: { workspace: "/workspace" } },
@@ -178,6 +233,7 @@ describe("MongoDBMemoryManager file watcher", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
+    vi.resetModules();
   });
 
   afterEach(async () => {
@@ -190,6 +246,7 @@ describe("MongoDBMemoryManager file watcher", () => {
 
   it("sets up chokidar watcher on bridge memory paths", async () => {
     const manager = await createManager();
+    const chokidar = await getChokidarMock();
 
     expect(chokidar.watch).toHaveBeenCalledTimes(1);
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
@@ -204,6 +261,7 @@ describe("MongoDBMemoryManager file watcher", () => {
 
   it("passes ignoreInitial and awaitWriteFinish options to chokidar", async () => {
     const manager = await createManager({ watchDebounceMs: 750 });
+    const chokidar = await getChokidarMock();
 
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const opts = watchCall[1] as Record<string, unknown>;
@@ -231,6 +289,7 @@ describe("MongoDBMemoryManager file watcher", () => {
     vi.mocked(normalizeExtraMemoryPaths).mockReturnValue(["/extra/path1.md", "/extra/path2"]);
 
     const manager = await createManager();
+    const chokidar = await getChokidarMock();
 
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const watchedPaths = watchCall[0] as string[];
@@ -446,6 +505,7 @@ describe("MongoDBMemoryManager file watcher", () => {
 
   it("uses custom watchDebounceMs from config", async () => {
     const manager = await createManager({ watchDebounceMs: 1200 });
+    const chokidar = await getChokidarMock();
 
     const watchCall = vi.mocked(chokidar.watch).mock.calls[0];
     const opts = watchCall[1] as Record<string, unknown>;

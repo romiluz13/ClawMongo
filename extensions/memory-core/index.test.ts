@@ -45,12 +45,14 @@ describe("buildPromptSection", () => {
 });
 
 describe("plugin registration", () => {
-  it("registers memory tools independently so one unavailable tool does not suppress the other", () => {
+  it("registers memory tools independently so one unavailable tool does not suppress the others", () => {
     const registerTool = vi.fn();
     const registerMemoryPromptSection = vi.fn();
     const registerCli = vi.fn();
     const searchTool = { name: "memory_search" };
     const getTool = null;
+    const kbTool = { name: "kb_search" };
+    const writeTool = null;
     const api = {
       registerTool,
       registerMemoryPromptSection,
@@ -59,6 +61,8 @@ describe("plugin registration", () => {
         tools: {
           createMemorySearchTool: vi.fn(() => searchTool),
           createMemoryGetTool: vi.fn(() => getTool),
+          createKBSearchTool: vi.fn(() => kbTool),
+          createMemoryWriteTool: vi.fn(() => writeTool),
           registerMemoryCli: vi.fn(),
         },
       },
@@ -67,17 +71,23 @@ describe("plugin registration", () => {
     plugin.register(api as never);
 
     expect(registerMemoryPromptSection).toHaveBeenCalledWith(buildPromptSection);
-    expect(registerTool).toHaveBeenCalledTimes(2);
+    expect(registerTool).toHaveBeenCalledTimes(4);
     expect(registerTool.mock.calls[0]?.[1]).toEqual({ names: ["memory_search"] });
     expect(registerTool.mock.calls[1]?.[1]).toEqual({ names: ["memory_get"] });
+    expect(registerTool.mock.calls[2]?.[1]).toEqual({ names: ["kb_search"] });
+    expect(registerTool.mock.calls[3]?.[1]).toEqual({ names: ["memory_write"] });
 
     const searchFactory = registerTool.mock.calls[0]?.[0] as
       | ((ctx: unknown) => unknown)
       | undefined;
     const getFactory = registerTool.mock.calls[1]?.[0] as ((ctx: unknown) => unknown) | undefined;
+    const kbFactory = registerTool.mock.calls[2]?.[0] as ((ctx: unknown) => unknown) | undefined;
+    const writeFactory = registerTool.mock.calls[3]?.[0] as ((ctx: unknown) => unknown) | undefined;
     const ctx = { config: { plugins: {} }, sessionKey: "agent:main:slack:dm:u123" };
 
     expect(searchFactory?.(ctx)).toBe(searchTool);
     expect(getFactory?.(ctx)).toBeNull();
+    expect(kbFactory?.(ctx)).toBe(kbTool);
+    expect(writeFactory?.(ctx)).toBeNull();
   });
 });

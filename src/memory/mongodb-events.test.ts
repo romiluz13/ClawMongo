@@ -1,13 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// Mock the schema module before imports
-vi.mock("./mongodb-schema.js", () => ({
-  eventsCollection: vi.fn(),
-  chunksCollection: vi.fn(),
-}));
-
 import {
   writeEvent,
   getEventsByTimeRange,
@@ -20,7 +13,6 @@ import {
   getSessionEventsWithBound,
   type CanonicalEvent,
 } from "./mongodb-events.js";
-import { eventsCollection, chunksCollection } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
 // Mock collection factories
@@ -56,8 +48,33 @@ function createMockChunksCol(): Collection {
   } as unknown as Collection;
 }
 
+function createMockAuxCol(): Collection {
+  return {
+    insertOne: vi.fn(async () => ({
+      insertedId: "aux-id",
+      acknowledged: true,
+    })),
+  } as unknown as Collection;
+}
+
+let currentEventsCol: Collection = createMockEventsCol();
+let currentChunksCol: Collection = createMockChunksCol();
+
 function mockDb(): Db {
-  return {} as unknown as Db;
+  return {
+    collection: vi.fn((name: string) => {
+      if (name.endsWith("events")) {
+        return currentEventsCol;
+      }
+      if (name.endsWith("chunks")) {
+        return currentChunksCol;
+      }
+      if (name.endsWith("projection_runs") || name.endsWith("memory_telemetry")) {
+        return createMockAuxCol();
+      }
+      return createMockEventsCol();
+    }),
+  } as unknown as Db;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,11 +84,13 @@ function mockDb(): Db {
 describe("writeEvent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentEventsCol = createMockEventsCol();
+    currentChunksCol = createMockChunksCol();
   });
 
   it("inserts an event and returns the eventId", async () => {
     const col = createMockEventsCol();
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await writeEvent({
       db: mockDb(),
@@ -114,7 +133,7 @@ describe("writeEvent", () => {
       matchedCount: 1,
       acknowledged: true,
     });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await writeEvent({
       db: mockDb(),
@@ -136,7 +155,7 @@ describe("writeEvent", () => {
 
   it("defaults scope to agent when not provided", async () => {
     const col = createMockEventsCol();
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await writeEvent({
       db: mockDb(),
@@ -155,7 +174,7 @@ describe("writeEvent", () => {
 
   it("preserves optional fields when provided", async () => {
     const col = createMockEventsCol();
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await writeEvent({
       db: mockDb(),
@@ -219,7 +238,7 @@ describe("getEventsByTimeRange", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const start = new Date(now.getTime() - 120000);
     const end = new Date(now.getTime() + 1000);
@@ -251,7 +270,7 @@ describe("getEventsByTimeRange", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const start = new Date("2025-01-01");
     const end = new Date("2025-12-31");
@@ -303,7 +322,7 @@ describe("getEventsBySession", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await getEventsBySession({
       db: mockDb(),
@@ -347,7 +366,7 @@ describe("getUnprojectedEvents", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await getUnprojectedEvents({
       db: mockDb(),
@@ -382,7 +401,7 @@ describe("markEventsProjected", () => {
       upsertedId: null,
       acknowledged: true,
     });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await markEventsProjected({
       db: mockDb(),
@@ -401,7 +420,7 @@ describe("markEventsProjected", () => {
 
   it("returns 0 for empty eventIds array", async () => {
     const col = createMockEventsCol();
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await markEventsProjected({
       db: mockDb(),
@@ -470,8 +489,8 @@ describe("projectChunksFromEvents", () => {
     // Chunks collection mock
     const chunkCol = createMockChunksCol();
 
-    vi.mocked(eventsCollection).mockReturnValue(eventCol);
-    vi.mocked(chunksCollection).mockReturnValue(chunkCol);
+    currentEventsCol = eventCol;
+    currentChunksCol = chunkCol;
 
     const result = await projectChunksFromEvents({
       db: mockDb(),
@@ -512,8 +531,8 @@ describe("projectChunksFromEvents", () => {
 
     const chunkCol = createMockChunksCol();
 
-    vi.mocked(eventsCollection).mockReturnValue(eventCol);
-    vi.mocked(chunksCollection).mockReturnValue(chunkCol);
+    currentEventsCol = eventCol;
+    currentChunksCol = chunkCol;
 
     const result = await projectChunksFromEvents({
       db: mockDb(),
@@ -559,8 +578,8 @@ describe("projectChunksFromEvents", () => {
 
     const chunkCol = createMockChunksCol();
 
-    vi.mocked(eventsCollection).mockReturnValue(eventCol);
-    vi.mocked(chunksCollection).mockReturnValue(chunkCol);
+    currentEventsCol = eventCol;
+    currentChunksCol = chunkCol;
 
     await projectChunksFromEvents({
       db: mockDb(),
@@ -634,8 +653,8 @@ describe("projectChunksFromEvents", () => {
         }),
     } as unknown as Collection;
 
-    vi.mocked(eventsCollection).mockReturnValue(eventCol);
-    vi.mocked(chunksCollection).mockReturnValue(chunkCol);
+    currentEventsCol = eventCol;
+    currentChunksCol = chunkCol;
 
     const result = await projectChunksFromEvents({
       db: mockDb(),
@@ -667,7 +686,7 @@ describe("markEventsConsolidated", () => {
       upsertedId: null,
       acknowledged: true,
     });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await markEventsConsolidated({
       db: mockDb(),
@@ -688,7 +707,7 @@ describe("markEventsConsolidated", () => {
 
   it("returns 0 for empty eventIds array", async () => {
     const col = createMockEventsCol();
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await markEventsConsolidated({
       db: mockDb(),
@@ -730,7 +749,7 @@ describe("getUnconsolidatedEvents", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await getUnconsolidatedEvents({
       db: mockDb(),
@@ -753,7 +772,7 @@ describe("getUnconsolidatedEvents", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getUnconsolidatedEvents({
       db: mockDb(),
@@ -778,7 +797,7 @@ describe("getUnconsolidatedEvents", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getUnconsolidatedEvents({
       db: mockDb(),
@@ -818,7 +837,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getSessionEventsWithBound({
       db: mockDb(),
@@ -838,7 +857,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getSessionEventsWithBound({
       db: mockDb(),
@@ -857,7 +876,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getSessionEventsWithBound({
       db: mockDb(),
@@ -890,7 +909,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await getSessionEventsWithBound({
       db: mockDb(),
@@ -933,7 +952,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     const result = await getSessionEventsWithBound({
       db: mockDb(),
@@ -957,7 +976,7 @@ describe("getSessionEventsWithBound", () => {
     const findFn = vi.fn(() => ({ sort: sortFn }));
 
     const col = Object.assign(createMockEventsCol(), { find: findFn });
-    vi.mocked(eventsCollection).mockReturnValue(col);
+    currentEventsCol = col;
 
     await getSessionEventsWithBound({
       db: mockDb(),

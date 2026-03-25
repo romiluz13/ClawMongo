@@ -1,23 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-vi.mock("./mongodb-schema.js", () => ({
-  chunksCollection: vi.fn(),
-  filesCollection: vi.fn(),
-  embeddingCacheCollection: vi.fn(),
-  kbChunksCollection: vi.fn(),
-  structuredMemCollection: vi.fn(),
-}));
-
 import { getMemoryStats } from "./mongodb-analytics.js";
-import {
-  chunksCollection,
-  filesCollection,
-  embeddingCacheCollection,
-  kbChunksCollection,
-  structuredMemCollection,
-} from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -29,6 +13,9 @@ function createMockCol(overrides: Record<string, unknown> = {}): Collection {
       toArray: vi.fn(async () => []),
     })),
     countDocuments: vi.fn(async () => 0),
+    find: vi.fn(() => ({
+      toArray: vi.fn(async () => []),
+    })),
     distinct: vi.fn(async () => []),
     ...overrides,
   } as unknown as Collection;
@@ -39,7 +26,30 @@ let mockFiles: Collection;
 let mockCache: Collection;
 let mockKbChunks: Collection;
 let mockStructuredMem: Collection;
-const db = {} as Db;
+let db: Db;
+
+function createMockDb(): Db {
+  return {
+    collection: vi.fn((name: string) => {
+      if (name.endsWith("kb_chunks")) {
+        return mockKbChunks;
+      }
+      if (name.endsWith("chunks")) {
+        return mockChunks;
+      }
+      if (name.endsWith("files")) {
+        return mockFiles;
+      }
+      if (name.endsWith("embedding_cache")) {
+        return mockCache;
+      }
+      if (name.endsWith("structured_mem")) {
+        return mockStructuredMem;
+      }
+      return createMockCol();
+    }),
+  } as unknown as Db;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -48,11 +58,7 @@ beforeEach(() => {
   mockCache = createMockCol();
   mockKbChunks = createMockCol();
   mockStructuredMem = createMockCol();
-  vi.mocked(chunksCollection).mockReturnValue(mockChunks);
-  vi.mocked(filesCollection).mockReturnValue(mockFiles);
-  vi.mocked(embeddingCacheCollection).mockReturnValue(mockCache);
-  vi.mocked(kbChunksCollection).mockReturnValue(mockKbChunks);
-  vi.mocked(structuredMemCollection).mockReturnValue(mockStructuredMem);
+  db = createMockDb();
 });
 
 // ---------------------------------------------------------------------------
@@ -138,11 +144,13 @@ describe("getMemoryStats", () => {
     (mockChunks.aggregate as ReturnType<typeof vi.fn>)
       .mockReturnValueOnce({ toArray: vi.fn(async () => []) })
       .mockReturnValueOnce({ toArray: vi.fn(async () => []) });
-    (mockFiles.distinct as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "memory/keep.md",
-      "memory/stale.md",
-      "sessions/old.jsonl",
-    ]);
+    (mockFiles.find as ReturnType<typeof vi.fn>).mockReturnValue({
+      toArray: vi.fn(async () => [
+        { path: "memory/keep.md" },
+        { path: "memory/stale.md" },
+        { path: "sessions/old.jsonl" },
+      ]),
+    });
 
     const validPaths = new Set(["memory/keep.md"]);
     const stats = await getMemoryStats(db, "test_", validPaths);
@@ -161,7 +169,7 @@ describe("getMemoryStats", () => {
     const stats = await getMemoryStats(db, "test_");
 
     expect(stats.staleFiles).toEqual([]);
-    expect(mockFiles.distinct).not.toHaveBeenCalled();
+    expect(mockFiles.find).not.toHaveBeenCalled();
   });
 
   it("aggregates embeddingStatusCoverage across all chunk collections", async () => {

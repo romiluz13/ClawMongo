@@ -292,22 +292,7 @@ describe("Phase 5: minPoolSize config", () => {
 // 4. $indexStats in getMemoryStats
 // ---------------------------------------------------------------------------
 
-vi.mock("./mongodb-schema.js", () => ({
-  chunksCollection: vi.fn(),
-  filesCollection: vi.fn(),
-  embeddingCacheCollection: vi.fn(),
-  kbChunksCollection: vi.fn(),
-  structuredMemCollection: vi.fn(),
-}));
-
 import { getMemoryStats } from "./mongodb-analytics.js";
-import {
-  chunksCollection,
-  filesCollection,
-  embeddingCacheCollection,
-  kbChunksCollection,
-  structuredMemCollection,
-} from "./mongodb-schema.js";
 
 function createMockCol(overrides: Record<string, unknown> = {}): Collection {
   return {
@@ -320,12 +305,18 @@ function createMockCol(overrides: Record<string, unknown> = {}): Collection {
   } as unknown as Collection;
 }
 
+function createMockDb(collections: Record<string, Collection>): Db {
+  return {
+    collection: vi.fn((name: string) => collections[name] ?? createMockCol()),
+  } as unknown as Db;
+}
+
 let mockChunks: Collection;
 let mockFiles: Collection;
 let mockCache: Collection;
 let mockKbChunks: Collection;
 let mockStructuredMem: Collection;
-const db = {} as Db;
+let db: Db;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -334,11 +325,13 @@ beforeEach(() => {
   mockCache = createMockCol();
   mockKbChunks = createMockCol();
   mockStructuredMem = createMockCol();
-  vi.mocked(chunksCollection).mockReturnValue(mockChunks);
-  vi.mocked(filesCollection).mockReturnValue(mockFiles);
-  vi.mocked(embeddingCacheCollection).mockReturnValue(mockCache);
-  vi.mocked(kbChunksCollection).mockReturnValue(mockKbChunks);
-  vi.mocked(structuredMemCollection).mockReturnValue(mockStructuredMem);
+  db = createMockDb({
+    test_chunks: mockChunks,
+    test_files: mockFiles,
+    test_embedding_cache: mockCache,
+    test_kb_chunks: mockKbChunks,
+    test_structured_mem: mockStructuredMem,
+  });
 });
 
 describe("Phase 5: $indexStats in getMemoryStats", () => {

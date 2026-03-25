@@ -1,4 +1,4 @@
-import type { Collection, Db } from "mongodb";
+import type { Collection, Db, Document } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
 import { evolveProcedure, recordProcedureOutcome } from "./mongodb-procedures.js";
 

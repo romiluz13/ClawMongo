@@ -1,27 +1,36 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
-import type { Db } from "mongodb";
+import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Mock telemetry before importing module under test
-// ---------------------------------------------------------------------------
-
-vi.mock("./mongodb-telemetry.js", () => ({
-  emitTelemetry: vi.fn(),
-}));
-
 import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-const DB = {} as Db;
 const PREFIX = "test_";
 const AGENT_ID = "agent-1";
 const QUERY = "how does authentication work";
+let telemetryCol: Collection;
+let DB: Db;
+
+function createMockTelemetryCol(): Collection {
+  return {
+    insertOne: vi.fn().mockResolvedValue({ insertedId: "telemetry-id", acknowledged: true }),
+  } as unknown as Collection;
+}
+
+function createMockDb(collections: Record<string, Collection>): Db {
+  return {
+    collection: vi.fn(
+      (name: string) =>
+        collections[name] ??
+        ({
+          insertOne: vi.fn().mockResolvedValue({ insertedId: "default-id", acknowledged: true }),
+        } as unknown as Collection),
+    ),
+  } as unknown as Db;
+}
 
 function makeResult(
   overrides: Partial<MemorySearchResult> & { snippet: string; score: number },
@@ -73,6 +82,8 @@ describe("crossEncoderRerank", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     originalFetch = globalThis.fetch;
+    telemetryCol = createMockTelemetryCol();
+    DB = createMockDb({ [`${PREFIX}memory_telemetry`]: telemetryCol });
   });
 
   afterEach(() => {
@@ -458,10 +469,8 @@ describe("crossEncoderRerank", () => {
     });
 
     expect(out.reranked).toBe(true);
-    expect(emitTelemetry).toHaveBeenCalledOnce();
-    const [db, prefix, doc] = vi.mocked(emitTelemetry).mock.calls[0];
-    expect(db).toBe(DB);
-    expect(prefix).toBe(PREFIX);
+    expect(telemetryCol.insertOne).toHaveBeenCalledOnce();
+    const [doc] = (telemetryCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(doc.meta).toEqual({ agentId: AGENT_ID, operation: "rerank" });
     expect(doc.ok).toBe(true);
     expect(doc.resultCount).toBe(3);
@@ -487,9 +496,7 @@ describe("crossEncoderRerank", () => {
 
     expect(out.reranked).toBe(false);
     // Should emit failure telemetry (M1 audit fix)
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      DB,
-      PREFIX,
+    expect(telemetryCol.insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "rerank" },
         ok: false,
@@ -608,9 +615,7 @@ describe("crossEncoderRerank", () => {
 
     expect(out.reranked).toBe(false);
     // Should emit telemetry on failure (changed from not emitting)
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      DB,
-      PREFIX,
+    expect(telemetryCol.insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "rerank" },
         ok: false,

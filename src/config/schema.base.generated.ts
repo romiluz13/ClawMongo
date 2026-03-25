@@ -13443,6 +13443,21 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       help: "Specifies the local embedding model source for local memory search, such as a GGUF file path or `hf:` URI. Use this only when provider is `local`, and verify model compatibility before large index rebuilds.",
       tags: ["storage"],
     },
+    "agents.defaults.memorySearch.store.path": {
+      label: "Memory Search Store Path",
+      help: "Legacy store path setting (unused in ClawMongo — MongoDB is the canonical store).",
+      tags: ["storage"],
+    },
+    "agents.defaults.memorySearch.store.vector.enabled": {
+      label: "Memory Search Store Vector",
+      help: "Legacy vector store setting (unused in ClawMongo — vector search is handled by MongoDB Atlas Search / mongot).",
+      tags: ["storage"],
+    },
+    "agents.defaults.memorySearch.store.vector.extensionPath": {
+      label: "Memory Search Store Vector Extension Path",
+      help: "Legacy vector extension path (unused in ClawMongo).",
+      tags: ["storage"],
+    },
     "agents.defaults.memorySearch.chunking.tokens": {
       label: "Memory Chunk Tokens",
       help: "Chunk size in tokens used when splitting memory sources before embedding/indexing. Increase for broader context per chunk, or lower to improve precision on pinpoint lookups.",
@@ -13552,6 +13567,11 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       label: "Memory",
       help: "Memory backend configuration (global). ClawMongo uses MongoDB as the only canonical runtime memory backend.",
       tags: ["advanced"],
+    },
+    "memory.backend": {
+      label: "Memory Backend",
+      help: 'ClawMongo supports only "mongodb". This is the default and only valid value.',
+      tags: ["storage"],
     },
     "memory.citations": {
       label: "Memory Citations Mode",
@@ -15954,22 +15974,6 @@ export const GENERATED_BASE_CONFIG_SCHEMA = {
       label: "Plugin Marketplace Plugin",
       help: "Plugin entry name inside the source marketplace, used for later updates.",
       tags: ["advanced"],
-    },
-    "agents.defaults.memorySearch.store.path": {
-      help: "Legacy store path setting (unused in ClawMongo — MongoDB is the canonical store).",
-      tags: ["storage"],
-    },
-    "agents.defaults.memorySearch.store.vector.enabled": {
-      help: "Legacy vector store setting (unused in ClawMongo — vector search is handled by MongoDB Atlas Search / mongot).",
-      tags: ["storage"],
-    },
-    "agents.defaults.memorySearch.store.vector.extensionPath": {
-      help: "Legacy vector extension path (unused in ClawMongo).",
-      tags: ["storage"],
-    },
-    "memory.backend": {
-      help: 'ClawMongo supports only "mongodb". This is the default and only valid value.',
-      tags: ["storage"],
     },
     "models.providers.*.headers.*": {
       sensitive: true,

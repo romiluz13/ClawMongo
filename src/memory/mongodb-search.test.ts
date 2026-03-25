@@ -169,7 +169,7 @@ describe("vectorSearch", () => {
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const vsStage = pipeline[0].$vectorSearch;
-    expect(vsStage.filter).toEqual({ source: "conversation" });
+    expect(vsStage.filter).toEqual({ source: "memory" });
   });
 
   it("caps numCandidates at 10000 when maxResults would exceed it", async () => {

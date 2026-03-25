@@ -455,9 +455,7 @@ export async function getEntityLinks(params: {
   }
 
   const docs = await collection
-    .find(filter)
-    .sort({ confidence: -1, updatedAt: -1 })
-    .limit(limit ?? 50)
+    .find(filter, { sort: { confidence: -1, updatedAt: -1 }, limit: limit ?? 50 })
     .toArray();
   return docs as unknown as EntityLink[];
 }

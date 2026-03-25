@@ -3,7 +3,7 @@ import { vi } from "vitest";
 export type SearchImpl = () => Promise<unknown[]>;
 export type MemoryReadParams = { relPath: string; from?: number; lines?: number };
 export type MemoryReadResult = { text: string; path: string; locator?: string; disabled?: boolean };
-type MemoryBackend = "mongodb";
+type MemoryBackend = "builtin" | "mongodb";
 
 let backend: MemoryBackend = "mongodb";
 let searchImpl: SearchImpl = async () => [];

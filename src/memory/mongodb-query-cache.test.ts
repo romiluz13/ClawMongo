@@ -11,14 +11,6 @@ vi.mock("./mongodb-search.js", () => ({
   buildVectorSearchStage: vi.fn(),
 }));
 
-vi.mock("./mongodb-schema.js", () => ({
-  queryCacheCollection: vi.fn(),
-}));
-
-vi.mock("./mongodb-telemetry.js", () => ({
-  emitTelemetry: vi.fn(),
-}));
-
 import {
   normalizeQuery,
   hashQuery,
@@ -27,9 +19,7 @@ import {
   DEFAULT_CACHE_CONFIG,
   type QueryCacheConfig,
 } from "./mongodb-query-cache.js";
-import { queryCacheCollection } from "./mongodb-schema.js";
 import { buildVectorSearchStage } from "./mongodb-search.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,13 +31,22 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
     findOneAndUpdate: vi.fn().mockResolvedValue(null),
     aggregate: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
     updateOne: vi.fn().mockResolvedValue({ acknowledged: true }),
+    insertOne: vi.fn().mockResolvedValue({ acknowledged: true, insertedId: "mock-id" }),
     ...overrides,
   } as unknown as Collection;
 }
 
-function createMockDb(collection: Collection): Db {
+function createMockDb(collection: Collection, telemetryCollection = createMockCollection()): Db {
   return {
-    collection: vi.fn().mockReturnValue(collection),
+    collection: vi.fn((name: string) => {
+      if (name === `${PREFIX}query_cache`) {
+        return collection;
+      }
+      if (name === `${PREFIX}memory_telemetry`) {
+        return telemetryCollection;
+      }
+      return createMockCollection();
+    }),
   } as unknown as Db;
 }
 
@@ -141,7 +140,6 @@ describe("checkCache", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(queryCacheCollection).mockReturnValue(mockCol);
   });
 
   it("returns miss when disabled", async () => {
@@ -433,7 +431,10 @@ describe("checkCache", () => {
 
   it("uses custom vectorIndexName when provided", async () => {
     vi.mocked(mockCol.findOne).mockResolvedValue(null as never);
-    vi.mocked(buildVectorSearchStage).mockReturnValue(null);
+    vi.mocked(buildVectorSearchStage).mockReturnValue({
+      index: "custom_index",
+      limit: 1,
+    } as never);
 
     await checkCache({
       db: createMockDb(mockCol),
@@ -446,9 +447,8 @@ describe("checkCache", () => {
       vectorIndexName: "custom_index",
     });
 
-    expect(buildVectorSearchStage).toHaveBeenCalledWith(
-      expect.objectContaining({ indexName: "custom_index" }),
-    );
+    const pipeline = (mockCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(pipeline[0].$vectorSearch.index).toBe("custom_index");
   });
 
   it("Tier 2 increments hitCount on semantic hit (fire-and-forget)", async () => {
@@ -499,7 +499,6 @@ describe("writeCache", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(queryCacheCollection).mockReturnValue(mockCol);
   });
 
   it("writes entry with correct fields", () => {
@@ -746,11 +745,12 @@ describe("writeCache", () => {
 
 describe("checkCache telemetry emission", () => {
   let mockCol: Collection;
+  let telemetryCol: Collection;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(queryCacheCollection).mockReturnValue(mockCol);
+    telemetryCol = createMockCollection();
   });
 
   it("emits cache-check telemetry on exact hit", async () => {
@@ -764,7 +764,7 @@ describe("checkCache telemetry emission", () => {
     vi.mocked(mockCol.findOne).mockResolvedValue(cachedDoc as never);
 
     await checkCache({
-      db: createMockDb(mockCol),
+      db: createMockDb(mockCol, telemetryCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -773,9 +773,7 @@ describe("checkCache telemetry emission", () => {
       config: DEFAULT_CONFIG,
     });
 
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      {},
-      PREFIX,
+    expect(telemetryCol.insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "cache-check" },
         ok: true,
@@ -790,7 +788,7 @@ describe("checkCache telemetry emission", () => {
     vi.mocked(buildVectorSearchStage).mockReturnValue(null);
 
     await checkCache({
-      db: createMockDb(mockCol),
+      db: createMockDb(mockCol, telemetryCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -799,9 +797,7 @@ describe("checkCache telemetry emission", () => {
       config: DEFAULT_CONFIG,
     });
 
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      {},
-      PREFIX,
+    expect(telemetryCol.insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "cache-check" },
         ok: true,
@@ -822,7 +818,7 @@ describe("checkCache telemetry emission", () => {
       config: { ...DEFAULT_CONFIG, enabled: false },
     });
 
-    expect(emitTelemetry).not.toHaveBeenCalled();
+    expect(telemetryCol.insertOne).not.toHaveBeenCalled();
   });
 
   it("does not emit telemetry for empty query", async () => {
@@ -836,6 +832,6 @@ describe("checkCache telemetry emission", () => {
       config: DEFAULT_CONFIG,
     });
 
-    expect(emitTelemetry).not.toHaveBeenCalled();
+    expect(telemetryCol.insertOne).not.toHaveBeenCalled();
   });
 });

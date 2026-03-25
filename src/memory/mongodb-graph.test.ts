@@ -1,11 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-vi.mock("./mongodb-telemetry.js", () => ({
-  emitTelemetry: vi.fn(),
-}));
-
 import {
   upsertEntity,
   upsertRelation,
@@ -21,7 +16,6 @@ import {
   type Entity,
   type Relation,
 } from "./mongodb-graph.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: stub MongoDB collection
@@ -29,6 +23,7 @@ import { emitTelemetry } from "./mongodb-telemetry.js";
 
 function createMockCollection(overrides: Partial<Record<string, unknown>> = {}): Collection {
   return {
+    insertOne: vi.fn().mockResolvedValue({ insertedId: "mock-id", acknowledged: true }),
     updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1, matchedCount: 0, modifiedCount: 0 }),
     bulkWrite: vi.fn().mockResolvedValue({
       insertedCount: 0,
@@ -243,6 +238,7 @@ describe("mongodb-graph", () => {
       ];
       const entityLinksCol = createMockCollection({
         find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue(docs),
           sort: vi.fn().mockReturnValue({
             limit: vi.fn().mockReturnValue({
               toArray: vi.fn().mockResolvedValue(docs),
@@ -757,6 +753,7 @@ describe("mongodb-graph", () => {
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
         [`${PREFIX}entity_links`]: entityLinksCol,
+        [`${PREFIX}memory_telemetry`]: createMockCollection(),
       });
 
       const result = await extractAndUpsertEntities({
@@ -1011,10 +1008,12 @@ describe("mongodb-graph", () => {
       const entitiesCol = createMockCollection();
       const relationsCol = createMockCollection();
       const entityLinksCol = createMockCollection();
+      const telemetryCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entitiesCol,
         [`${PREFIX}relations`]: relationsCol,
         [`${PREFIX}entity_links`]: entityLinksCol,
+        [`${PREFIX}memory_telemetry`]: telemetryCol,
       });
 
       await extractAndUpsertEntities({
@@ -1025,9 +1024,7 @@ describe("mongodb-graph", () => {
         scope: "agent",
       });
 
-      expect(emitTelemetry).toHaveBeenCalledWith(
-        db,
-        PREFIX,
+      expect(telemetryCol.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           meta: { agentId: "agent-1", operation: "entity-extraction" },
           ok: true,
@@ -1059,9 +1056,11 @@ describe("mongodb-graph", () => {
           toArray: vi.fn().mockResolvedValue([]),
         }),
       });
+      const telemetryCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}entities`]: entCol,
         [`${PREFIX}relations`]: relCol,
+        [`${PREFIX}memory_telemetry`]: telemetryCol,
       });
 
       await expandGraph({
@@ -1071,9 +1070,7 @@ describe("mongodb-graph", () => {
         agentId: "agent-1",
       });
 
-      expect(emitTelemetry).toHaveBeenCalledWith(
-        db,
-        PREFIX,
+      expect(telemetryCol.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           meta: { agentId: "agent-1", operation: "graph-expansion" },
           ok: true,

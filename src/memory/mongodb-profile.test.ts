@@ -1,31 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Mock collection accessors and telemetry before importing module under test
-// ---------------------------------------------------------------------------
-
-vi.mock("./mongodb-schema.js", () => ({
-  structuredMemCollection: vi.fn(),
-  entitiesCollection: vi.fn(),
-  relationsCollection: vi.fn(),
-  episodesCollection: vi.fn(),
-  eventsCollection: vi.fn(),
-}));
-
-vi.mock("./mongodb-telemetry.js", () => ({
-  emitTelemetry: vi.fn(),
-}));
-
 import { synthesizeProfile } from "./mongodb-profile.js";
-import {
-  structuredMemCollection,
-  entitiesCollection,
-  episodesCollection,
-  eventsCollection,
-} from "./mongodb-schema.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,6 +11,37 @@ const PREFIX = "test_";
 const AGENT_ID = "agent-1";
 const SCOPE = "agent" as const;
 const SCOPE_REF = "agent-scope-ref";
+
+let currentStructuredCol: Collection = createMockAggregateCollection(emptyFacetResult());
+let currentEntitiesCol: Collection = createMockAggregateCollection([]);
+let currentEpisodesCol: Collection = createMockFindCollection([]);
+let currentEventsCol: Collection = createMockAggregateCollection(emptyActivityResult());
+let currentTelemetryCol: Collection = {
+  insertOne: vi.fn(async () => ({ insertedId: "telemetry-id", acknowledged: true })),
+} as unknown as Collection;
+
+function createMockDb(): Db {
+  return {
+    collection: vi.fn((name: string) => {
+      if (name.endsWith("structured_mem")) {
+        return currentStructuredCol;
+      }
+      if (name.endsWith("entities")) {
+        return currentEntitiesCol;
+      }
+      if (name.endsWith("episodes")) {
+        return currentEpisodesCol;
+      }
+      if (name.endsWith("events")) {
+        return currentEventsCol;
+      }
+      if (name.endsWith("memory_telemetry")) {
+        return currentTelemetryCol;
+      }
+      return createMockAggregateCollection([]);
+    }),
+  } as unknown as Db;
+}
 
 /**
  * Create a mock aggregate collection: the aggregate() call returns
@@ -58,7 +65,7 @@ function createMockAggregateCollection(docs: Document[]): Collection {
 }
 
 /**
- * Create a mock find collection (for episodes): find().sort().limit().project().toArray()
+ * Create a mock find collection (for episodes): find(filter, { sort, limit }).project().toArray()
  */
 function createMockFindCollection(docs: Document[]): Collection {
   return {
@@ -66,12 +73,8 @@ function createMockFindCollection(docs: Document[]): Collection {
       toArray: vi.fn().mockResolvedValue([]),
     }),
     find: vi.fn().mockReturnValue({
-      sort: vi.fn().mockReturnValue({
-        limit: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue(docs),
-          }),
-        }),
+      project: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockResolvedValue(docs),
       }),
     }),
   } as unknown as Collection;
@@ -89,7 +92,7 @@ function emptyActivityResult(): Document[] {
 
 function defaultParams() {
   return {
-    db: {} as Db,
+    db: createMockDb(),
     prefix: PREFIX,
     agentId: AGENT_ID,
     scope: SCOPE,
@@ -98,15 +101,13 @@ function defaultParams() {
 }
 
 function setupEmptyMocks(): void {
-  const emptyStructured = createMockAggregateCollection(emptyFacetResult());
-  const emptyEntities = createMockAggregateCollection([]);
-  const emptyEpisodes = createMockFindCollection([]);
-  const emptyEvents = createMockAggregateCollection(emptyActivityResult());
-
-  vi.mocked(structuredMemCollection).mockReturnValue(emptyStructured);
-  vi.mocked(entitiesCollection).mockReturnValue(emptyEntities);
-  vi.mocked(episodesCollection).mockReturnValue(emptyEpisodes);
-  vi.mocked(eventsCollection).mockReturnValue(emptyEvents);
+  currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+  currentEntitiesCol = createMockAggregateCollection([]);
+  currentEpisodesCol = createMockFindCollection([]);
+  currentEventsCol = createMockAggregateCollection(emptyActivityResult());
+  currentTelemetryCol = {
+    insertOne: vi.fn(async () => ({ insertedId: "telemetry-id", acknowledged: true })),
+  } as unknown as Collection;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,7 @@ function setupEmptyMocks(): void {
 describe("mongodb-profile", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setupEmptyMocks();
   });
 
   // 1. Empty collections
@@ -152,10 +154,10 @@ describe("mongodb-profile", () => {
     ];
 
     const structuredCol = createMockAggregateCollection(facetResult);
-    vi.mocked(structuredMemCollection).mockReturnValue(structuredCol);
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = structuredCol;
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -177,7 +179,7 @@ describe("mongodb-profile", () => {
     await synthesizeProfile({ ...defaultParams(), maxPerType: 5 });
 
     // Verify $facet pipeline uses the limit
-    const structCol = vi.mocked(structuredMemCollection).mock.results[0].value;
+    const structCol = currentStructuredCol;
     const aggregateCall = vi.mocked(structCol.aggregate).mock.calls[0][0] as Document[];
     const facetStage = aggregateCall.find((s: Document) => s.$facet);
     expect(facetStage).toBeDefined();
@@ -197,7 +199,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const structCol = vi.mocked(structuredMemCollection).mock.results[0].value;
+    const structCol = currentStructuredCol;
     const aggregateCall = vi.mocked(structCol.aggregate).mock.calls[0][0] as Document[];
     const facetStage = aggregateCall.find((s: Document) => s.$facet);
     const facet = facetStage!.$facet;
@@ -214,7 +216,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const structCol = vi.mocked(structuredMemCollection).mock.results[0].value;
+    const structCol = currentStructuredCol;
     const aggregateCall = vi.mocked(structCol.aggregate).mock.calls[0][0] as Document[];
     const matchStage = aggregateCall.find((s: Document) => s.$match);
     expect(matchStage).toBeDefined();
@@ -228,12 +230,10 @@ describe("mongodb-profile", () => {
       { name: "ClawMongo", type: "project", relationCount: 3 },
     ];
 
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection(entityDocs));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection(entityDocs);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -251,7 +251,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile({ ...defaultParams(), maxEntities: 3 });
 
-    const entCol = vi.mocked(entitiesCollection).mock.results[0].value;
+    const entCol = currentEntitiesCol;
     const aggregateCall = vi.mocked(entCol.aggregate).mock.calls[0][0] as Document[];
     const limitStage = aggregateCall.find((s: Document) => s.$limit !== undefined);
     expect(limitStage).toBeDefined();
@@ -277,12 +277,10 @@ describe("mongodb-profile", () => {
       },
     ];
 
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection(episodeDocs));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection(episodeDocs);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -297,13 +295,17 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile({ ...defaultParams(), maxEpisodes: 3 });
 
-    const epiCol = vi.mocked(episodesCollection).mock.results[0].value;
+    const epiCol = currentEpisodesCol;
     const findCall = vi.mocked(epiCol.find);
-    expect(findCall).toHaveBeenCalled();
-    // Check the chain: find().sort().limit(3)
-    const sortResult = findCall.mock.results[0].value;
-    const limitResult = vi.mocked(sortResult.sort).mock.results[0].value;
-    expect(limitResult.limit).toHaveBeenCalledWith(3);
+    expect(findCall).toHaveBeenCalledWith(
+      {
+        agentId: AGENT_ID,
+        scope: SCOPE,
+        scopeRef: SCOPE_REF,
+        status: { $ne: "deleted" },
+      },
+      { sort: { "timeRange.start": -1 }, limit: 3 },
+    );
   });
 
   it("synthesizeProfile excludes deleted episodes from recentEpisodes", async () => {
@@ -311,14 +313,17 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const epiCol = vi.mocked(episodesCollection).mock.results[0].value;
+    const epiCol = currentEpisodesCol;
     const findCall = vi.mocked(epiCol.find);
-    expect(findCall).toHaveBeenCalledWith({
-      agentId: AGENT_ID,
-      scope: SCOPE,
-      scopeRef: SCOPE_REF,
-      status: { $ne: "deleted" },
-    });
+    expect(findCall).toHaveBeenCalledWith(
+      {
+        agentId: AGENT_ID,
+        scope: SCOPE,
+        scopeRef: SCOPE_REF,
+        status: { $ne: "deleted" },
+      },
+      { sort: { "timeRange.start": -1 }, limit: 10 },
+    );
   });
 
   // 10. Activity patterns from events
@@ -329,12 +334,10 @@ describe("mongodb-profile", () => {
       { _id: "system", count: 2, lastTs: new Date("2026-03-19") },
     ];
 
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection(activityDocs));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection(activityDocs);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -356,7 +359,7 @@ describe("mongodb-profile", () => {
     await synthesizeProfile({ ...defaultParams(), activityWindowMs: customWindowMs });
     const afterTime = Date.now();
 
-    const evtCol = vi.mocked(eventsCollection).mock.results[0].value;
+    const evtCol = currentEventsCol;
     const aggregateCall = vi.mocked(evtCol.aggregate).mock.calls[0][0] as Document[];
     const matchStage = aggregateCall.find((s: Document) => s.$match);
     expect(matchStage).toBeDefined();
@@ -384,7 +387,7 @@ describe("mongodb-profile", () => {
     await synthesizeProfile(defaultParams());
 
     // Structured memory $match
-    const structCol = vi.mocked(structuredMemCollection).mock.results[0].value;
+    const structCol = currentStructuredCol;
     const structAgg = vi.mocked(structCol.aggregate).mock.calls[0][0] as Document[];
     const structMatch = structAgg.find((s: Document) => s.$match);
     expect(structMatch!.$match.agentId).toBe(AGENT_ID);
@@ -392,7 +395,7 @@ describe("mongodb-profile", () => {
     expect(structMatch!.$match.scopeRef).toBe(SCOPE_REF);
 
     // Entities $match
-    const entCol = vi.mocked(entitiesCollection).mock.results[0].value;
+    const entCol = currentEntitiesCol;
     const entAgg = vi.mocked(entCol.aggregate).mock.calls[0][0] as Document[];
     const entMatch = entAgg.find((s: Document) => s.$match);
     expect(entMatch!.$match.agentId).toBe(AGENT_ID);
@@ -400,14 +403,14 @@ describe("mongodb-profile", () => {
     expect(entMatch!.$match.scopeRef).toBe(SCOPE_REF);
 
     // Episodes find filter
-    const epiCol = vi.mocked(episodesCollection).mock.results[0].value;
+    const epiCol = currentEpisodesCol;
     const findCall = vi.mocked(epiCol.find).mock.calls[0][0] as Document;
     expect(findCall.agentId).toBe(AGENT_ID);
     expect(findCall.scope).toBe(SCOPE);
     expect(findCall.scopeRef).toBe(SCOPE_REF);
 
     // Events $match
-    const evtCol = vi.mocked(eventsCollection).mock.results[0].value;
+    const evtCol = currentEventsCol;
     const evtAgg = vi.mocked(evtCol.aggregate).mock.calls[0][0] as Document[];
     const evtMatch = evtAgg.find((s: Document) => s.$match);
     expect(evtMatch!.$match.agentId).toBe(AGENT_ID);
@@ -421,9 +424,9 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      {},
-      PREFIX,
+    expect(currentTelemetryCol.insertOne).toHaveBeenCalledOnce();
+    const [doc] = (currentTelemetryCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(doc).toEqual(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "profile-synthesis" },
         ok: true,
@@ -437,10 +440,10 @@ describe("mongodb-profile", () => {
   it("synthesizeProfile handles empty structured_mem collection", async () => {
     // When aggregate returns empty array (no $facet result)
     const structuredCol = createMockAggregateCollection([]);
-    vi.mocked(structuredMemCollection).mockReturnValue(structuredCol);
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = structuredCol;
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -452,12 +455,10 @@ describe("mongodb-profile", () => {
 
   // 16. Empty entities collection
   it("synthesizeProfile handles empty entities collection", async () => {
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -466,12 +467,10 @@ describe("mongodb-profile", () => {
 
   // 17. Empty episodes collection
   it("synthesizeProfile handles empty episodes collection", async () => {
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -480,12 +479,10 @@ describe("mongodb-profile", () => {
 
   // 18. Empty events collection
   it("synthesizeProfile handles empty events collection", async () => {
-    vi.mocked(structuredMemCollection).mockReturnValue(
-      createMockAggregateCollection(emptyFacetResult()),
-    );
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(emptyFacetResult());
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -506,10 +503,10 @@ describe("mongodb-profile", () => {
       },
     ];
 
-    vi.mocked(structuredMemCollection).mockReturnValue(createMockAggregateCollection(facetResult));
-    vi.mocked(entitiesCollection).mockReturnValue(createMockAggregateCollection([]));
-    vi.mocked(episodesCollection).mockReturnValue(createMockFindCollection([]));
-    vi.mocked(eventsCollection).mockReturnValue(createMockAggregateCollection([]));
+    currentStructuredCol = createMockAggregateCollection(facetResult);
+    currentEntitiesCol = createMockAggregateCollection([]);
+    currentEpisodesCol = createMockFindCollection([]);
+    currentEventsCol = createMockAggregateCollection([]);
 
     const profile = await synthesizeProfile(defaultParams());
 
@@ -522,7 +519,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const entCol = vi.mocked(entitiesCollection).mock.results[0].value;
+    const entCol = currentEntitiesCol;
     const aggregateCall = vi.mocked(entCol.aggregate).mock.calls[0][0] as Document[];
     const lookupStages = aggregateCall.filter((s: Document) => s.$lookup);
     // Should have TWO $lookup stages instead of one with $or
@@ -541,7 +538,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const entCol = vi.mocked(entitiesCollection).mock.results[0].value;
+    const entCol = currentEntitiesCol;
     const aggregateCall = vi.mocked(entCol.aggregate).mock.calls[0][0] as Document[];
     const lookupStages = aggregateCall.filter((s: Document) => s.$lookup);
     for (const lookup of lookupStages) {
@@ -560,7 +557,7 @@ describe("mongodb-profile", () => {
 
     await synthesizeProfile(defaultParams());
 
-    const entCol = vi.mocked(entitiesCollection).mock.results[0].value;
+    const entCol = currentEntitiesCol;
     const aggregateCall = vi.mocked(entCol.aggregate).mock.calls[0][0] as Document[];
     const addFieldsStage = aggregateCall.find((s: Document) => s.$addFields?.relationCount);
     expect(addFieldsStage).toBeDefined();

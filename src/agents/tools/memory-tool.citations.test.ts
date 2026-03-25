@@ -3,6 +3,7 @@ import {
   getMemorySearchManagerMockCalls,
   getReadAgentMemoryFileMockCalls,
   resetMemoryToolMockState,
+  setMemoryBackend,
   setMemoryReadFileImpl,
   setMemorySearchImpl,
   type MemoryReadParams,

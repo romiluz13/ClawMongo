@@ -1,10 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
-vi.mock("./mongodb-telemetry.js", () => ({
-  emitTelemetry: vi.fn(),
-}));
-
 import {
   recordIngestRun,
   recordProjectionRun,
@@ -14,7 +10,6 @@ import {
   type IngestRun,
   type ProjectionRun,
 } from "./mongodb-ops.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers: stub MongoDB collection
@@ -275,9 +270,12 @@ describe("mongodb-ops", () => {
 
   describe("recordProjectionRun telemetry emission", () => {
     it("emits projection-run telemetry after insertOne", async () => {
-      vi.clearAllMocks();
       const projCol = createMockCollection();
-      const db = createMockDb({ [`${PREFIX}projection_runs`]: projCol });
+      const telemetryCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}projection_runs`]: projCol,
+        [`${PREFIX}memory_telemetry`]: telemetryCol,
+      });
 
       await recordProjectionRun({
         db,
@@ -291,9 +289,9 @@ describe("mongodb-ops", () => {
         },
       });
 
-      expect(emitTelemetry).toHaveBeenCalledWith(
-        db,
-        PREFIX,
+      expect(telemetryCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (telemetryCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc).toEqual(
         expect.objectContaining({
           meta: { agentId: "agent-1", operation: "projection-run" },
           durationMs: 3000,
@@ -304,11 +302,14 @@ describe("mongodb-ops", () => {
     });
 
     it("does not emit telemetry when insertOne fails", async () => {
-      vi.clearAllMocks();
       const projCol = createMockCollection({
         insertOne: vi.fn().mockRejectedValue(new Error("DB error")),
       });
-      const db = createMockDb({ [`${PREFIX}projection_runs`]: projCol });
+      const telemetryCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}projection_runs`]: projCol,
+        [`${PREFIX}memory_telemetry`]: telemetryCol,
+      });
 
       await expect(
         recordProjectionRun({
@@ -324,7 +325,7 @@ describe("mongodb-ops", () => {
         }),
       ).rejects.toThrow("DB error");
 
-      expect(emitTelemetry).not.toHaveBeenCalled();
+      expect(telemetryCol.insertOne).not.toHaveBeenCalled();
     });
   });
 });

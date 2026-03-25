@@ -2,18 +2,12 @@
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock recordMutation from mongodb-mutations.js
-vi.mock("./mongodb-mutations.js", () => ({
-  recordMutation: vi.fn().mockResolvedValue({ mutationId: "mock-mut-id" }),
-}));
-
 // Mock telemetry (imported by mongodb-graph.ts)
 vi.mock("./mongodb-telemetry.js", () => ({
   emitTelemetry: vi.fn(),
 }));
 
 import { upsertEntity, upsertRelation, type Entity, type Relation } from "./mongodb-graph.js";
-import { recordMutation } from "./mongodb-mutations.js";
 import { writeStructuredMemory, type StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 
 // ---------------------------------------------------------------------------
@@ -86,9 +80,11 @@ describe("P4: audit integration", () => {
     it("fires recordMutation after creating a new structured memory entry", async () => {
       const col = createMockCollection();
       const revisionsCol = createMockCollection();
+      const mutationsCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}structured_mem`]: col,
         [`${PREFIX}structured_mem_revisions`]: revisionsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
       });
 
       const entry: StructuredMemoryEntry = {
@@ -105,15 +101,14 @@ describe("P4: audit integration", () => {
         embeddingMode: "automated",
       });
 
-      // recordMutation should have been called via fire-and-forget
-      expect(recordMutation).toHaveBeenCalledOnce();
-      const call = vi.mocked(recordMutation).mock.calls[0][0];
-      expect(call.mutation.collectionName).toBe("structured_mem");
-      expect(call.mutation.operation).toBe("create");
-      expect(call.mutation.agentId).toBe("main");
-      expect(call.mutation.oldValue).toBeNull();
-      expect(call.mutation.newValue).toBeDefined();
-      expect(call.mutation.actorRole).toBe("system");
+      expect(mutationsCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (mutationsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc.collectionName).toBe("structured_mem");
+      expect(doc.operation).toBe("create");
+      expect(doc.agentId).toBe("main");
+      expect(doc.oldValue).toBeNull();
+      expect(doc.newValue).toBeDefined();
+      expect(doc.actorRole).toBe("system");
     });
 
     it("records 'update' operation with changedFields when value changes", async () => {
@@ -136,9 +131,11 @@ describe("P4: audit integration", () => {
         })),
       });
       const revisionsCol = createMockCollection();
+      const mutationsCol = createMockCollection();
       const db = createMockDb({
         [`${PREFIX}structured_mem`]: col,
         [`${PREFIX}structured_mem_revisions`]: revisionsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
       });
 
       const entry: StructuredMemoryEntry = {
@@ -155,29 +152,33 @@ describe("P4: audit integration", () => {
         embeddingMode: "automated",
       });
 
-      expect(recordMutation).toHaveBeenCalledOnce();
-      const call = vi.mocked(recordMutation).mock.calls[0][0];
-      expect(call.mutation.operation).toBe("update");
-      expect(call.mutation.changedFields).toContain("value");
+      expect(mutationsCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (mutationsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc.operation).toBe("update");
+      expect(doc.changedFields).toContain("value");
     });
   });
 
   describe("upsertEntity records mutation", () => {
     it("fires recordMutation after creating a new entity", async () => {
       const entitiesCol = createMockCollection();
-      const db = createMockDb({ [`${PREFIX}entities`]: entitiesCol });
+      const mutationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
       const entity = makeEntity();
 
       await upsertEntity({ db, prefix: PREFIX, entity });
 
-      expect(recordMutation).toHaveBeenCalledOnce();
-      const call = vi.mocked(recordMutation).mock.calls[0][0];
-      expect(call.mutation.collectionName).toBe("entities");
-      expect(call.mutation.operation).toBe("create");
-      expect(call.mutation.documentId).toBe("ent-1");
-      expect(call.mutation.agentId).toBe("agent-1");
-      expect(call.mutation.oldValue).toBeNull();
-      expect(call.mutation.actorRole).toBe("system");
+      expect(mutationsCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (mutationsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc.collectionName).toBe("entities");
+      expect(doc.operation).toBe("create");
+      expect(doc.documentId).toBe("ent-1");
+      expect(doc.agentId).toBe("agent-1");
+      expect(doc.oldValue).toBeNull();
+      expect(doc.actorRole).toBe("system");
     });
 
     it("fires recordMutation with 'update' when entity already exists", async () => {
@@ -186,45 +187,55 @@ describe("P4: audit integration", () => {
           .fn()
           .mockResolvedValue({ upsertedCount: 0, matchedCount: 1, modifiedCount: 1 }),
       });
-      const db = createMockDb({ [`${PREFIX}entities`]: entitiesCol });
+      const mutationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
       const entity = makeEntity({ name: "Alice Updated" });
 
       await upsertEntity({ db, prefix: PREFIX, entity });
 
-      expect(recordMutation).toHaveBeenCalledOnce();
-      const call = vi.mocked(recordMutation).mock.calls[0][0];
-      expect(call.mutation.operation).toBe("update");
+      expect(mutationsCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (mutationsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc.operation).toBe("update");
     });
   });
 
   describe("upsertRelation records mutation", () => {
     it("fires recordMutation after creating a new relation", async () => {
       const relationsCol = createMockCollection();
-      const db = createMockDb({ [`${PREFIX}relations`]: relationsCol });
+      const mutationsCol = createMockCollection();
+      const db = createMockDb({
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
       const relation = makeRelation();
 
       await upsertRelation({ db, prefix: PREFIX, relation });
 
-      expect(recordMutation).toHaveBeenCalledOnce();
-      const call = vi.mocked(recordMutation).mock.calls[0][0];
-      expect(call.mutation.collectionName).toBe("relations");
-      expect(call.mutation.operation).toBe("create");
-      expect(call.mutation.documentId).toContain("ent-1");
-      expect(call.mutation.agentId).toBe("agent-1");
-      expect(call.mutation.oldValue).toBeNull();
-      expect(call.mutation.actorRole).toBe("system");
+      expect(mutationsCol.insertOne).toHaveBeenCalledOnce();
+      const [doc] = (mutationsCol.insertOne as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(doc.collectionName).toBe("relations");
+      expect(doc.operation).toBe("create");
+      expect(doc.documentId).toContain("ent-1");
+      expect(doc.agentId).toBe("agent-1");
+      expect(doc.oldValue).toBeNull();
+      expect(doc.actorRole).toBe("system");
     });
   });
 
   describe("audit failure does not break primary write", () => {
     it("writeStructuredMemory succeeds even when recordMutation throws", async () => {
-      vi.mocked(recordMutation).mockRejectedValueOnce(new Error("audit db down"));
-
       const col = createMockCollection();
       const revisionsCol = createMockCollection();
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockRejectedValueOnce(new Error("audit db down")),
+      });
       const db = createMockDb({
         [`${PREFIX}structured_mem`]: col,
         [`${PREFIX}structured_mem_revisions`]: revisionsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
       });
 
       const entry: StructuredMemoryEntry = {
@@ -247,10 +258,14 @@ describe("P4: audit integration", () => {
     });
 
     it("upsertEntity succeeds even when recordMutation throws", async () => {
-      vi.mocked(recordMutation).mockRejectedValueOnce(new Error("audit db down"));
-
       const entitiesCol = createMockCollection();
-      const db = createMockDb({ [`${PREFIX}entities`]: entitiesCol });
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockRejectedValueOnce(new Error("audit db down")),
+      });
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
       const entity = makeEntity();
 
       const result = await upsertEntity({ db, prefix: PREFIX, entity });
@@ -260,10 +275,14 @@ describe("P4: audit integration", () => {
     });
 
     it("upsertRelation succeeds even when recordMutation throws", async () => {
-      vi.mocked(recordMutation).mockRejectedValueOnce(new Error("audit db down"));
-
       const relationsCol = createMockCollection();
-      const db = createMockDb({ [`${PREFIX}relations`]: relationsCol });
+      const mutationsCol = createMockCollection({
+        insertOne: vi.fn().mockRejectedValueOnce(new Error("audit db down")),
+      });
+      const db = createMockDb({
+        [`${PREFIX}relations`]: relationsCol,
+        [`${PREFIX}memory_mutations`]: mutationsCol,
+      });
       const relation = makeRelation();
 
       const result = await upsertRelation({ db, prefix: PREFIX, relation });

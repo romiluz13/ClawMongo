@@ -1,15 +1,7 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// Mock the schema module before imports
-vi.mock("./mongodb-schema.js", () => ({
-  chunksCollection: vi.fn(),
-  eventsCollection: vi.fn(),
-}));
-
 import { backfillEventsFromChunks } from "./mongodb-migration.js";
-import { chunksCollection, eventsCollection } from "./mongodb-schema.js";
 
 // ---------------------------------------------------------------------------
 // Mock collection factories
@@ -36,8 +28,21 @@ function createMockEventsCol(): Collection {
   } as unknown as Collection;
 }
 
+let currentChunksCol: Collection = createMockChunksCol();
+let currentEventsCol: Collection = createMockEventsCol();
+
 function mockDb(): Db {
-  return {} as unknown as Db;
+  return {
+    collection: vi.fn((name: string) => {
+      if (name.endsWith("chunks")) {
+        return currentChunksCol;
+      }
+      if (name.endsWith("events")) {
+        return currentEventsCol;
+      }
+      return createMockEventsCol();
+    }),
+  } as unknown as Db;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,6 +52,8 @@ function mockDb(): Db {
 describe("backfillEventsFromChunks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    currentChunksCol = createMockChunksCol();
+    currentEventsCol = createMockEventsCol();
   });
 
   it("reads chunks and creates events", async () => {
@@ -70,8 +77,8 @@ describe("backfillEventsFromChunks", () => {
     const chunksCol = createMockChunksCol(chunks);
     const eventsCol = createMockEventsCol();
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     const result = await backfillEventsFromChunks({
       db: mockDb(),
@@ -129,8 +136,8 @@ describe("backfillEventsFromChunks", () => {
       ok: 1,
     } as never);
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     const result = await backfillEventsFromChunks({
       db: mockDb(),
@@ -187,8 +194,8 @@ describe("backfillEventsFromChunks", () => {
     const chunksCol = createMockChunksCol(chunks);
     const eventsCol = createMockEventsCol();
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     await backfillEventsFromChunks({
       db: mockDb(),
@@ -217,8 +224,8 @@ describe("backfillEventsFromChunks", () => {
     const chunksCol = createMockChunksCol(chunks);
     const eventsCol = createMockEventsCol();
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     await backfillEventsFromChunks({
       db: mockDb(),
@@ -268,8 +275,8 @@ describe("backfillEventsFromChunks", () => {
       ok: 1,
     } as never);
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     const result = await backfillEventsFromChunks({
       db: mockDb(),
@@ -332,8 +339,8 @@ describe("backfillEventsFromChunks", () => {
       ok: 1,
     } as never);
 
-    vi.mocked(chunksCollection).mockReturnValue(chunksCol);
-    vi.mocked(eventsCollection).mockReturnValue(eventsCol);
+    currentChunksCol = chunksCol;
+    currentEventsCol = eventsCol;
 
     const result = await backfillEventsFromChunks({
       db: mockDb(),

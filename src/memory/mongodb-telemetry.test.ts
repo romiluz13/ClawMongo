@@ -1,16 +1,6 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-// ---------------------------------------------------------------------------
-// Mock mongodb-schema before importing module under test
-// ---------------------------------------------------------------------------
-
-vi.mock("./mongodb-schema.js", () => ({
-  telemetryCollection: vi.fn(),
-}));
-
-import { telemetryCollection } from "./mongodb-schema.js";
 import {
   emitTelemetry,
   getLatencyStats,
@@ -33,21 +23,30 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
 const PREFIX = "test_";
 const AGENT_ID = "agent-1";
 
+function createMockDb(collection: Collection, prefix = PREFIX): Db {
+  return {
+    collection: vi.fn((name: string) =>
+      name === `${prefix}memory_telemetry` ? collection : createMockCollection(),
+    ),
+  } as unknown as Db;
+}
+
 // ---------------------------------------------------------------------------
 // emitTelemetry
 // ---------------------------------------------------------------------------
 
 describe("emitTelemetry", () => {
   let mockCol: Collection;
+  let db: Db;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(telemetryCollection).mockReturnValue(mockCol);
+    db = createMockDb(mockCol);
   });
 
   it("calls insertOne with correct document shape", () => {
-    emitTelemetry({} as Db, PREFIX, {
+    emitTelemetry(db, PREFIX, {
       meta: { agentId: AGENT_ID, operation: "search" },
       durationMs: 42,
       ok: true,
@@ -67,7 +66,7 @@ describe("emitTelemetry", () => {
 
   it("adds ts field automatically", () => {
     const before = Date.now();
-    emitTelemetry({} as Db, PREFIX, {
+    emitTelemetry(db, PREFIX, {
       meta: { agentId: AGENT_ID, operation: "event-write" },
       durationMs: 10,
       ok: true,
@@ -87,7 +86,7 @@ describe("emitTelemetry", () => {
 
     // Should not throw
     expect(() => {
-      emitTelemetry({} as Db, PREFIX, {
+      emitTelemetry(db, PREFIX, {
         meta: { agentId: AGENT_ID, operation: "search" },
         durationMs: 10,
         ok: true,
@@ -96,7 +95,7 @@ describe("emitTelemetry", () => {
   });
 
   it("includes optional fields when provided", () => {
-    emitTelemetry({} as Db, PREFIX, {
+    emitTelemetry(db, PREFIX, {
       meta: { agentId: AGENT_ID, operation: "search" },
       durationMs: 100,
       ok: true,
@@ -118,7 +117,7 @@ describe("emitTelemetry", () => {
   });
 
   it("omits optional fields when not provided", () => {
-    emitTelemetry({} as Db, PREFIX, {
+    emitTelemetry(db, PREFIX, {
       meta: { agentId: AGENT_ID, operation: "cache-check" },
       durationMs: 5,
       ok: true,
@@ -133,13 +132,16 @@ describe("emitTelemetry", () => {
   });
 
   it("passes correct collection prefix", () => {
-    emitTelemetry({} as Db, "prod_", {
+    const prodDb = createMockDb(mockCol, "prod_");
+    emitTelemetry(prodDb, "prod_", {
       meta: { agentId: AGENT_ID, operation: "search" },
       durationMs: 10,
       ok: true,
     });
 
-    expect(telemetryCollection).toHaveBeenCalledWith({}, "prod_");
+    expect((prodDb.collection as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+      "prod_memory_telemetry",
+    );
   });
 });
 
@@ -149,11 +151,12 @@ describe("emitTelemetry", () => {
 
 describe("getLatencyStats", () => {
   let mockCol: Collection;
+  let db: Db;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(telemetryCollection).mockReturnValue(mockCol);
+    db = createMockDb(mockCol);
   });
 
   it("returns percentiles from $percentile aggregation (M4 audit fix)", async () => {
@@ -170,7 +173,7 @@ describe("getLatencyStats", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const stats = await getLatencyStats({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -185,7 +188,7 @@ describe("getLatencyStats", () => {
     const toArrayFn = vi.fn().mockResolvedValue([]);
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
-    await getLatencyStats({ db: {} as Db, prefix: PREFIX, agentId: AGENT_ID });
+    await getLatencyStats({ db, prefix: PREFIX, agentId: AGENT_ID });
 
     const [pipeline] = vi.mocked(mockCol.aggregate).mock.calls[0];
     const groupStage = (pipeline as Record<string, unknown>[])[1].$group as Record<string, unknown>;
@@ -201,7 +204,7 @@ describe("getLatencyStats", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const stats = await getLatencyStats({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -214,7 +217,7 @@ describe("getLatencyStats", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     await getLatencyStats({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
       operation: "search",
@@ -231,7 +234,7 @@ describe("getLatencyStats", () => {
 
     const before = Date.now();
     await getLatencyStats({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
       windowMs: 600_000, // 10 minutes
@@ -252,7 +255,7 @@ describe("getLatencyStats", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     await getLatencyStats({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -269,11 +272,12 @@ describe("getLatencyStats", () => {
 
 describe("getCacheHitRate", () => {
   let mockCol: Collection;
+  let db: Db;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(telemetryCollection).mockReturnValue(mockCol);
+    db = createMockDb(mockCol);
   });
 
   it("calculates correct hit rate", async () => {
@@ -284,7 +288,7 @@ describe("getCacheHitRate", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getCacheHitRate({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -300,7 +304,7 @@ describe("getCacheHitRate", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getCacheHitRate({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -313,7 +317,7 @@ describe("getCacheHitRate", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getCacheHitRate({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -328,7 +332,7 @@ describe("getCacheHitRate", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     await getCacheHitRate({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -345,11 +349,12 @@ describe("getCacheHitRate", () => {
 
 describe("getOperationDistribution", () => {
   let mockCol: Collection;
+  let db: Db;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockCol = createMockCollection();
-    vi.mocked(telemetryCollection).mockReturnValue(mockCol);
+    db = createMockDb(mockCol);
   });
 
   it("groups by operation with count and avgDurationMs", async () => {
@@ -360,7 +365,7 @@ describe("getOperationDistribution", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getOperationDistribution({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -376,7 +381,7 @@ describe("getOperationDistribution", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getOperationDistribution({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });
@@ -389,7 +394,7 @@ describe("getOperationDistribution", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await getOperationDistribution({
-      db: {} as Db,
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
     });

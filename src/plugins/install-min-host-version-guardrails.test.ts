@@ -14,7 +14,6 @@ const PLUGIN_MANIFEST_PATHS_REQUIRING_MIN_HOST_VERSION = [
   "extensions/line/package.json",
   "extensions/matrix/package.json",
   "extensions/mattermost/package.json",
-  "extensions/memory-lancedb/package.json",
   "extensions/msteams/package.json",
   "extensions/nextcloud-talk/package.json",
   "extensions/nostr/package.json",

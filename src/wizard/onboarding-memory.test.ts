@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import type { AutoSetupResult } from "./mongodb-auto-setup.js";
 import type { WizardPrompter } from "./prompts.js";
 
 const mockResolvePackageName = vi.hoisted(() => vi.fn(async () => "openclaw"));
@@ -7,7 +8,12 @@ vi.mock("../infra/openclaw-root.js", () => ({
   resolveOpenClawPackageName: mockResolvePackageName,
 }));
 
-const mockAttemptAutoSetup = vi.hoisted(() => vi.fn(async () => ({ success: false, reason: "" })));
+const mockAttemptAutoSetup = vi.hoisted(() =>
+  vi.fn<() => Promise<AutoSetupResult>>(async () => ({
+    success: false,
+    reason: "",
+  })),
+);
 vi.mock("./mongodb-auto-setup.js", () => ({
   attemptAutoSetup: mockAttemptAutoSetup,
 }));
@@ -141,6 +147,7 @@ describe("setupMemoryBackend", () => {
       mockAttemptAutoSetup.mockResolvedValueOnce({
         success: true,
         uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+        source: "docker-auto",
       });
       const { setupMemoryBackend } = await import("./onboarding-memory.js");
       const prompter = createMockPrompter({
@@ -174,6 +181,7 @@ describe("setupMemoryBackend", () => {
       mockAttemptAutoSetup.mockResolvedValueOnce({
         success: true,
         uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+        source: "docker-auto",
       });
       const { setupMemoryBackend } = await import("./onboarding-memory.js");
       const prompter = createMockPrompter({
@@ -207,6 +215,7 @@ describe("setupMemoryBackend", () => {
     mockAttemptAutoSetup.mockResolvedValueOnce({
       success: true,
       uri: "mongodb://localhost:27017/openclaw?directConnection=true",
+      source: "docker-auto",
     });
     const { setupMemoryBackend } = await import("./onboarding-memory.js");
     const prompter = createMockPrompter({
