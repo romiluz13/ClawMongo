@@ -1,5 +1,5 @@
 import type { Db } from "mongodb";
-import { emitTelemetry } from "./mongodb-telemetry.js";
+import * as mongodbTelemetry from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -7,7 +7,7 @@ import { emitTelemetry } from "./mongodb-telemetry.js";
 
 export type QueryRewriteConfig = {
   enabled: boolean;
-  method: "synonym-expansion" | "llm" | "hyde";
+  method: "synonym-expansion";
   maxTokens: number;
 };
 
@@ -76,23 +76,35 @@ export function expandSynonyms(query: string): string {
   // H7 audit fix: cap total expanded words at 3x the original word count.
   // Original words always survive; the cap limits new additions.
   const maxTotal = words.length * 3;
+  const expansionBuckets: string[][] = [];
 
   for (const word of words) {
+    const bucket: string[] = [];
     // Abbreviation expansion
     const abbr = ABBREVIATION_MAP[word];
-    if (abbr && expanded.size < maxTotal) {
-      expanded.add(abbr);
+    if (abbr) {
+      bucket.push(abbr);
     }
     // Synonym expansion
     const syns = SYNONYM_MAP[word];
     if (syns) {
-      for (const syn of syns) {
-        if (expanded.size >= maxTotal) {
-          break;
-        }
-        expanded.add(syn);
-      }
+      bucket.push(...syns);
     }
+    if (bucket.length > 0) {
+      expansionBuckets.push(bucket);
+    }
+  }
+
+  // Distribute additions fairly across query terms so later terms are not starved
+  // when the expansion cap is reached.
+  let bucketIndex = 0;
+  while (expanded.size < maxTotal && expansionBuckets.some((bucket) => bucket.length > 0)) {
+    const bucket = expansionBuckets[bucketIndex % expansionBuckets.length];
+    const next = bucket.shift();
+    if (next && !expanded.has(next)) {
+      expanded.add(next);
+    }
+    bucketIndex++;
   }
 
   return [...expanded].join(" ");
@@ -136,16 +148,11 @@ export async function rewriteQuery(params: {
       rewritten = expandSynonyms(query);
       method = "synonym-expansion";
       break;
-    case "llm":
-    case "hyde":
-      // H3 audit fix: throw instead of silent fallback — make config errors explicit
-      throw new Error(
-        `Query rewrite method "${config.method}" is not yet implemented. ` +
-          `Use "synonym-expansion" or disable query rewriting (queryRewriting.enabled: false).`,
-      );
     default:
-      rewritten = query;
-      method = "none";
+      throw new Error(
+        `Unsupported query rewrite method "${String(config.method)}". ` +
+          'Supported values: "synonym-expansion".',
+      );
   }
 
   const wasRewritten = rewritten !== query;
@@ -157,7 +164,7 @@ export async function rewriteQuery(params: {
     }
   }
 
-  emitTelemetry(db, prefix, {
+  mongodbTelemetry.emitTelemetry(db, prefix, {
     meta: { agentId, operation: "query-rewrite" },
     durationMs: Date.now() - rewriteStart,
     ok: true,

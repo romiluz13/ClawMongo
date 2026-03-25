@@ -88,8 +88,8 @@ export type MemoryMongoDBConfig = {
   queryRewriting?: {
     /** Enable query rewriting before search. Default: false */
     enabled?: boolean;
-    /** Rewriting strategy. Default: "synonym-expansion" */
-    method?: "synonym-expansion" | "llm" | "hyde";
+    /** Rewriting strategy. Only synonym expansion is currently supported. */
+    method?: "synonym-expansion";
     /** Maximum rewritten query length in tokens. Default: 128 */
     maxTokens?: number;
   };

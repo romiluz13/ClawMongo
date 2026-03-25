@@ -721,7 +721,10 @@ const QUERY_CACHE_SCHEMA: Document = {
       scopeRef: { bsonType: "string", description: "Resolved scope namespace" },
       results: { bsonType: "array", description: "Cached MemorySearchResult[]" },
       pathUsed: { bsonType: "string", description: "Retrieval path that produced results" },
-      sourceScope: { bsonType: "string", description: "Source scope for cache partitioning" },
+      sourceScope: {
+        enum: ["conversation", "reference", "structured", "all"],
+        description: "Source scope for cache partitioning",
+      },
       createdAt: { bsonType: "date" },
       expiresAt: { bsonType: "date", description: "Per-document TTL expiry" },
       hitCount: { bsonType: "number", minimum: 0 },

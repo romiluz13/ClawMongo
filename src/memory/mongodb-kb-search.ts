@@ -28,6 +28,7 @@ function toKBSearchResult(doc: Document): MemorySearchResult {
     snippet: typeof doc.text === "string" ? doc.text.slice(0, 700) : "",
     source: "reference",
     sourceType: "reference",
+    canonicalId: String(doc._id ?? `${String(doc.docId ?? "")}:${rawPath}`),
   };
 }
 

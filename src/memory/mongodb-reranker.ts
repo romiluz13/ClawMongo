@@ -4,6 +4,7 @@ import { emitTelemetry } from "./mongodb-telemetry.js";
 import type { MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:reranker");
+const RERANK_TIMEOUT_MS = 5_000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,7 +101,7 @@ export async function crossEncoderRerank(params: {
         documents,
         top_k: validCandidates.length,
       }),
-      signal: AbortSignal.timeout(2_000),
+      signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
     });
 
     if (!response.ok) {

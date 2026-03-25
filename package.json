@@ -14,8 +14,8 @@
     "url": "git+https://github.com/romiluz/clawmongo.git"
   },
   "bin": {
-    "openclaw": "openclaw.mjs",
-    "clawmongo": "openclaw.mjs"
+    "clawmongo": "openclaw.mjs",
+    "openclaw": "openclaw.mjs"
   },
   "directories": {
     "doc": "docs",

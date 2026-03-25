@@ -59,13 +59,21 @@ Set `memory.backend = "mongodb"` (this is the default and only valid value).
 
 - **Canonical events**: Conversation turns persist directly to the `events` collection via `persistConversationMessageToMongo`. No disk intermediary.
 - **Chunk projection**: Events are projected into searchable chunks in the `chunks` collection.
-- **Bridge sync**: Workspace Markdown files (`memory/**/*.md`) are synced to MongoDB chunks for hybrid retrieval.
+- **Bridge sync**: Workspace Markdown files under `memory/**/*.md` are synced to MongoDB chunks for hybrid retrieval. They remain Markdown bridge files, not a replacement for the heart files.
 - **Vector search**: Handled by mongot (Atlas Search) with `$vectorSearch`. Automated embeddings via Voyage AI generate vectors at index-time and query-time.
 - **Text search**: `$text` indexes provide BM25 keyword search as a fallback when vector search is unavailable.
 - **Hybrid search**: `$rankFusion` / `$scoreFusion` combine vector and keyword results when both are available.
 - **Graph**: Entity/relation storage with `$graphLookup` for bounded graph expansion.
 - **Episodes**: Auto-materialized from event streams for navigable conversation summaries.
 - **Structured memory**: Durable facts with salience, temporal validity, provenance, and supersession tracking.
+- **Runtime search order**: `cache -> searchV2 -> legacy fallback`.
+
+### Retrieval guarantees and limits
+
+- Heart files such as `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, and `HEARTBEAT.md` remain Markdown-owned bootstrap inputs. They are not promoted into MongoDB runtime memory ownership.
+- `memory/**/*.md` remains the bridge corpus. MongoDB indexes and retrieves bridge notes, but bridge notes do not replace MongoDB-native events, KB, or structured memory.
+- Search results use reopenable MongoDB-backed locators for event, episode, relation, procedure, structured, and KB surfaces.
+- Query rewriting supports deterministic `synonym-expansion` only. Unsupported rewrite modes are rejected during config resolution instead of being treated as working runtime features.
 
 ### Config surface (`memory.mongodb.*`)
 
@@ -89,6 +97,13 @@ memory: {
 
 - `memory.citations` controls citation visibility (`auto`/`on`/`off`).
 - `status().backend = "mongodb"` in diagnostics confirms the MongoDB backend is active.
+
+### Query rewriting migration note
+
+If you previously configured `memory.mongodb.queryRewriting.method` as `llm` or `hyde`, update it to:
+
+- `synonym-expansion` to keep deterministic query expansion
+- or disable query rewriting with `memory.mongodb.queryRewriting.enabled = false`
 
 ## Compaction tuning
 

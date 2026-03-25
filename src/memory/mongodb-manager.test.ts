@@ -1,20 +1,22 @@
 /* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
+  classifyQueryCacheSourceScope,
   classifyCanonicalIngestHealth,
   classifyProjectionHealth,
   classifyRetrievalHealth,
   computeOverallV2Health,
   deduplicateSearchResults,
+  getSearchResultCanonicalId,
   getActiveSources,
   getActiveSourcesForStatus,
+  resolveQueryCacheTtlSec,
   resolveExplainSources,
   writeEventAndProject,
   searchV2,
   getV2Status,
   rerankResults,
 } from "./mongodb-manager.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 import type { MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ vi.mock("./mongodb-telemetry.js", () => ({
 }));
 
 // ---------------------------------------------------------------------------
-// Phase 3: Result dedup at merge by content hash
+// Phase 3: Result dedup at merge by canonical identity
 // ---------------------------------------------------------------------------
 
 describe("deduplicateSearchResults", () => {
@@ -88,6 +90,7 @@ describe("deduplicateSearchResults", () => {
     snippet: string,
     score: number,
     source: MemorySearchResult["source"],
+    overrides: Partial<MemorySearchResult> = {},
   ): MemorySearchResult => ({
     filePath,
     path: filePath,
@@ -96,19 +99,19 @@ describe("deduplicateSearchResults", () => {
     snippet,
     score,
     source,
+    ...overrides,
   });
 
-  it("removes duplicate results by content, keeping the highest-scoring one", () => {
+  it("removes duplicate results by canonical identity, keeping the highest-scoring one", () => {
     const results: MemorySearchResult[] = [
       makeResult("/a.md", "same content here", 0.9, "conversation"),
-      makeResult("/b.md", "same content here", 0.7, "reference"),
+      makeResult("/a.md", "same content here", 0.7, "reference"),
       makeResult("/c.md", "different content", 0.8, "structured"),
     ];
 
     const deduped = deduplicateSearchResults(results);
     expect(deduped).toHaveLength(2);
-    // The duplicate "same content here" should keep the one with score 0.9
-    const sameContentResult = deduped.find((r) => r.snippet === "same content here");
+    const sameContentResult = deduped.find((r) => r.path === "/a.md");
     expect(sameContentResult?.score).toBe(0.9);
     expect(sameContentResult?.filePath).toBe("/a.md");
   });
@@ -129,34 +132,146 @@ describe("deduplicateSearchResults", () => {
     expect(deduped).toHaveLength(3);
   });
 
-  it("handles multiple duplicates correctly", () => {
+  it("keeps same-snippet results when canonical identities differ", () => {
     const results: MemorySearchResult[] = [
       makeResult("/a.md", "alpha content", 0.3, "conversation"),
       makeResult("/b.md", "alpha content", 0.9, "reference"),
       makeResult("/c.md", "alpha content", 0.5, "structured"),
-      makeResult("/d.md", "beta content", 0.8, "conversation"),
-      makeResult("/e.md", "beta content", 0.6, "structured"),
     ];
 
     const deduped = deduplicateSearchResults(results);
-    expect(deduped).toHaveLength(2);
-    const alpha = deduped.find((r) => r.snippet === "alpha content");
-    expect(alpha?.score).toBe(0.9);
-    const beta = deduped.find((r) => r.snippet === "beta content");
-    expect(beta?.score).toBe(0.8);
+    expect(deduped).toHaveLength(3);
   });
 
-  it("returns dedupCount in the result when logging is needed", () => {
+  it("prefers explicit canonicalId when provided", () => {
     const results: MemorySearchResult[] = [
-      makeResult("/a.md", "dup content", 0.9, "conversation"),
-      makeResult("/b.md", "dup content", 0.7, "reference"),
+      makeResult("/a.md", "dup content", 0.9, "conversation", { canonicalId: "same-id" }),
+      makeResult("/b.md", "dup content", 0.7, "reference", { canonicalId: "same-id" }),
     ];
 
-    // The function should return deduped results — the count of removed duplicates
-    // can be derived from input.length - output.length
     const deduped = deduplicateSearchResults(results);
-    const dedupCount = results.length - deduped.length;
-    expect(dedupCount).toBe(1);
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]?.score).toBe(0.9);
+  });
+});
+
+describe("getSearchResultCanonicalId", () => {
+  it("prefers explicit canonicalId", () => {
+    const result: MemorySearchResult = {
+      path: "memory/alpha.md",
+      startLine: 1,
+      endLine: 2,
+      score: 0.8,
+      snippet: "alpha",
+      source: "conversation",
+      canonicalId: "event:123",
+    };
+
+    expect(getSearchResultCanonicalId(result)).toBe("event:123");
+  });
+
+  it("falls back to source + path + line range", () => {
+    const result: MemorySearchResult = {
+      path: "kb:guide.md",
+      startLine: 10,
+      endLine: 12,
+      score: 0.8,
+      snippet: "alpha",
+      source: "reference",
+    };
+
+    expect(getSearchResultCanonicalId(result)).toBe("kb:guide.md:10:12");
+  });
+});
+
+describe("query cache source classification", () => {
+  const cacheConfig = {
+    enabled: true,
+    conversationTtlSec: 300,
+    kbTtlSec: 3600,
+    similarityThreshold: 0.95,
+  };
+
+  it("classifies a single-source conversation result set", () => {
+    expect(
+      classifyQueryCacheSourceScope([
+        {
+          path: "events/1",
+          startLine: 0,
+          endLine: 0,
+          score: 0.9,
+          snippet: "alpha",
+          source: "conversation",
+        },
+      ]),
+    ).toBe("conversation");
+  });
+
+  it("classifies mixed-source result sets as all", () => {
+    expect(
+      classifyQueryCacheSourceScope([
+        {
+          path: "events/1",
+          startLine: 0,
+          endLine: 0,
+          score: 0.9,
+          snippet: "alpha",
+          source: "conversation",
+        },
+        {
+          path: "kb:guide.md",
+          startLine: 10,
+          endLine: 12,
+          score: 0.8,
+          snippet: "beta",
+          source: "reference",
+        },
+      ]),
+    ).toBe("all");
+  });
+
+  it("uses KB TTL whenever reference results contribute", () => {
+    expect(
+      resolveQueryCacheTtlSec(
+        [
+          {
+            path: "events/1",
+            startLine: 0,
+            endLine: 0,
+            score: 0.9,
+            snippet: "alpha",
+            source: "conversation",
+          },
+          {
+            path: "kb:guide.md",
+            startLine: 10,
+            endLine: 12,
+            score: 0.8,
+            snippet: "beta",
+            source: "reference",
+          },
+        ],
+        cacheConfig,
+      ),
+    ).toBe(3600);
+  });
+
+  it("uses conversation TTL when results are non-reference only", () => {
+    expect(
+      resolveQueryCacheTtlSec(
+        [
+          {
+            path: "structured:decision:alpha",
+            startLine: 0,
+            endLine: 0,
+            score: 0.9,
+            snippet: "alpha",
+            source: "structured",
+          },
+        ],
+        cacheConfig,
+      ),
+    ).toBe(300);
   });
 });
 
@@ -827,21 +942,15 @@ describe("writeEventAndProject telemetry emission", () => {
   });
 
   it("emits event-write telemetry after successful write", async () => {
-    const { writeEvent } = await import("./mongodb-events.js");
-    const { projectEventChunk } = await import("./mongodb-events.js");
-    const { recordIngestRun } = await import("./mongodb-ops.js");
-    const { extractAndUpsertEntities } = await import("./mongodb-graph.js");
+    const fakeCollection = {
+      updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1 }),
+      updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
+      insertOne: vi.fn().mockResolvedValue({ insertedId: "ok" }),
+    };
+    const fakeDb = {
+      collection: vi.fn().mockReturnValue(fakeCollection),
+    } as unknown as import("mongodb").Db;
 
-    vi.mocked(writeEvent).mockResolvedValue({
-      eventId: "evt-1",
-      timestamp: new Date("2026-03-16T00:00:00.000Z"),
-      scopeRef: "agent:agent-1",
-    });
-    vi.mocked(projectEventChunk).mockResolvedValue({ chunkCreated: true });
-    vi.mocked(recordIngestRun).mockResolvedValue("run-1");
-    vi.mocked(extractAndUpsertEntities).mockResolvedValue({ entities: [], relationsCreated: 0 });
-
-    const fakeDb = { collection: vi.fn() } as unknown as import("mongodb").Db;
     await writeEventAndProject(fakeDb, "test_", {
       agentId: "agent-1",
       role: "user",
@@ -849,9 +958,8 @@ describe("writeEventAndProject telemetry emission", () => {
       scope: "agent",
     });
 
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      fakeDb,
-      "test_",
+    expect(fakeCollection.insertOne).toHaveBeenCalled();
+    expect(fakeCollection.insertOne.mock.calls).toContainEqual([
       expect.objectContaining({
         meta: { agentId: "agent-1", operation: "event-write" },
         ok: true,
@@ -859,6 +967,6 @@ describe("writeEventAndProject telemetry emission", () => {
         projectionTriggered: true,
         durationMs: expect.any(Number),
       }),
-    );
+    ]);
   });
 });

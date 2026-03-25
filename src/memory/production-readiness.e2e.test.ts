@@ -1677,16 +1677,20 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       expect(metadata.plan).toBeDefined();
     });
 
-    it("query rewriter throws on unimplemented method", async () => {
+    it("query rewriter rejects unsupported methods", async () => {
       await expect(
         rewriteQuery({
           db,
           prefix: PREFIX,
           agentId: AGENT_ID,
           query: "test",
-          config: { enabled: true, method: "llm", maxTokens: 128 },
+          config: {
+            enabled: true,
+            method: "llm" as unknown as Parameters<typeof rewriteQuery>[0]["config"]["method"],
+            maxTokens: 128,
+          },
         }),
-      ).rejects.toThrow(/not yet implemented/);
+      ).rejects.toThrow(/Unsupported query rewrite method/);
     });
 
     it("reranker degrades gracefully with empty API key", async () => {

@@ -45,6 +45,12 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
   } as unknown as Collection;
 }
 
+function createMockDb(collection: Collection): Db {
+  return {
+    collection: vi.fn().mockReturnValue(collection),
+  } as unknown as Db;
+}
+
 const PREFIX = "test_";
 const AGENT_ID = "agent-1";
 const SCOPE = "agent" as const;
@@ -140,7 +146,7 @@ describe("checkCache", () => {
 
   it("returns miss when disabled", async () => {
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -155,7 +161,7 @@ describe("checkCache", () => {
 
   it("returns miss for empty query", async () => {
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "   ",
       agentId: AGENT_ID,
@@ -189,7 +195,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.findOne).mockResolvedValue(cachedDoc as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -211,7 +217,7 @@ describe("checkCache", () => {
     vi.mocked(buildVectorSearchStage).mockReturnValue(null);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -239,7 +245,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.findOne).mockResolvedValue(cachedDoc as never);
 
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -287,7 +293,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -321,7 +327,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -353,7 +359,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -371,7 +377,7 @@ describe("checkCache", () => {
     vi.mocked(buildVectorSearchStage).mockReturnValue(null);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -389,7 +395,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.findOne).mockRejectedValue(new Error("DB connection error") as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -412,7 +418,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     const result = await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -430,7 +436,7 @@ describe("checkCache", () => {
     vi.mocked(buildVectorSearchStage).mockReturnValue(null);
 
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -464,7 +470,7 @@ describe("checkCache", () => {
     vi.mocked(mockCol.aggregate).mockReturnValue({ toArray: toArrayFn } as never);
 
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -509,7 +515,7 @@ describe("writeCache", () => {
     ];
 
     writeCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "Test Query",
       agentId: AGENT_ID,
@@ -560,7 +566,7 @@ describe("writeCache", () => {
 
   it("skips empty query", () => {
     writeCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "   ",
       agentId: AGENT_ID,
@@ -586,7 +592,7 @@ describe("writeCache", () => {
 
   it("skips empty results", () => {
     writeCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -614,7 +620,7 @@ describe("writeCache", () => {
     ];
 
     writeCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test",
       agentId: AGENT_ID,
@@ -630,6 +636,45 @@ describe("writeCache", () => {
     expect(options).toEqual(expect.objectContaining({ upsert: true }));
   });
 
+  it("persists mixed-source cache entries with sourceScope=all", () => {
+    writeCache({
+      db: createMockDb(mockCol),
+      prefix: PREFIX,
+      query: "mixed source query",
+      agentId: AGENT_ID,
+      scope: SCOPE,
+      scopeRef: SCOPE_REF,
+      results: [
+        {
+          path: "events/1",
+          snippet: "conversation result",
+          score: 0.9,
+          source: "conversation",
+          startLine: 0,
+          endLine: 0,
+        },
+        {
+          path: "kb:guide.md",
+          snippet: "reference result",
+          score: 0.8,
+          source: "reference",
+          startLine: 10,
+          endLine: 12,
+        },
+      ],
+      pathUsed: "hybrid,kb",
+      sourceScope: "all",
+      ttlSec: 3600,
+    });
+
+    const [, update] = vi.mocked(mockCol.updateOne).mock.calls[0];
+    expect((update as Document).$set).toEqual(
+      expect.objectContaining({
+        sourceScope: "all",
+      }),
+    );
+  });
+
   it("is fire-and-forget (does not throw on updateOne failure)", () => {
     vi.mocked(mockCol.updateOne).mockReturnValue(
       Promise.reject(new Error("Write failed")) as never,
@@ -638,7 +683,7 @@ describe("writeCache", () => {
     // Should not throw
     expect(() => {
       writeCache({
-        db: {} as Db,
+        db: createMockDb(mockCol),
         prefix: PREFIX,
         query: "test query",
         agentId: AGENT_ID,
@@ -665,7 +710,7 @@ describe("writeCache", () => {
     const beforeTime = Date.now();
 
     writeCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -719,7 +764,7 @@ describe("checkCache telemetry emission", () => {
     vi.mocked(mockCol.findOne).mockResolvedValue(cachedDoc as never);
 
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -745,7 +790,7 @@ describe("checkCache telemetry emission", () => {
     vi.mocked(buildVectorSearchStage).mockReturnValue(null);
 
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -768,7 +813,7 @@ describe("checkCache telemetry emission", () => {
 
   it("does not emit telemetry when cache is disabled", async () => {
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "test query",
       agentId: AGENT_ID,
@@ -782,7 +827,7 @@ describe("checkCache telemetry emission", () => {
 
   it("does not emit telemetry for empty query", async () => {
     await checkCache({
-      db: {} as Db,
+      db: createMockDb(mockCol),
       prefix: PREFIX,
       query: "   ",
       agentId: AGENT_ID,

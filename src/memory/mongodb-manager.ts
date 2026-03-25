@@ -17,28 +17,22 @@ import {
 } from "./mongodb-derived-memory.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
 import { checkAutoEpisodeTriggers } from "./mongodb-episodes.js";
-import { writeEvent, projectEventChunk, getEventsByTimeRange } from "./mongodb-events.js";
-import {
-  extractAndUpsertEntities,
-  findEntitiesByName,
-  expandGraph,
-  type Entity,
-  type RelationType,
-} from "./mongodb-graph.js";
+import * as mongodbEvents from "./mongodb-events.js";
+import * as mongodbGraph from "./mongodb-graph.js";
+import type { Entity, RelationType } from "./mongodb-graph.js";
 import { normalizeSearchResults, rrfScore, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
-import {
-  recordIngestRun,
-  getLatestIngestRun,
-  getLatestProjectionRun,
-  getProjectionLag,
-  type IngestRun,
-  type ProjectionRun,
-} from "./mongodb-ops.js";
+import * as mongodbOps from "./mongodb-ops.js";
+import type { IngestRun, ProjectionRun } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
 import { searchProcedures } from "./mongodb-procedures.js";
 import { synthesizeProfile, type ProfileSynthesis } from "./mongodb-profile.js";
-import { checkCache, writeCache } from "./mongodb-query-cache.js";
+import {
+  checkCache,
+  writeCache,
+  type QueryCacheConfig,
+  type QueryCacheSourceScope,
+} from "./mongodb-query-cache.js";
 import { rewriteQuery, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
 import {
   MongoDBRelevanceRuntime,
@@ -85,7 +79,7 @@ import type {
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
+import * as mongodbTelemetry from "./mongodb-telemetry.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
@@ -114,10 +108,26 @@ const CHANGE_STREAM_RESUME_TOKEN_META_KEY = "change_stream_resume_token";
 // ---------------------------------------------------------------------------
 
 /**
- * Deduplicate search results by content (snippet text).
- * When duplicates are found (same snippet from different sources),
+ * Stable merge identity for search results.
+ * Uses an explicit canonicalId when present, otherwise falls back to the
+ * reopen locator surface (path + line range) instead of presentation text.
+ */
+export function getSearchResultCanonicalId(result: MemorySearchResult): string {
+  const explicitId = result.canonicalId?.trim();
+  if (explicitId) {
+    return explicitId;
+  }
+  const locator = (result.path || result.filePath || "").trim();
+  if (locator) {
+    return `${locator}:${result.startLine}:${result.endLine}`;
+  }
+  return `snippet:${result.snippet}:${result.startLine}:${result.endLine}`;
+}
+
+/**
+ * Deduplicate search results by canonical identity.
+ * When duplicates are found (same locator surfaced through multiple paths),
  * keep only the highest-scoring result.
- * Uses simple string comparison (not crypto hash) per plan spec.
  */
 export function deduplicateSearchResults(results: MemorySearchResult[]): MemorySearchResult[] {
   if (results.length === 0) {
@@ -126,13 +136,39 @@ export function deduplicateSearchResults(results: MemorySearchResult[]): MemoryS
 
   const seen = new Map<string, MemorySearchResult>();
   for (const result of results) {
-    const existing = seen.get(result.snippet);
+    const identity = getSearchResultCanonicalId(result);
+    const existing = seen.get(identity);
     if (!existing || result.score > existing.score) {
-      seen.set(result.snippet, result);
+      seen.set(identity, result);
     }
   }
 
   return Array.from(seen.values());
+}
+
+function collectSearchResultSources(results: MemorySearchResult[]): Set<MemorySource> {
+  return new Set(results.map((result) => result.source));
+}
+
+export function classifyQueryCacheSourceScope(
+  results: MemorySearchResult[],
+): QueryCacheSourceScope {
+  const sources = collectSearchResultSources(results);
+  if (sources.size === 0) {
+    return "conversation";
+  }
+  if (sources.size > 1) {
+    return "all";
+  }
+  return Array.from(sources)[0] as QueryCacheSourceScope;
+}
+
+export function resolveQueryCacheTtlSec(
+  results: MemorySearchResult[],
+  config: QueryCacheConfig,
+): number {
+  const sources = collectSearchResultSources(results);
+  return sources.has("reference") ? config.kbTtlSec : config.conversationTtlSec;
 }
 
 // ---------------------------------------------------------------------------
@@ -795,7 +831,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       });
 
       // Emit search telemetry (fire-and-forget)
-      emitTelemetry(this.db, this.prefix, {
+      mongodbTelemetry.emitTelemetry(this.db, this.prefix, {
         meta: { agentId: this.agentId, operation: "search" },
         durationMs: Date.now() - searchStart,
         ok: v2.results.length > 0,
@@ -817,9 +853,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         this.setLastSearchMode("v2", v2Details);
         // Fire-and-forget cache write
         if (mongoCfg.cache.enabled) {
-          // H4 audit fix: derive TTL from actual paths executed (not static config)
-          const hasKbPath = v2.metadata.pathsExecuted.includes("kb");
-          const ttlSec = hasKbPath ? mongoCfg.cache.kbTtlSec : mongoCfg.cache.conversationTtlSec;
+          const sourceScope = classifyQueryCacheSourceScope(v2.results);
+          const ttlSec = resolveQueryCacheTtlSec(v2.results, mongoCfg.cache);
           writeCache({
             db: this.db,
             prefix: this.prefix,
@@ -829,7 +864,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             scopeRef: this.agentScopeRef,
             results: v2.results,
             pathUsed: v2.metadata.pathsExecuted.join(","),
-            sourceScope: "conversation",
+            sourceScope,
             ttlSec,
           });
         }
@@ -2238,7 +2273,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const execute = async () => {
       const eventId = randomUUID();
       const scope = event.scope ?? ("agent" as MemoryScope);
-      const written = await writeEvent({
+      const written = await mongodbEvents.writeEvent({
         db: this.db,
         prefix: this.prefix,
         event: {
@@ -2252,7 +2287,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           metadata: event.metadata,
         },
       });
-      const projected = await projectEventChunk({
+      const projected = await mongodbEvents.projectEventChunk({
         db: this.db,
         prefix: this.prefix,
         event: {
@@ -2270,17 +2305,19 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       if (projected.chunkCreated) {
         this.chunkCount += 1;
       }
-      await extractAndUpsertEntities({
-        db: this.db,
-        prefix: this.prefix,
-        agentId: this.agentId,
-        eventContent: event.body,
-        scope,
-        scopeRef: written.scopeRef,
-        sourceEventId: written.eventId,
-      }).catch((err) => {
-        log.warn("entity projection failed after event write", { error: err });
-      });
+      await mongodbGraph
+        .extractAndUpsertEntities({
+          db: this.db,
+          prefix: this.prefix,
+          agentId: this.agentId,
+          eventContent: event.body,
+          scope,
+          scopeRef: written.scopeRef,
+          sourceEventId: written.eventId,
+        })
+        .catch((err) => {
+          log.warn("entity projection failed after event write", { error: err });
+        });
       this.schedulePostWriteDerivations({
         eventId: written.eventId,
         role: event.role,
@@ -2404,7 +2441,7 @@ export async function writeEventAndProject(
     if (!VALID_ROLES.has(event.role)) {
       throw new Error(`Invalid role: ${event.role}`);
     }
-    const written = await writeEvent({
+    const written = await mongodbEvents.writeEvent({
       db,
       prefix,
       event: {
@@ -2419,7 +2456,7 @@ export async function writeEventAndProject(
       },
     });
 
-    const projected = await projectEventChunk({
+    const projected = await mongodbEvents.projectEventChunk({
       db,
       prefix,
       event: {
@@ -2434,21 +2471,23 @@ export async function writeEventAndProject(
         ...(event.metadata ? { metadata: event.metadata } : {}),
       },
     });
-    await extractAndUpsertEntities({
-      db,
-      prefix,
-      agentId: event.agentId,
-      eventContent: event.body,
-      scope: event.scope as MemoryScope,
-      scopeRef: written.scopeRef,
-      sourceEventId: written.eventId,
-      extractor: options?.extractor,
-    }).catch((projErr) => {
-      log.warn("entity projection failed during writeEventAndProject", { error: projErr });
-    });
+    await mongodbGraph
+      .extractAndUpsertEntities({
+        db,
+        prefix,
+        agentId: event.agentId,
+        eventContent: event.body,
+        scope: event.scope as MemoryScope,
+        scopeRef: written.scopeRef,
+        sourceEventId: written.eventId,
+        extractor: options?.extractor,
+      })
+      .catch((projErr) => {
+        log.warn("entity projection failed during writeEventAndProject", { error: projErr });
+      });
 
     const durationMs = Date.now() - startMs;
-    await recordIngestRun({
+    await mongodbOps.recordIngestRun({
       db,
       prefix,
       run: {
@@ -2462,7 +2501,7 @@ export async function writeEventAndProject(
     });
 
     // Emit event-write telemetry (fire-and-forget)
-    emitTelemetry(db, prefix, {
+    mongodbTelemetry.emitTelemetry(db, prefix, {
       meta: { agentId: event.agentId, operation: "event-write" },
       durationMs,
       ok: true,
@@ -2473,20 +2512,22 @@ export async function writeEventAndProject(
     return { eventId: written.eventId, chunksCreated: projected.chunkCreated ? 1 : 0 };
   } catch (err) {
     const durationMs = Date.now() - startMs;
-    await recordIngestRun({
-      db,
-      prefix,
-      run: {
-        agentId: event.agentId,
-        source: "event-write",
-        status: "failed",
-        itemsProcessed: 0,
-        itemsFailed: 1,
-        durationMs,
-      },
-    }).catch((recErr) => {
-      log.warn("recordIngestRun failed during error recovery", { error: recErr });
-    });
+    await mongodbOps
+      .recordIngestRun({
+        db,
+        prefix,
+        run: {
+          agentId: event.agentId,
+          source: "event-write",
+          status: "failed",
+          itemsProcessed: 0,
+          itemsFailed: 1,
+          durationMs,
+        },
+      })
+      .catch((recErr) => {
+        log.warn("recordIngestRun failed during error recovery", { error: recErr });
+      });
     log.error("writeEventAndProject failed", { error: err });
     throw err;
   }
@@ -2775,7 +2816,7 @@ export async function searchV2(
           case "raw-window": {
             // M2 audit fix: cap raw-window events at 50 to avoid unbounded result sets
             const rawWindowLimit = 50;
-            const events = await getEventsByTimeRange({
+            const events = await mongodbEvents.getEventsByTimeRange({
               db,
               prefix,
               agentId,
@@ -2789,6 +2830,7 @@ export async function searchV2(
               (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
             );
             pathResults = recentFirst.map((e, i) => ({
+              canonicalId: e.eventId,
               path: `events/${e.eventId}`,
               filePath: `events/${e.eventId}`,
               startLine: 0,
@@ -2804,7 +2846,7 @@ export async function searchV2(
               const candidateEntities = (
                 await Promise.all(
                   constrainedGraphCandidates.slice(0, 4).map((name) =>
-                    findEntitiesByName({
+                    mongodbGraph.findEntitiesByName({
                       db,
                       prefix,
                       query: name,
@@ -2818,7 +2860,7 @@ export async function searchV2(
               ).flat();
               const entity = pickBestEntityMatch(candidateEntities, query);
               if (entity) {
-                const graph = await expandGraph({
+                const graph = await mongodbGraph.expandGraph({
                   db,
                   prefix,
                   entityId: entity.entityId,
@@ -2828,6 +2870,7 @@ export async function searchV2(
                 });
                 if (graph) {
                   pathResults = graph.connections.map((c, i) => ({
+                    canonicalId: `${c.relation.fromEntityId}:${c.relation.type}:${c.relation.toEntityId}`,
                     path: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
                     filePath: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
                     startLine: 0,
@@ -2862,6 +2905,7 @@ export async function searchV2(
               ...(timeRange ? { timeRange } : {}),
             });
             pathResults = episodes.map((ep, i) => ({
+              canonicalId: ep.episodeId,
               path: `episode:${ep.episodeId}`,
               filePath: `episode:${ep.episodeId}`,
               startLine: 0,
@@ -3041,12 +3085,12 @@ export async function searchV2(
       const rrfMap = new Map<string, number>();
       for (const [_pathName, pathRes] of Object.entries(perPathResults)) {
         for (let rank = 0; rank < pathRes.length; rank++) {
-          const key = pathRes[rank].snippet;
+          const key = getSearchResultCanonicalId(pathRes[rank]);
           rrfMap.set(key, (rrfMap.get(key) ?? 0) + rrfScore(rank + 1));
         }
       }
       for (const r of deduped) {
-        const rrfVal = rrfMap.get(r.snippet);
+        const rrfVal = rrfMap.get(getSearchResultCanonicalId(r));
         if (rrfVal !== undefined) {
           r.score = rrfVal;
         }
@@ -3213,19 +3257,24 @@ export async function getV2Status(db: Db, prefix: string, agentId: string): Prom
       relationsCollection(db, prefix).countDocuments({ agentId }),
       episodesCollection(db, prefix).countDocuments({ agentId }),
       proceduresCollection(db, prefix).countDocuments({ agentId }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "chunks" }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "entities" }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "relations" }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "episodes" }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "structured-promotion" }),
-      getProjectionLag({ db, prefix, agentId, projectionType: "procedures" }),
-      getLatestIngestRun({ db, prefix, agentId }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "chunks" }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "entities" }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "relations" }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "episodes" }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "structured-promotion" }),
-      getLatestProjectionRun({ db, prefix, agentId, projectionType: "procedures" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "chunks" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "entities" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "relations" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "episodes" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "structured-promotion" }),
+      mongodbOps.getProjectionLag({ db, prefix, agentId, projectionType: "procedures" }),
+      mongodbOps.getLatestIngestRun({ db, prefix, agentId }),
+      mongodbOps.getLatestProjectionRun({ db, prefix, agentId, projectionType: "chunks" }),
+      mongodbOps.getLatestProjectionRun({ db, prefix, agentId, projectionType: "entities" }),
+      mongodbOps.getLatestProjectionRun({ db, prefix, agentId, projectionType: "relations" }),
+      mongodbOps.getLatestProjectionRun({ db, prefix, agentId, projectionType: "episodes" }),
+      mongodbOps.getLatestProjectionRun({
+        db,
+        prefix,
+        agentId,
+        projectionType: "structured-promotion",
+      }),
+      mongodbOps.getLatestProjectionRun({ db, prefix, agentId, projectionType: "procedures" }),
       relevanceRunsCollection(db, prefix).findOne(
         { agentId },
         { sort: { ts: -1 }, projection: { status: 1, hitSources: 1 } },

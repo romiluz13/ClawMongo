@@ -587,6 +587,7 @@ function toStructuredResult(doc: Document): MemorySearchResult {
     snippet: typeof doc.value === "string" ? doc.value.slice(0, 700) : "",
     source: "structured",
     sourceType: "structured",
+    canonicalId: String(doc._id ?? locator),
   };
 }
 

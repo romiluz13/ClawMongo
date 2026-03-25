@@ -735,21 +735,38 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.queryRewriting.maxTokens).toBe(128);
   });
 
-  it("resolves queryRewriting with explicit values", () => {
+  it("resolves queryRewriting with explicit supported values", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
         backend: "mongodb",
         mongodb: {
           uri: "mongodb://localhost:27017",
-          queryRewriting: { enabled: true, method: "hyde", maxTokens: 256 },
+          queryRewriting: { enabled: true, method: "synonym-expansion", maxTokens: 256 },
         },
       },
     } as unknown as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
     expect(resolved.mongodb!.queryRewriting.enabled).toBe(true);
-    expect(resolved.mongodb!.queryRewriting.method).toBe("hyde");
+    expect(resolved.mongodb!.queryRewriting.method).toBe("synonym-expansion");
     expect(resolved.mongodb!.queryRewriting.maxTokens).toBe(256);
+  });
+
+  it("rejects unsupported queryRewriting methods", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          queryRewriting: { enabled: true, method: "hyde" },
+        },
+      },
+    } as unknown as OpenClawConfig;
+
+    expect(() => resolveMemoryBackendConfig({ cfg, agentId: "main" })).toThrow(
+      /Unsupported memory\.mongodb\.queryRewriting\.method/,
+    );
   });
 
   // ---------------------------------------------------------------------------

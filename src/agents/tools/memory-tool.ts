@@ -112,7 +112,7 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
+      "Mandatory recall step: search MongoDB-backed runtime memory before answering questions about prior work, decisions, dates, people, preferences, or todos. Results may include bridge notes synced from memory/*.md plus active structured and KB-backed recall, and the runtime search order is cache -> searchV2 -> legacy fallback. Returns top snippets with reopenable locators and line ranges when available. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user. Example: use memory_search for runtime recall about prior work, then kb_search if you specifically need reference material.",
     parameters: MemorySearchSchema,
     execute:
       ({ cfg, agentId }) =>
@@ -143,8 +143,11 @@ export function createMemorySearchTool(options: {
             (status as { backend: string }).backend === "qmd"
               ? clampResultsByInjectedChars(
                   decorated,
-                  (resolved as Record<string, unknown> & { qmd?: { limits: { maxInjectedChars?: number } } }).qmd
-                    ?.limits.maxInjectedChars,
+                  (
+                    resolved as Record<string, unknown> & {
+                      qmd?: { limits: { maxInjectedChars?: number } };
+                    }
+                  ).qmd?.limits.maxInjectedChars,
                 )
               : decorated;
           const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;

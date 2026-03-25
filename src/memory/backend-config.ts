@@ -82,7 +82,7 @@ export type ResolvedMongoDBConfig = {
   };
   queryRewriting: {
     enabled: boolean;
-    method: "synonym-expansion" | "llm" | "hyde";
+    method: "synonym-expansion";
     maxTokens: number;
   };
   reranking: {
@@ -116,6 +116,18 @@ const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
 const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
 const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "automated";
+
+function resolveQueryRewriteMethod(raw: unknown): "synonym-expansion" {
+  if (raw === undefined || raw === "synonym-expansion") {
+    return "synonym-expansion";
+  }
+  const rendered =
+    typeof raw === "string" ? raw : raw === null ? "null" : (JSON.stringify(raw) ?? typeof raw);
+  throw new Error(
+    `Unsupported memory.mongodb.queryRewriting.method "${rendered}". ` +
+      'Supported values: "synonym-expansion".',
+  );
+}
 
 function sanitizeName(input: string): string {
   const lower = input.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
@@ -364,7 +376,7 @@ export function resolveMemoryBackendConfig(params: {
         },
         queryRewriting: {
           enabled: mongoCfg?.queryRewriting?.enabled === true,
-          method: mongoCfg?.queryRewriting?.method ?? "synonym-expansion",
+          method: resolveQueryRewriteMethod(mongoCfg?.queryRewriting?.method),
           maxTokens:
             typeof mongoCfg?.queryRewriting?.maxTokens === "number" &&
             Number.isFinite(mongoCfg.queryRewriting.maxTokens) &&

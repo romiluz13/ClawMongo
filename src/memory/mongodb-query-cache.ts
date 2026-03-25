@@ -13,6 +13,8 @@ const log = createSubsystemLogger("memory:mongodb:query-cache");
 // Types
 // ---------------------------------------------------------------------------
 
+export type QueryCacheSourceScope = "conversation" | "reference" | "structured" | "all";
+
 export type QueryCacheEntry = {
   queryHash: string;
   queryNorm: string;
@@ -21,7 +23,7 @@ export type QueryCacheEntry = {
   scopeRef: string;
   results: MemorySearchResult[];
   pathUsed: string;
-  sourceScope: string;
+  sourceScope: QueryCacheSourceScope;
   createdAt: Date;
   expiresAt: Date;
   hitCount: number;
@@ -47,7 +49,7 @@ export type CacheCheckResult = {
   tier: "exact" | "semantic" | "miss";
   results: MemorySearchResult[];
   pathUsed?: string;
-  sourceScope?: string;
+  sourceScope?: QueryCacheSourceScope;
 };
 
 // ---------------------------------------------------------------------------
@@ -62,6 +64,18 @@ export function normalizeQuery(query: string): string {
 /** SHA-256 hash of normalized query string. */
 export function hashQuery(normalizedQuery: string): string {
   return createHash("sha256").update(normalizedQuery).digest("hex");
+}
+
+function normalizeSourceScope(value: unknown): QueryCacheSourceScope | undefined {
+  switch (value) {
+    case "conversation":
+    case "reference":
+    case "structured":
+    case "all":
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +142,7 @@ export async function checkCache(params: {
         tier: "exact",
         results: exact.results as MemorySearchResult[],
         pathUsed: exact.pathUsed as string,
-        sourceScope: exact.sourceScope as string,
+        sourceScope: normalizeSourceScope(exact.sourceScope),
       };
     }
   } catch (err) {
@@ -204,7 +218,7 @@ export async function checkCache(params: {
         tier: "semantic",
         results: match.results as MemorySearchResult[],
         pathUsed: match.pathUsed as string,
-        sourceScope: match.sourceScope as string,
+        sourceScope: normalizeSourceScope(match.sourceScope),
       };
     }
   } catch (err) {
@@ -238,7 +252,7 @@ export function writeCache(params: {
   scopeRef: string;
   results: MemorySearchResult[];
   pathUsed: string;
-  sourceScope: string;
+  sourceScope: QueryCacheSourceScope;
   ttlSec: number;
 }): void {
   const { db, prefix, query, agentId, scope, scopeRef, results, pathUsed, sourceScope, ttlSec } =

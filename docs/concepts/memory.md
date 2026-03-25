@@ -11,6 +11,12 @@ read_when:
 OpenClaw memory is **plain Markdown in the agent workspace**. The files are the
 source of truth; the model only "remembers" what gets written to disk.
 
+When ClawMongo's MongoDB backend is active, this page still describes the
+workspace-side memory layout, but runtime memory truth moves to MongoDB. In
+that mode, heart files stay Markdown, `memory/*.md` stays the bridge, and
+MongoDB owns runtime recall. See [Memory configuration reference](/reference/memory-config)
+and [Heart brain boundary](/reference/heart-brain-boundary).
+
 Memory search tools are provided by the active memory plugin (default:
 `memory-core`). Disable memory plugins with `plugins.slots.memory = "none"`.
 

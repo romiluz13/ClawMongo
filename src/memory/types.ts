@@ -12,6 +12,7 @@ export type MemorySearchResult = {
   source: MemorySource;
   sourceType?: MemorySource;
   citation?: string;
+  canonicalId?: string;
 };
 
 export type MemoryReadResult = {

@@ -457,6 +457,7 @@ function toProcedureResult(doc: Document): MemorySearchResult {
     snippet: typeof doc.searchText === "string" ? doc.searchText.slice(0, 700) : "",
     source: "structured",
     sourceType: "structured",
+    canonicalId: String(doc._id ?? doc.procedureId ?? ""),
   };
 }
 

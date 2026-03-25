@@ -10,7 +10,6 @@ vi.mock("./mongodb-telemetry.js", () => ({
 
 import type { Db } from "mongodb";
 import { rewriteQuery, expandSynonyms, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
-import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -20,7 +19,11 @@ const PREFIX = "test_";
 const AGENT_ID = "agent-1";
 
 function mockDb(): Db {
-  return {} as Db;
+  return {
+    collection: vi.fn().mockReturnValue({
+      insertOne: vi.fn().mockResolvedValue({ acknowledged: true }),
+    }),
+  } as unknown as Db;
 }
 
 function enabledConfig(overrides: Partial<QueryRewriteConfig> = {}): QueryRewriteConfig {
@@ -166,16 +169,19 @@ describe("rewriteQuery", () => {
   });
 
   it("emits query-rewrite telemetry", async () => {
+    const insertOne = vi.fn().mockResolvedValue({ acknowledged: true });
+    const db = {
+      collection: vi.fn().mockReturnValue({ insertOne }),
+    } as unknown as Db;
+
     await rewriteQuery({
-      db: mockDb(),
+      db,
       prefix: PREFIX,
       agentId: AGENT_ID,
       query: "auth problem",
       config: enabledConfig(),
     });
-    expect(emitTelemetry).toHaveBeenCalledWith(
-      expect.anything(),
-      PREFIX,
+    expect(insertOne).toHaveBeenCalledWith(
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "query-rewrite" },
         ok: true,
@@ -196,28 +202,16 @@ describe("rewriteQuery", () => {
     expect(result.rewrittenQuery).toBe("xylophone banana");
   });
 
-  it("throws on llm method (H3 audit fix)", async () => {
+  it("rejects unsupported rewrite methods", async () => {
     await expect(
       rewriteQuery({
         db: mockDb(),
         prefix: PREFIX,
         agentId: AGENT_ID,
         query: "auth issue",
-        config: enabledConfig({ method: "llm" }),
+        config: enabledConfig({ method: "hyde" as unknown as QueryRewriteConfig["method"] }),
       }),
-    ).rejects.toThrow(/not yet implemented/);
-  });
-
-  it("throws on hyde method (H3 audit fix)", async () => {
-    await expect(
-      rewriteQuery({
-        db: mockDb(),
-        prefix: PREFIX,
-        agentId: AGENT_ID,
-        query: "auth issue",
-        config: enabledConfig({ method: "hyde" }),
-      }),
-    ).rejects.toThrow(/not yet implemented/);
+    ).rejects.toThrow(/Unsupported query rewrite method/);
   });
 
   it("handles single-word query", async () => {
