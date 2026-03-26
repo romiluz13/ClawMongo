@@ -11,10 +11,15 @@ import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backe
 import { normalizeExtraMemoryPaths } from "./internal.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
+import { expandSearchContext } from "./mongodb-context-expansion.js";
+import { mergeContiguousChunks } from "./mongodb-contiguous-merge.js";
+import { projectConversationWindows } from "./mongodb-conversation-windows.js";
 import {
   heuristicEpisodeSummarizer,
   promoteDerivedMemoryFromEvent,
 } from "./mongodb-derived-memory.js";
+import type { EntityExtractor } from "./mongodb-entity-extractor.js";
+import { LLMEntityExtractor } from "./mongodb-entity-extractor.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
 import { checkAutoEpisodeTriggers } from "./mongodb-episodes.js";
 import * as mongodbEvents from "./mongodb-events.js";
@@ -370,6 +375,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private derivationQueue: Promise<void> = Promise.resolve();
   private lastSearchMode = "legacy";
   private lastSearchDetails: Record<string, unknown> | undefined;
+  private entityExtractor?: EntityExtractor;
+  private llmFn?: (prompt: string) => Promise<string>;
 
   private constructor(params: {
     client: MongoClient;
@@ -381,6 +388,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     capabilities: DetectedCapabilities;
     config: ResolvedMemoryBackendConfig;
     relevance?: MongoDBRelevanceRuntime | null;
+    llmFn?: (prompt: string) => Promise<string>;
   }) {
     this.client = params.client;
     this.db = params.db;
@@ -397,6 +405,16 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.capabilities = params.capabilities;
     this.config = params.config;
     this.relevance = params.relevance ?? null;
+    this.llmFn = params.llmFn;
+
+    // Initialize LLM entity extractor if configured
+    const mongoCfg = params.config.mongodb;
+    if (mongoCfg?.graph?.entityExtraction?.method === "llm" && params.llmFn) {
+      this.entityExtractor = new LLMEntityExtractor(
+        params.llmFn,
+        mongoCfg.graph.entityExtraction.timeoutMs ?? 5000,
+      );
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -408,6 +426,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     agentId: string;
     resolved: ResolvedMemoryBackendConfig;
     extraPaths?: string[];
+    llmFn?: (prompt: string) => Promise<string>;
   }): Promise<MongoDBMemoryManager | null> {
     const mongoCfg = params.resolved.mongodb;
     if (!mongoCfg) {
@@ -490,6 +509,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       capabilities,
       config: params.resolved,
       relevance,
+      llmFn: params.llmFn,
     });
 
     try {
@@ -827,6 +847,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           scopeRef: this.agentScopeRef,
           rerankConfig: mongoCfg.reranking,
           queryRewriteConfig: mongoCfg.queryRewriting,
+          enableContiguousMerge: mongoCfg.enableContiguousMerge,
+          enableContextExpansion: mongoCfg.enableContextExpansion,
         },
       });
 
@@ -2314,10 +2336,31 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           scope,
           scopeRef: written.scopeRef,
           sourceEventId: written.eventId,
+          extractor: this.entityExtractor,
+          role: event.role,
         })
         .catch((err) => {
           log.warn("entity projection failed after event write", { error: err });
         });
+      // Fire-and-forget: project conversation windows if enabled
+      const mongoCfgWrite = this.config.mongodb!;
+      const windowSize = mongoCfgWrite.conversationWindowSize ?? 7;
+      if (mongoCfgWrite.enableConversationWindows && event.sessionId) {
+        if (this.chunkCount > 0 && this.chunkCount % windowSize === 0) {
+          projectConversationWindows({
+            db: this.db,
+            prefix: this.prefix,
+            agentId: this.agentId,
+            sessionId: event.sessionId,
+            scope,
+            scopeRef: written.scopeRef,
+            windowSize: mongoCfgWrite.conversationWindowSize,
+            overlap: mongoCfgWrite.conversationWindowOverlap,
+          }).catch((err) => {
+            log.warn("conversation window projection failed", { error: err });
+          });
+        }
+      }
       this.schedulePostWriteDerivations({
         eventId: written.eventId,
         role: event.role,
@@ -2671,6 +2714,8 @@ export async function searchV2(
       rerankConfig?: RerankConfig;
       queryRewriteConfig?: QueryRewriteConfig;
       projection?: "full" | "ids-only";
+      enableContiguousMerge?: boolean;
+      enableContextExpansion?: boolean;
     };
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
@@ -2838,6 +2883,9 @@ export async function searchV2(
               snippet: e.body,
               score: 1 - i * 0.01,
               source: "conversation" as MemorySource,
+              sourceType: "conversation" as MemorySource,
+              sessionId: e.sessionId,
+              timestamp: e.timestamp,
             }));
             break;
           }
@@ -3098,6 +3146,18 @@ export async function searchV2(
       deduped.sort((a, b) => b.score - a.score);
     }
 
+    // Context expansion: fetch neighbor events for event-based chunks
+    const enableExpansion = context.searchOptions?.enableContextExpansion !== false;
+    if (enableExpansion) {
+      deduped = await expandSearchContext({
+        db,
+        prefix,
+        agentId,
+        results: deduped,
+        maxResults: maxResults ?? 20,
+      });
+    }
+
     const heuristicReranked = rerankResults(deduped, query);
 
     // Cross-encoder re-ranking via Voyage API (after heuristic, before final slice)
@@ -3119,7 +3179,10 @@ export async function searchV2(
       }
     }
 
-    const sliced = finalResults.slice(0, maxResults);
+    // Contiguous merge: combine adjacent chunks from same session (AFTER cross-encoder)
+    const enableMerge = context.searchOptions?.enableContiguousMerge !== false;
+    const mergedResults = enableMerge ? mergeContiguousChunks(finalResults) : finalResults;
+    const sliced = mergedResults.slice(0, maxResults);
 
     // Phase 9: Tiered retrieval — strip text for ids-only projection mode
     const projectionMode = context.searchOptions?.projection ?? "full";

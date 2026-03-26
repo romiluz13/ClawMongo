@@ -35,6 +35,11 @@ export type Episode = {
   tags?: string[];
   status?: EpisodeStatus;
   updatedAt: Date;
+  // Tiered summaries (optional -- backward compatible with single summary)
+  shortTermSummary?: string;
+  mediumTermSummary?: string;
+  longTermSummary?: string;
+  topics?: string[];
 };
 
 /**
@@ -48,6 +53,11 @@ export type EpisodeSummarizer = (
   title: string;
   summary: string;
   tags?: string[];
+  // Tiered summaries (optional -- summarizer may return none, some, or all)
+  shortTermSummary?: string;
+  mediumTermSummary?: string;
+  longTermSummary?: string;
+  topics?: string[];
 }>;
 
 function buildEpisodeSummarizerInput(
@@ -172,7 +182,8 @@ export async function materializeEpisode(params: {
       }).catch(() => {});
       return null;
     }
-    const { title, summary, tags } = await summarizer(summarizerInput);
+    const summarizerResult = await summarizer(summarizerInput);
+    const { title, summary, tags } = summarizerResult;
 
     // 3b. Validate summarizer output
     if (!title || typeof title !== "string" || !title.trim()) {
@@ -180,6 +191,21 @@ export async function materializeEpisode(params: {
     }
     if (!summary || typeof summary !== "string" || !summary.trim()) {
       throw new Error("Summarizer returned empty or invalid summary");
+    }
+
+    // 3c. Extract tiered fields if present
+    const tieredFields: Record<string, unknown> = {};
+    if (summarizerResult.shortTermSummary !== undefined) {
+      tieredFields.shortTermSummary = summarizerResult.shortTermSummary;
+    }
+    if (summarizerResult.mediumTermSummary !== undefined) {
+      tieredFields.mediumTermSummary = summarizerResult.mediumTermSummary;
+    }
+    if (summarizerResult.longTermSummary !== undefined) {
+      tieredFields.longTermSummary = summarizerResult.longTermSummary;
+    }
+    if (summarizerResult.topics !== undefined && summarizerResult.topics.length > 0) {
+      tieredFields.topics = summarizerResult.topics;
     }
 
     // 4. Build episode document
@@ -198,6 +224,7 @@ export async function materializeEpisode(params: {
       sourceEventCount: events.length,
       sourceEventIds,
       updatedAt: now,
+      ...tieredFields,
     };
     if (tags !== undefined) {
       setDoc.tags = tags;

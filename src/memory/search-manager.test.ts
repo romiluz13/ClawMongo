@@ -61,6 +61,11 @@ function makeConfig(overrides?: Partial<ResolvedMongoDBConfig>): ResolvedMongoDB
       voyageApiKey: "",
     },
     cache: { enabled: true, conversationTtlSec: 300, kbTtlSec: 3600, similarityThreshold: 0.95 },
+    enableContiguousMerge: true,
+    enableContextExpansion: true,
+    enableConversationWindows: false,
+    conversationWindowSize: 7,
+    conversationWindowOverlap: 2,
     sources: {
       reference: { enabled: true },
       conversation: { enabled: true },

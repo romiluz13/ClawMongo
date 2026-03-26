@@ -419,6 +419,9 @@ const CHUNKS_SCHEMA: Document = {
         enum: ["active", "archived", "deleted"],
         description: "Lifecycle status (default: active)",
       },
+      sessionId: { bsonType: "string" },
+      timestamp: { bsonType: "date" },
+      windowIndex: { bsonType: "int" },
     },
   },
 };
@@ -1129,6 +1132,11 @@ export async function ensureStandardIndexes(
   await events.createIndex(
     { sessionId: 1, timestamp: -1 },
     { name: "idx_events_session_ts", sparse: true },
+  );
+  applied++;
+  await events.createIndex(
+    { agentId: 1, sessionId: 1, timestamp: 1 },
+    { name: "idx_events_agent_session_ts" },
   );
   applied++;
   await events.createIndex({ projectedAt: 1 }, { name: "idx_events_projected", sparse: true });

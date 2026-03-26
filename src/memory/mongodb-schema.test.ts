@@ -410,11 +410,11 @@ describe("ensureStandardIndexes", () => {
 
     // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 7 structured (6 + 1 v2 scope) +
     // 1 structured revisions + 3 relevance_runs + 2 relevance_artifacts +
-    // 2 relevance_regressions + 6 events + 3 entities + 4 relations + 2 entity links +
+    // 2 relevance_regressions + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
     // 3 episodes + 1 ingest_runs + 1 projection_runs + 4 procedures +
     // 1 procedure_revisions + 3 query_cache + 2 telemetry
-    // + 3 memory_mutations (compound + TTL + per-document) = 62
-    expect(count).toBe(62);
+    // + 3 memory_mutations (compound + TTL + per-document) = 63
+    expect(count).toBe(63);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
@@ -447,7 +447,7 @@ describe("ensureStandardIndexes", () => {
     const projectionRuns = db.collection("test_projection_runs") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
-    expect(events.createIndex).toHaveBeenCalledTimes(6);
+    expect(events.createIndex).toHaveBeenCalledTimes(7);
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
     expect(relations.createIndex).toHaveBeenCalledTimes(4);
     expect(entityLinks.createIndex).toHaveBeenCalledTimes(2);
@@ -612,11 +612,11 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 27 (v1 base) + 6 events + 3 entities + 4 relations + 2 entity links + 3 episodes +
+    // 27 (v1 base) + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links + 3 episodes +
     // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions +
     // 4 procedures + 1 procedure_revisions + 3 query_cache + 2 telemetry
-    // + 3 memory_mutations (compound + TTL + per-document) = 62
-    expect(count).toBe(62);
+    // + 3 memory_mutations (compound + TTL + per-document) = 63
+    expect(count).toBe(63);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -1244,7 +1244,8 @@ describe("ensureStandardIndexes total count with query_cache and telemetry", () 
     const count = await ensureStandardIndexes(db, "test_");
     // Previous: 53 standard indexes + 1 toEntityId index
     // + 3 query_cache (unique + TTL + hitCount) + 2 telemetry (agent_ts + op_ts)
-    // + 3 memory_mutations (compound + TTL + per-document) = 62
-    expect(count).toBe(62);
+    // + 3 memory_mutations (compound + TTL + per-document)
+    // + 1 idx_events_agent_session_ts (Phase 0: context expansion) = 63
+    expect(count).toBe(63);
   });
 });

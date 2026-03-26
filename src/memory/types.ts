@@ -13,6 +13,8 @@ export type MemorySearchResult = {
   sourceType?: MemorySource;
   citation?: string;
   canonicalId?: string;
+  sessionId?: string; // session the chunk belongs to (for contiguous merge / context expansion)
+  timestamp?: Date; // event timestamp (for ordering in merge/expansion)
 };
 
 export type MemoryReadResult = {

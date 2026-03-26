@@ -99,6 +99,11 @@ export type ResolvedMongoDBConfig = {
     kbTtlSec: number;
     similarityThreshold: number;
   };
+  enableContiguousMerge: boolean;
+  enableContextExpansion: boolean;
+  enableConversationWindows: boolean;
+  conversationWindowSize: number;
+  conversationWindowOverlap: number;
   sources: {
     reference: { enabled: boolean };
     conversation: { enabled: boolean };
@@ -407,6 +412,21 @@ export function resolveMemoryBackendConfig(params: {
           kbTtlSec: mongoCfg?.cache?.kbTtlSec ?? 3600,
           similarityThreshold: mongoCfg?.cache?.similarityThreshold ?? 0.95,
         },
+        enableContiguousMerge: mongoCfg?.enableContiguousMerge !== false,
+        enableContextExpansion: mongoCfg?.enableContextExpansion !== false,
+        enableConversationWindows: mongoCfg?.enableConversationWindows === true,
+        conversationWindowSize:
+          typeof mongoCfg?.conversationWindowSize === "number" &&
+          Number.isFinite(mongoCfg.conversationWindowSize) &&
+          mongoCfg.conversationWindowSize >= 5
+            ? Math.floor(mongoCfg.conversationWindowSize)
+            : 7,
+        conversationWindowOverlap:
+          typeof mongoCfg?.conversationWindowOverlap === "number" &&
+          Number.isFinite(mongoCfg.conversationWindowOverlap) &&
+          mongoCfg.conversationWindowOverlap >= 0
+            ? Math.floor(mongoCfg.conversationWindowOverlap)
+            : 2,
         sources: {
           reference: {
             enabled: params.cfg.memory?.sources?.reference?.enabled !== false,

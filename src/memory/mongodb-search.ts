@@ -78,6 +78,9 @@ function toSearchResult(doc: Document, source: LegacyMemorySource): MemorySearch
     snippet: typeof doc.text === "string" ? doc.text.slice(0, 700) : "",
     source: sourceType,
     sourceType,
+    // Propagate session/timestamp from chunk doc (added in Phase 0)
+    ...(typeof doc.sessionId === "string" && { sessionId: doc.sessionId }),
+    ...(doc.timestamp instanceof Date && { timestamp: doc.timestamp }),
   };
 }
 

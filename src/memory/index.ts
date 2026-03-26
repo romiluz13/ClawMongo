@@ -22,6 +22,7 @@ export {
   getUnconsolidatedEvents,
   projectChunksFromEvents,
   getSessionEventsWithBound,
+  renderEventChunkText,
   type CanonicalEvent,
 } from "./mongodb-events.js";
 export {
@@ -120,6 +121,18 @@ export {
   type QueryRewriteConfig,
   type QueryRewriteResult,
 } from "./mongodb-query-rewriter.js";
+export { mergeContiguousChunks } from "./mongodb-contiguous-merge.js";
+export { expandSearchContext } from "./mongodb-context-expansion.js";
+export {
+  buildConversationWindows,
+  projectConversationWindows,
+  type ConversationWindow,
+} from "./mongodb-conversation-windows.js";
+export {
+  buildTieredSummaryPrompt,
+  parseTieredSummaryResponse,
+  withTieredSummaries,
+} from "./mongodb-tiered-summary.js";
 export {
   type EntityExtractor,
   type ExtractedEntity as ExtractedEntityV2,

@@ -28,7 +28,7 @@ export type CanonicalEvent = {
   consolidatedIntoEpisodeId?: string;
 };
 
-function renderEventChunkText(event: Pick<CanonicalEvent, "role" | "body">): string {
+export function renderEventChunkText(event: Pick<CanonicalEvent, "role" | "body">): string {
   const roleLabel = event.role.charAt(0).toUpperCase() + event.role.slice(1);
   return `${roleLabel}: ${event.body}`;
 }
@@ -348,6 +348,9 @@ export async function projectEventChunk(params: {
         scope: event.scope,
         scopeRef: event.scopeRef,
         updatedAt: new Date(),
+        // Store session/timestamp for contiguous merge and context expansion
+        ...(event.sessionId && { sessionId: event.sessionId }),
+        timestamp: event.timestamp,
       },
     },
     { upsert: true },

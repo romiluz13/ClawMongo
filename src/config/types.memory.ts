@@ -93,6 +93,16 @@ export type MemoryMongoDBConfig = {
     /** Maximum rewritten query length in tokens. Default: 128 */
     maxTokens?: number;
   };
+  /** Enable contiguous chunk merging in search results. Default: true */
+  enableContiguousMerge?: boolean;
+  /** Enable context expansion (fetch neighbor chunks). Default: true */
+  enableContextExpansion?: boolean;
+  /** Enable conversation window chunks (multi-turn). Default: false (opt-in) */
+  enableConversationWindows?: boolean;
+  /** Window size in turns for conversation windows. Default: 7 */
+  conversationWindowSize?: number;
+  /** Overlap between adjacent conversation windows in turns. Default: 2 */
+  conversationWindowOverlap?: number;
   /** Cross-encoder re-ranking configuration */
   reranking?: {
     /** Enable cross-encoder re-ranking. Default: false */
