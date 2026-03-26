@@ -85,7 +85,7 @@ const EXPECTED_COLLECTION_SUFFIXES = [
   "memory_telemetry",
   "memory_mutations",
 ] as const;
-const EXPECTED_STANDARD_INDEX_COUNT = 62;
+const EXPECTED_STANDARD_INDEX_COUNT = 63;
 
 let client: MongoClient;
 let db: Db;

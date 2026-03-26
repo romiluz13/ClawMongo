@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createConfiguredBindingConversationRuntimeModuleMock } from "../../../../test/helpers/extensions/configured-binding-runtime.js";
 
 const ensureConfiguredBindingRouteReadyMock = vi.hoisted(() => vi.fn());
 const resolveConfiguredBindingRouteMock = vi.hoisted(() => vi.fn());
 
 vi.mock("openclaw/plugin-sdk/conversation-runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/conversation-runtime")>();
-  return {
-    ...actual,
-    ensureConfiguredBindingRouteReady: (...args: unknown[]) =>
-      ensureConfiguredBindingRouteReadyMock(...args),
-    resolveConfiguredBindingRoute: (...args: unknown[]) =>
-      resolveConfiguredBindingRouteMock(...args),
-  };
+  return await createConfiguredBindingConversationRuntimeModuleMock(
+    {
+      ensureConfiguredBindingRouteReadyMock,
+      resolveConfiguredBindingRouteMock,
+    },
+    importOriginal,
+  );
 });
 
 import { __testing as sessionBindingTesting } from "../../../../src/infra/outbound/session-binding-service.js";
@@ -166,6 +166,62 @@ function createBasePreflightParams(overrides?: Record<string, unknown>) {
   } satisfies Parameters<typeof preflightDiscordMessage>[0];
 }
 
+function createAllowedGuildEntries(requireMention = false) {
+  return {
+    [GUILD_ID]: {
+      id: GUILD_ID,
+      channels: {
+        [CHANNEL_ID]: {
+          allow: true,
+          enabled: true,
+          requireMention,
+        },
+      },
+    },
+  };
+}
+
+function createHydratedGuildClient(restPayload: Record<string, unknown>) {
+  const restGet = vi.fn(async () => restPayload);
+  const client = {
+    ...createGuildTextClient(CHANNEL_ID),
+    rest: {
+      get: restGet,
+    },
+  } as unknown as Parameters<typeof preflightDiscordMessage>[0]["client"];
+  return { client, restGet };
+}
+
+async function runRestHydrationPreflight(params: {
+  messageId: string;
+  restPayload: Record<string, unknown>;
+}) {
+  const message = createDiscordMessage({
+    id: params.messageId,
+    channelId: CHANNEL_ID,
+    content: "",
+    author: {
+      id: "user-1",
+      bot: false,
+      username: "alice",
+    },
+  });
+  const { client, restGet } = createHydratedGuildClient(params.restPayload);
+  const result = await preflightDiscordMessage(
+    createBasePreflightParams({
+      client,
+      data: createGuildEvent({
+        channelId: CHANNEL_ID,
+        guildId: GUILD_ID,
+        author: message.author,
+        message,
+      }),
+      guildEntries: createAllowedGuildEntries(false),
+    }),
+  );
+  return { result, restGet };
+}
+
 describe("preflightDiscordMessage configured ACP bindings", () => {
   beforeEach(() => {
     sessionBindingTesting.resetSessionBindingAdaptersForTests();
@@ -175,9 +231,7 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
     ensureConfiguredBindingRouteReadyMock.mockResolvedValue({ ok: true });
   });
 
-  // Covered by src/channels/plugins/acp-bindings.test.ts plus Discord route/preflight tests.
-  // This suite currently depends on a brittle conversation-runtime mock seam.
-  it.skip("does not initialize configured ACP bindings for rejected messages", async () => {
+  it("does not initialize configured ACP bindings for rejected messages", async () => {
     const result = await preflightDiscordMessage(
       createBasePreflightParams({
         guildEntries: {
@@ -199,7 +253,7 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
     expect(ensureConfiguredBindingRouteReadyMock).not.toHaveBeenCalled();
   });
 
-  it.skip("initializes configured ACP bindings only after preflight accepts the message", async () => {
+  it("initializes configured ACP bindings only after preflight accepts the message", async () => {
     const result = await preflightDiscordMessage(
       createBasePreflightParams({
         guildEntries: {
@@ -223,7 +277,7 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
     expect(result?.boundSessionKey).toBe("agent:codex:acp:binding:discord:default:abc123");
   });
 
-  it.skip("accepts plain messages in configured ACP-bound channels without a mention", async () => {
+  it("accepts plain messages in configured ACP-bound channels without a mention", async () => {
     const message = createDiscordMessage({
       id: "m-no-mention",
       channelId: CHANNEL_ID,
@@ -244,18 +298,7 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
           author: message.author,
           message,
         }),
-        guildEntries: {
-          [GUILD_ID]: {
-            id: GUILD_ID,
-            channels: {
-              [CHANNEL_ID]: {
-                allow: true,
-                enabled: true,
-                requireMention: true,
-              },
-            },
-          },
-        },
+        guildEntries: createAllowedGuildEntries(true),
       }),
     );
 
@@ -264,60 +307,23 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
     expect(result?.boundSessionKey).toBe("agent:codex:acp:binding:discord:default:abc123");
   });
 
-  it.skip("hydrates empty guild message payloads from REST before ensuring configured ACP bindings", async () => {
-    const message = createDiscordMessage({
-      id: "m-rest",
-      channelId: CHANNEL_ID,
-      content: "",
-      author: {
-        id: "user-1",
-        bot: false,
-        username: "alice",
+  it("hydrates empty guild message payloads from REST before ensuring configured ACP bindings", async () => {
+    const { result, restGet } = await runRestHydrationPreflight({
+      messageId: "m-rest",
+      restPayload: {
+        id: "m-rest",
+        content: "hello from rest",
+        attachments: [],
+        embeds: [],
+        mentions: [],
+        mention_roles: [],
+        mention_everyone: false,
+        author: {
+          id: "user-1",
+          username: "alice",
+        },
       },
     });
-    const restGet = vi.fn(async () => ({
-      id: "m-rest",
-      content: "hello from rest",
-      attachments: [],
-      embeds: [],
-      mentions: [],
-      mention_roles: [],
-      mention_everyone: false,
-      author: {
-        id: "user-1",
-        username: "alice",
-      },
-    }));
-    const client = {
-      ...createGuildTextClient(CHANNEL_ID),
-      rest: {
-        get: restGet,
-      },
-    } as unknown as Parameters<typeof preflightDiscordMessage>[0]["client"];
-
-    const result = await preflightDiscordMessage(
-      createBasePreflightParams({
-        client,
-        data: createGuildEvent({
-          channelId: CHANNEL_ID,
-          guildId: GUILD_ID,
-          author: message.author,
-          message,
-        }),
-        guildEntries: {
-          [GUILD_ID]: {
-            id: GUILD_ID,
-            channels: {
-              [CHANNEL_ID]: {
-                allow: true,
-                enabled: true,
-                requireMention: false,
-              },
-            },
-          },
-        },
-      }),
-    );
 
     expect(restGet).toHaveBeenCalledTimes(1);
     expect(result?.messageText).toBe("hello from rest");
@@ -325,66 +331,29 @@ describe("preflightDiscordMessage configured ACP bindings", () => {
     expect(ensureConfiguredBindingRouteReadyMock).toHaveBeenCalledTimes(1);
   });
 
-  it.skip("hydrates sticker-only guild message payloads from REST before ensuring configured ACP bindings", async () => {
-    const message = createDiscordMessage({
-      id: "m-rest-sticker",
-      channelId: CHANNEL_ID,
-      content: "",
-      author: {
-        id: "user-1",
-        bot: false,
-        username: "alice",
+  it("hydrates sticker-only guild message payloads from REST before ensuring configured ACP bindings", async () => {
+    const { result, restGet } = await runRestHydrationPreflight({
+      messageId: "m-rest-sticker",
+      restPayload: {
+        id: "m-rest-sticker",
+        content: "",
+        attachments: [],
+        embeds: [],
+        mentions: [],
+        mention_roles: [],
+        mention_everyone: false,
+        sticker_items: [
+          {
+            id: "sticker-1",
+            name: "wave",
+          },
+        ],
+        author: {
+          id: "user-1",
+          username: "alice",
+        },
       },
     });
-    const restGet = vi.fn(async () => ({
-      id: "m-rest-sticker",
-      content: "",
-      attachments: [],
-      embeds: [],
-      mentions: [],
-      mention_roles: [],
-      mention_everyone: false,
-      sticker_items: [
-        {
-          id: "sticker-1",
-          name: "wave",
-        },
-      ],
-      author: {
-        id: "user-1",
-        username: "alice",
-      },
-    }));
-    const client = {
-      ...createGuildTextClient(CHANNEL_ID),
-      rest: {
-        get: restGet,
-      },
-    } as unknown as Parameters<typeof preflightDiscordMessage>[0]["client"];
-
-    const result = await preflightDiscordMessage(
-      createBasePreflightParams({
-        client,
-        data: createGuildEvent({
-          channelId: CHANNEL_ID,
-          guildId: GUILD_ID,
-          author: message.author,
-          message,
-        }),
-        guildEntries: {
-          [GUILD_ID]: {
-            id: GUILD_ID,
-            channels: {
-              [CHANNEL_ID]: {
-                allow: true,
-                enabled: true,
-                requireMention: false,
-              },
-            },
-          },
-        },
-      }),
-    );
 
     expect(restGet).toHaveBeenCalledTimes(1);
     expect(result?.messageText).toBe("<media:sticker> (1 sticker)");
