@@ -271,6 +271,7 @@ export async function materializeEpisode(params: {
       sourceEventIds,
       updatedAt: now,
       ...(tags !== undefined && { tags }),
+      ...tieredFields,
     };
 
     log.info(

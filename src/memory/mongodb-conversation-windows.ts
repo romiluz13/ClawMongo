@@ -44,7 +44,8 @@ export function buildConversationWindows(
     return [];
   }
 
-  const stride = windowSize - overlap;
+  // Guard: overlap >= windowSize would make stride <= 0, causing infinite loop
+  const stride = Math.max(1, windowSize - overlap);
   const windows: ConversationWindow[] = [];
   let windowIndex = 0;
 

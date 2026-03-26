@@ -1,7 +1,10 @@
 import type { Db, Document } from "mongodb";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { renderEventChunkText } from "./mongodb-events.js";
 import { eventsCollection } from "./mongodb-schema.js";
 import type { MemorySearchResult } from "./types.js";
+
+const log = createSubsystemLogger("memory:mongodb:context-expansion");
 
 /**
  * Expand search results by fetching neighbor events (N-1, N+1 by timestamp)
@@ -81,12 +84,18 @@ export async function expandSearchContext(params: {
       },
     };
 
-    const sessionEvents = await collection
-      .find(filter)
-      // oxlint-disable-next-line unicorn/no-array-sort
-      .sort({ timestamp: 1 })
-      .limit(100)
-      .toArray();
+    let sessionEvents: Document[];
+    try {
+      sessionEvents = await collection
+        .find(filter)
+        // oxlint-disable-next-line unicorn/no-array-sort
+        .sort({ timestamp: 1 })
+        .limit(100)
+        .toArray();
+    } catch (err) {
+      log.warn(`context expansion query failed for session=${sessionId}, skipping`, { error: err });
+      continue;
+    }
 
     // For each expandable result, find its N-1 and N+1 neighbors
     for (const item of items) {

@@ -421,7 +421,7 @@ const CHUNKS_SCHEMA: Document = {
       },
       sessionId: { bsonType: "string" },
       timestamp: { bsonType: "date" },
-      windowIndex: { bsonType: "int" },
+      windowIndex: { bsonType: "number" },
     },
   },
 };
