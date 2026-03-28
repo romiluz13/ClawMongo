@@ -93,6 +93,7 @@ export type MemorySearchPass = {
   resultCount: number;
   queryRewritten: boolean;
   reranked: boolean;
+  correctionApplied?: string;
 };
 
 export type MemorySearchMetadata = {
@@ -109,6 +110,9 @@ export type MemorySearchMetadata = {
   queryRewritten: boolean;
   reranked: boolean;
   noDirectEvidenceReason?: string;
+  constraintRelaxations?: Array<{ constraint: string; action: string }>;
+  mmrApplied?: boolean;
+  mmrLambda?: number;
   plan?: {
     paths: string[];
     confidence: "high" | "medium" | "low";

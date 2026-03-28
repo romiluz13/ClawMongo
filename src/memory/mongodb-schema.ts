@@ -4,6 +4,7 @@ import type {
   MemoryMongoDBEmbeddingMode,
 } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortObject } from "./search-utils.js";
 
 const log = createSubsystemLogger("memory:mongodb:schema");
 
@@ -1357,22 +1358,8 @@ function hasServerVersionAtLeast(
   return major > minimumMajor || (major === minimumMajor && minor >= minimumMinor);
 }
 
-function sortDocument(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(sortDocument);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, sortDocument(entry)]),
-  );
-}
-
 function searchIndexDefinitionSignature(definition: Document): string {
-  return JSON.stringify(sortDocument(definition));
+  return JSON.stringify(sortObject(definition));
 }
 
 async function ensureNamedSearchIndex(params: {

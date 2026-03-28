@@ -1,4 +1,6 @@
+import type { RetrievalPath } from "./mongodb-retrieval-planner.js";
 import { classifyRetrievalQuery, resolveTimeRangePreset } from "./mongodb-retrieval-planner.js";
+import { sortObject } from "./search-utils.js";
 import type { MemorySearchResult } from "./types.js";
 import type {
   EvidenceCoverage,
@@ -29,16 +31,6 @@ export type MemorySearchExecutorPlanPass = {
   reason: string;
   variant: "original" | "rewrite" | "family-expansion" | "decomposition";
 };
-
-type RetrievalPath =
-  | "active-critical"
-  | "structured"
-  | "raw-window"
-  | "graph"
-  | "hybrid"
-  | "kb"
-  | "episodic"
-  | "procedural";
 
 function sourcePreferencePaths(source: MemorySearchSourcePreference): RetrievalPath[] {
   switch (source) {
@@ -78,30 +70,15 @@ function selectPassPaths(params: {
     params.sourcePreference.flatMap((source) => sourcePreferencePaths(source)),
   );
   const scopedAllowed = new Set(Array.from(allowed).filter((path) => preferredAllowed.has(path)));
-  const effectiveAllowed = scopedAllowed;
   const preferredSource =
     params.sourcePreference[Math.min(params.pass - 1, params.sourcePreference.length - 1)];
   const preferredPaths = sourcePreferencePaths(preferredSource).filter((path) =>
-    effectiveAllowed.has(path),
+    scopedAllowed.has(path),
   );
   if (preferredPaths.length === 0 || params.pass > params.sourcePreference.length) {
-    return effectiveAllowed;
+    return scopedAllowed;
   }
   return new Set(preferredPaths);
-}
-
-function sortObject(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(sortObject);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .toSorted(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, sortObject(entry)]),
-  );
 }
 
 export function buildMemorySearchRequestSignature(request: MemorySearchRequest): string {
@@ -391,6 +368,9 @@ export function mergeMetadata(params: {
   resultsRejected: RejectedResultSummary[];
   results: MemorySearchResult[];
   noDirectEvidenceReason?: string;
+  constraintRelaxations?: Array<{ constraint: string; action: string }>;
+  mmrApplied?: boolean;
+  mmrLambda?: number;
 }): MemorySearchMetadata {
   const pathsExecuted = Array.from(
     new Set(params.passes.flatMap((pass) => pass.metadata.pathsExecuted)),
@@ -417,6 +397,11 @@ export function mergeMetadata(params: {
     ...(params.noDirectEvidenceReason
       ? { noDirectEvidenceReason: params.noDirectEvidenceReason }
       : {}),
+    ...(params.constraintRelaxations?.length
+      ? { constraintRelaxations: params.constraintRelaxations }
+      : {}),
+    ...(params.mmrApplied != null ? { mmrApplied: params.mmrApplied } : {}),
+    ...(params.mmrLambda != null ? { mmrLambda: params.mmrLambda } : {}),
     ...(params.request.returnPlan && params.passes[0]?.metadata.plan
       ? { plan: params.passes[0].metadata.plan }
       : {}),
@@ -448,6 +433,163 @@ export function buildNoDirectEvidenceResponse(params: {
       noDirectEvidenceReason: params.reason,
     }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// CRAG-style corrective retrieval analysis (pure function, no LLM)
+// ---------------------------------------------------------------------------
+
+export function analyzeCorrectionNeeded(params: {
+  evidenceCoverage: EvidenceCoverage;
+  rejected: RejectedResultSummary[];
+  passCount: number;
+  maxPasses: number;
+}): { needed: boolean; correction?: string; reason?: string } {
+  if (params.passCount >= params.maxPasses) {
+    return { needed: false };
+  }
+  if (params.evidenceCoverage !== "none" && params.evidenceCoverage !== "indirect") {
+    return { needed: false };
+  }
+  if (params.rejected.length === 0) {
+    return { needed: false };
+  }
+  const reasonCounts = new Map<string, number>();
+  for (const r of params.rejected) {
+    reasonCounts.set(r.reason, (reasonCounts.get(r.reason) ?? 0) + 1);
+  }
+  let dominantReason = "";
+  let maxCount = 0;
+  for (const [reason, count] of reasonCounts) {
+    if (count > maxCount) {
+      dominantReason = reason;
+      maxCount = count;
+    }
+  }
+  if (dominantReason === "outside requested time range") {
+    return { needed: true, correction: "time-range-widened-2x", reason: dominantReason };
+  }
+  if (dominantReason === "missing exact evidence locator") {
+    return { needed: true, correction: "hybrid-evidence-relaxed", reason: dominantReason };
+  }
+  if (dominantReason === "missing timestamp for requested time range") {
+    return { needed: true, correction: "time-range-widened-2x", reason: dominantReason };
+  }
+  return { needed: false };
+}
+
+// ---------------------------------------------------------------------------
+// Constraint relaxation fallback (pure function)
+// ---------------------------------------------------------------------------
+
+export function identifyRelaxableConstraint(
+  rejected: RejectedResultSummary[],
+): { constraint: string; action: string } | null {
+  if (rejected.length === 0) {
+    return null;
+  }
+  const reasonCounts = new Map<string, number>();
+  for (const r of rejected) {
+    reasonCounts.set(r.reason, (reasonCounts.get(r.reason) ?? 0) + 1);
+  }
+  let dominantReason = "";
+  let maxCount = 0;
+  for (const [reason, count] of reasonCounts) {
+    if (count > maxCount) {
+      dominantReason = reason;
+      maxCount = count;
+    }
+  }
+  if (
+    dominantReason === "outside requested time range" ||
+    dominantReason === "missing timestamp for requested time range"
+  ) {
+    return { constraint: "timeRange", action: "removed-time-range" };
+  }
+  if (dominantReason === "missing exact evidence locator") {
+    return { constraint: "needExactEvidence", action: "disabled-exact-evidence" };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// MMR diversity scoring (pure function, uses Jaccard similarity on snippets)
+// ---------------------------------------------------------------------------
+
+function tokenize(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/\s+/).filter(Boolean));
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  let intersection = 0;
+  for (const word of a) {
+    if (b.has(word)) {
+      intersection++;
+    }
+  }
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export function applyMMRReranking(params: {
+  results: MemorySearchResult[];
+  classification: MemorySearchClassification;
+}): { results: MemorySearchResult[]; mmrApplied: boolean; mmrLambda: number } {
+  const lambdaByClassification: Record<MemorySearchClassification, number> = {
+    family: 0.3,
+    comparison: 0.4,
+    direct: 0.7,
+    temporal: 0.7,
+    scoped: 0.7,
+    "multi-hop": 0.7,
+  };
+  const lambda = lambdaByClassification[params.classification] ?? 0.5;
+
+  if (params.results.length < 3) {
+    return { results: params.results, mmrApplied: false, mmrLambda: lambda };
+  }
+
+  const scores = params.results.map((r) => r.score);
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+  const scoreRange = maxScore - minScore || 1;
+
+  const tokenSets = params.results.map((r) => tokenize(r.snippet));
+
+  const selected: MemorySearchResult[] = [params.results[0]];
+  const selectedTokens: Set<string>[] = [tokenSets[0]];
+  const remaining = new Set(params.results.slice(1).map((_, i) => i + 1));
+
+  while (remaining.size > 0) {
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+
+    for (const idx of remaining) {
+      const normalizedRelevance = (params.results[idx].score - minScore) / scoreRange;
+      let maxSimilarity = 0;
+      for (const selTokens of selectedTokens) {
+        const sim = jaccardSimilarity(tokenSets[idx], selTokens);
+        if (sim > maxSimilarity) {
+          maxSimilarity = sim;
+        }
+      }
+      const mmrScore = lambda * normalizedRelevance - (1 - lambda) * maxSimilarity;
+      if (mmrScore > bestScore) {
+        bestScore = mmrScore;
+        bestIdx = idx;
+      }
+    }
+
+    if (bestIdx >= 0) {
+      selected.push(params.results[bestIdx]);
+      selectedTokens.push(tokenSets[bestIdx]);
+      remaining.delete(bestIdx);
+    } else {
+      break;
+    }
+  }
+
+  return { results: selected, mmrApplied: true, mmrLambda: lambda };
 }
 
 export async function executeMongoSearchPlan(params: {
@@ -571,7 +713,115 @@ export async function executeMongoSearchPlan(params: {
     }
   }
 
-  const acceptedResults = Array.from(acceptedById.values());
+  let acceptedResults = Array.from(acceptedById.values());
+
+  // --- CRAG corrective retrieval: if coverage is poor, try a corrective pass ---
+  const correction = analyzeCorrectionNeeded({
+    evidenceCoverage: computeEvidenceCoverage(acceptedResults),
+    rejected: allRejected,
+    passCount: passes.length,
+    maxPasses: normalized.maxPasses,
+  });
+  if (correction.needed && correction.correction) {
+    let correctiveTimeRange = timeRange;
+    let correctiveRequest = normalized;
+    if (correction.correction === "time-range-widened-2x" && timeRange) {
+      const duration = timeRange.end.getTime() - timeRange.start.getTime();
+      correctiveTimeRange = {
+        start: new Date(timeRange.start.getTime() - duration),
+        end: new Date(timeRange.end.getTime() + duration),
+      };
+    }
+    if (correction.correction === "hybrid-evidence-relaxed") {
+      correctiveRequest = { ...normalized, needExactEvidence: false };
+    }
+    const correctivePaths =
+      correction.correction === "hybrid-evidence-relaxed"
+        ? new Set(["hybrid" as const, ...params.availablePaths])
+        : params.availablePaths;
+    const corrExec = await params.executePass({
+      pass: passes.length + 1,
+      query: normalized.query,
+      availablePaths: correctivePaths,
+      ...(correctiveTimeRange ? { timeRange: correctiveTimeRange } : {}),
+    });
+    const corrFiltered = applyHardConstraintRejections({
+      results: corrExec.results,
+      request: correctiveRequest,
+      ...(correctiveTimeRange ? { timeRange: correctiveTimeRange } : {}),
+    });
+    allRejected.push(...corrFiltered.rejected);
+    for (const result of corrFiltered.accepted) {
+      acceptedById.set(searchResultIdentity(result), result);
+    }
+    passes.push({
+      pass: passes.length + 1,
+      query: normalized.query,
+      reason: `corrective: ${correction.correction}`,
+      pathsExecuted: corrExec.metadata.pathsExecuted,
+      resultCount: corrFiltered.accepted.length,
+      queryRewritten: corrExec.metadata.queryRewritten === true,
+      reranked: corrExec.metadata.reranked === true,
+      correctionApplied: correction.correction,
+      metadata: {
+        pathsExecuted: corrExec.metadata.pathsExecuted,
+        resultsByPath: corrExec.metadata.resultsByPath,
+        queryRewritten: corrExec.metadata.queryRewritten === true,
+        reranked: corrExec.metadata.reranked === true,
+        plan: corrExec.metadata.plan,
+      },
+    });
+    acceptedResults = Array.from(acceptedById.values());
+  }
+
+  // --- Constraint relaxation: if still empty after all passes, relax the dominant constraint ---
+  let constraintRelaxations: Array<{ constraint: string; action: string }> | undefined;
+  if (acceptedResults.length === 0 && allRejected.length > 0) {
+    const relaxation = identifyRelaxableConstraint(allRejected);
+    if (relaxation) {
+      let relaxedRequest = normalized;
+      let relaxedTimeRange = timeRange;
+      if (relaxation.action === "removed-time-range") {
+        relaxedTimeRange = undefined;
+      }
+      if (relaxation.action === "disabled-exact-evidence") {
+        relaxedRequest = { ...normalized, needExactEvidence: false };
+      }
+      const relaxExec = await params.executePass({
+        pass: passes.length + 1,
+        query: normalized.query,
+        availablePaths: params.availablePaths,
+        ...(relaxedTimeRange ? { timeRange: relaxedTimeRange } : {}),
+      });
+      const relaxFiltered = applyHardConstraintRejections({
+        results: relaxExec.results,
+        request: relaxedRequest,
+        ...(relaxedTimeRange ? { timeRange: relaxedTimeRange } : {}),
+      });
+      for (const result of relaxFiltered.accepted) {
+        acceptedById.set(searchResultIdentity(result), result);
+      }
+      passes.push({
+        pass: passes.length + 1,
+        query: normalized.query,
+        reason: `relaxation: ${relaxation.action}`,
+        pathsExecuted: relaxExec.metadata.pathsExecuted,
+        resultCount: relaxFiltered.accepted.length,
+        queryRewritten: relaxExec.metadata.queryRewritten === true,
+        reranked: relaxExec.metadata.reranked === true,
+        correctionApplied: `relaxation:${relaxation.action}`,
+        metadata: {
+          pathsExecuted: relaxExec.metadata.pathsExecuted,
+          resultsByPath: relaxExec.metadata.resultsByPath,
+          queryRewritten: relaxExec.metadata.queryRewritten === true,
+          reranked: relaxExec.metadata.reranked === true,
+          plan: relaxExec.metadata.plan,
+        },
+      });
+      constraintRelaxations = [relaxation];
+      acceptedResults = Array.from(acceptedById.values());
+    }
+  }
 
   if (normalized.needExactEvidence && acceptedResults.length === 0) {
     return buildNoDirectEvidenceResponse({
@@ -583,14 +833,20 @@ export async function executeMongoSearchPlan(params: {
     });
   }
 
+  // --- MMR diversity scoring: reorder results for content diversity ---
+  const mmr = applyMMRReranking({ results: acceptedResults, classification });
+
   return {
-    results: acceptedResults,
+    results: mmr.results,
     metadata: mergeMetadata({
       request: normalized,
       classification,
       passes,
       resultsRejected: allRejected,
-      results: acceptedResults,
+      results: mmr.results,
+      constraintRelaxations,
+      mmrApplied: mmr.mmrApplied,
+      mmrLambda: mmr.mmrLambda,
     }),
   };
 }
