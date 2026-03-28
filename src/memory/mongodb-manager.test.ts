@@ -587,6 +587,7 @@ describe.skip("searchV2", () => {
   it("uses retrieval planner and executes paths, returning results + metadata", async () => {
     vi.mocked(planRetrieval).mockReturnValue({
       paths: ["episodic", "hybrid", "raw-window"],
+      classification: "temporal",
       confidence: "high",
       reasoning: "episodic keywords",
     });
@@ -620,6 +621,7 @@ describe.skip("searchV2", () => {
   it("continues when one path fails (inner try/catch per path)", async () => {
     vi.mocked(planRetrieval).mockReturnValue({
       paths: ["episodic", "raw-window", "hybrid"],
+      classification: "temporal",
       confidence: "medium",
       reasoning: "test",
     });
@@ -653,6 +655,7 @@ describe.skip("searchV2", () => {
   it("executes graph path when entity names are provided", async () => {
     vi.mocked(planRetrieval).mockReturnValue({
       paths: ["graph", "hybrid", "raw-window"],
+      classification: "scoped",
       confidence: "high",
       reasoning: "known entity detected",
     });

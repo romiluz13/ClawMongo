@@ -1,6 +1,24 @@
 export type MemorySource = "reference" | "conversation" | "structured";
 export type LegacyMemorySource = "memory" | "sessions" | "kb" | "structured";
 export type InternalMemoryStoredSource = LegacyMemorySource | "conversation";
+export type MemorySearchMode = "auto" | "direct" | "agentic";
+export type MemorySearchSourcePreference = MemorySource | "procedural" | "episodic" | "graph";
+export type MemorySearchClassification =
+  | "direct"
+  | "family"
+  | "comparison"
+  | "temporal"
+  | "scoped"
+  | "multi-hop";
+export type EvidenceCoverage = "direct" | "partial" | "indirect" | "none";
+export type MemorySearchTimeRangePreset =
+  | "today"
+  | "yesterday"
+  | "last-24h"
+  | "last-7d"
+  | "this-week"
+  | "last-30d"
+  | "this-month";
 
 export type MemorySearchResult = {
   path: string;
@@ -15,6 +33,92 @@ export type MemorySearchResult = {
   canonicalId?: string;
   sessionId?: string; // session the chunk belongs to (for contiguous merge / context expansion)
   timestamp?: Date; // event timestamp (for ordering in merge/expansion)
+};
+
+export type MemorySearchTimeRange = {
+  preset?: MemorySearchTimeRangePreset;
+  start?: string;
+  end?: string;
+};
+
+export type MemoryConversationScope = {
+  sessionKey?: string;
+};
+
+export type MemoryStructuredScope = {
+  type?: string;
+  state?: string | string[];
+  salience?: string[];
+};
+
+export type MemoryReferenceScope = {
+  source?: string;
+  category?: string;
+  tags?: string[];
+};
+
+export type MemoryProceduralScope = {
+  state?: string;
+  intentTags?: string[];
+};
+
+export type MemorySearchRequest = {
+  query: string;
+  maxResults?: number;
+  minScore?: number;
+  searchMode?: MemorySearchMode;
+  sourcePreference?: MemorySearchSourcePreference[];
+  timeRange?: MemorySearchTimeRange;
+  needExactEvidence?: boolean;
+  maxPasses?: number;
+  returnPlan?: boolean;
+  conversationScope?: MemoryConversationScope;
+  structuredScope?: MemoryStructuredScope;
+  referenceScope?: MemoryReferenceScope;
+  proceduralScope?: MemoryProceduralScope;
+};
+
+export type RejectedResultSummary = {
+  canonicalId?: string;
+  path?: string;
+  source?: MemorySearchSourcePreference;
+  reason: string;
+};
+
+export type MemorySearchPass = {
+  pass: number;
+  query: string;
+  reason: string;
+  pathsExecuted: string[];
+  resultCount: number;
+  queryRewritten: boolean;
+  reranked: boolean;
+};
+
+export type MemorySearchMetadata = {
+  mode: MemorySearchMode;
+  classification: MemorySearchClassification;
+  sourceOrder: MemorySearchSourcePreference[];
+  passes: MemorySearchPass[];
+  queriesTried: string[];
+  constraintsApplied: string[];
+  resultsRejected: RejectedResultSummary[];
+  evidenceCoverage: EvidenceCoverage;
+  pathsExecuted: string[];
+  resultsByPath: Record<string, number>;
+  queryRewritten: boolean;
+  reranked: boolean;
+  noDirectEvidenceReason?: string;
+  plan?: {
+    paths: string[];
+    confidence: "high" | "medium" | "low";
+    reasoning: string;
+  };
+};
+
+export type MemorySearchResponse = {
+  results: MemorySearchResult[];
+  metadata: MemorySearchMetadata;
 };
 
 export type MemoryReadResult = {
@@ -79,6 +183,7 @@ export interface MemorySearchManager {
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
   ): Promise<MemorySearchResult[]>;
+  searchDetailed?(request: MemorySearchRequest): Promise<MemorySearchResponse>;
   /** Direct KB search — optional, only available on MongoDB backend. */
   searchKB?(
     query: string,

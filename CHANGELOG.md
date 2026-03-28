@@ -10,6 +10,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Memory/MongoDB: add selective agentic internal search to the stable `memory_search` tool with generic request constraints (`searchMode`, ordered source preference, bounded time range, exact-evidence mode, bounded passes), planner-visible metadata, request-signature-aware cache partitioning, and a real MongoDB production-readiness gate that exercises public-tool direct-vs-agentic behavior with live Voyage embeddings/rerank.
 - MiniMax: add image generation provider for `image-01` model, supporting generate and image-to-image editing with aspect ratio control. (#54487) Thanks @liyuan97.
 - Slack/tool actions: add an explicit `upload-file` Slack action that routes file uploads through the existing Slack upload transport, with optional filename/title/comment overrides for channels and DMs.
 - Plugins/Matrix TTS: send auto-TTS replies as native Matrix voice bubbles instead of generic audio attachments. (#37080) thanks @Matthew19990919.

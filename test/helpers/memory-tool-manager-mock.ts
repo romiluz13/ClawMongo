@@ -1,12 +1,17 @@
 import { vi } from "vitest";
 
 export type SearchImpl = () => Promise<unknown[]>;
+export type SearchDetailedImpl = () => Promise<{
+  results: unknown[];
+  metadata: Record<string, unknown>;
+}>;
 export type MemoryReadParams = { relPath: string; from?: number; lines?: number };
 export type MemoryReadResult = { text: string; path: string; locator?: string; disabled?: boolean };
 type MemoryBackend = "builtin" | "mongodb";
 
 let backend: MemoryBackend = "mongodb";
 let searchImpl: SearchImpl = async () => [];
+let searchDetailedImpl: SearchDetailedImpl | null = null;
 let readFileImpl: (params: MemoryReadParams) => Promise<MemoryReadResult> = async (params) => ({
   text: "",
   path: params.relPath,
@@ -20,6 +25,27 @@ let writeStructuredMemoryImpl: MemoryWriteImpl = vi.fn(async () => ({
 
 const stubManager = {
   search: vi.fn(async () => await searchImpl()),
+  searchDetailed: vi.fn(async () =>
+    searchDetailedImpl
+      ? await searchDetailedImpl()
+      : {
+          results: await searchImpl(),
+          metadata: {
+            mode: "auto",
+            classification: "direct",
+            sourceOrder: ["conversation", "reference", "structured"],
+            passes: [],
+            queriesTried: [],
+            constraintsApplied: [],
+            resultsRejected: [],
+            evidenceCoverage: "none",
+            pathsExecuted: [],
+            resultsByPath: {},
+            queryRewritten: false,
+            reranked: false,
+          },
+        },
+  ),
   searchKB: vi.fn(async () => await searchKBImpl()),
   readFile: vi.fn(async (params: MemoryReadParams) => await readFileImpl(params)),
   writeStructuredMemory: vi.fn(
@@ -82,6 +108,10 @@ export function setMemorySearchImpl(next: SearchImpl): void {
   searchImpl = next;
 }
 
+export function setMemorySearchDetailedImpl(next: SearchDetailedImpl | null): void {
+  searchDetailedImpl = next;
+}
+
 export function setKBSearchImpl(next: SearchImpl): void {
   searchKBImpl = next;
 }
@@ -99,12 +129,15 @@ export function setMemoryWriteImpl(next: MemoryWriteImpl): void {
 export function resetMemoryToolMockState(overrides?: {
   backend?: MemoryBackend;
   searchImpl?: SearchImpl;
+  searchDetailedImpl?: SearchDetailedImpl | null;
   searchKBImpl?: SearchImpl;
   readFileImpl?: (params: MemoryReadParams) => Promise<MemoryReadResult>;
   writeStructuredMemoryImpl?: MemoryWriteImpl;
 }): void {
   backend = overrides?.backend ?? "mongodb";
   searchImpl = overrides?.searchImpl ?? (async () => []);
+  searchDetailedImpl =
+    overrides && "searchDetailedImpl" in overrides ? (overrides.searchDetailedImpl ?? null) : null;
   searchKBImpl = overrides?.searchKBImpl ?? (async () => []);
   readFileImpl =
     overrides?.readFileImpl ??
@@ -121,4 +154,8 @@ export function getMemorySearchManagerMockCalls(): number {
 
 export function getReadAgentMemoryFileMockCalls(): number {
   return readAgentMemoryFileMock.mock.calls.length;
+}
+
+export function getStubMemoryManager() {
+  return stubManager;
 }

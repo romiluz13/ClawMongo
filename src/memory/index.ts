@@ -1,9 +1,20 @@
 export type {
+  EvidenceCoverage,
   MemoryEmbeddingProbeResult,
   MemoryReadResult,
+  MemorySearchClassification,
   MemorySearchManager,
+  MemorySearchMetadata,
+  MemorySearchMode,
+  MemorySearchPass,
+  MemorySearchRequest,
+  MemorySearchResponse,
   MemorySearchResult,
+  MemorySearchSourcePreference,
+  MemorySearchTimeRange,
+  MemorySearchTimeRangePreset,
   MemorySource,
+  RejectedResultSummary,
 } from "./types.js";
 export {
   closeAllMemorySearchManagers,

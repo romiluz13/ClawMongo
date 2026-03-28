@@ -705,6 +705,7 @@ const QUERY_CACHE_SCHEMA: Document = {
     required: [
       "queryHash",
       "queryNorm",
+      "requestSignature",
       "agentId",
       "scope",
       "scopeRef",
@@ -719,6 +720,10 @@ const QUERY_CACHE_SCHEMA: Document = {
     properties: {
       queryHash: { bsonType: "string", description: "SHA-256 of normalized query" },
       queryNorm: { bsonType: "string", description: "Normalized query text (autoEmbed source)" },
+      requestSignature: {
+        bsonType: "string",
+        description: "Normalized search request signature for cache partitioning",
+      },
       agentId: { bsonType: "string", description: "Agent that generated this cache entry" },
       scope: { enum: SCOPE_ENUM, description: "Memory scope" },
       scopeRef: { bsonType: "string", description: "Resolved scope namespace" },
@@ -1266,9 +1271,17 @@ export async function ensureStandardIndexes(
 
   // Query Cache indexes
   const queryCache = queryCacheCollection(db, prefix);
+  try {
+    await queryCache.dropIndex("uq_query_cache_hash_agent_scope_scoperef");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/index not found|ns not found|cannot find/i.test(message)) {
+      throw err;
+    }
+  }
   await queryCache.createIndex(
-    { queryHash: 1, agentId: 1, scope: 1, scopeRef: 1 },
-    { name: "uq_query_cache_hash_agent_scope_scoperef", unique: true },
+    { queryHash: 1, requestSignature: 1, agentId: 1, scope: 1, scopeRef: 1 },
+    { name: "uq_query_cache_hash_sig_agent_scope_scoperef", unique: true },
   );
   applied++;
   await queryCache.createIndex(
@@ -1344,6 +1357,88 @@ function hasServerVersionAtLeast(
   return major > minimumMajor || (major === minimumMajor && minor >= minimumMinor);
 }
 
+function sortDocument(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortDocument);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, sortDocument(entry)]),
+  );
+}
+
+function searchIndexDefinitionSignature(definition: Document): string {
+  return JSON.stringify(sortDocument(definition));
+}
+
+async function ensureNamedSearchIndex(params: {
+  collection: Collection;
+  name: string;
+  type: "search" | "vectorSearch";
+  definition: Document;
+  label: string;
+}): Promise<boolean> {
+  const searchCollection = params.collection as Collection & {
+    updateSearchIndex?: (name: string, definition: Document) => Promise<void>;
+    listSearchIndexes: (name?: string) => {
+      toArray: () => Promise<Array<{ name?: string; type?: string; definition: Document }>>;
+    };
+  };
+  try {
+    const existing = (await searchCollection.listSearchIndexes(params.name).toArray()) as Array<{
+      name?: string;
+      type?: string;
+      definition: Document;
+      latestDefinition?: Document;
+      queryable?: boolean;
+    }>;
+    const current = existing[0];
+    if (current) {
+      if (current.type && current.type !== params.type) {
+        log.warn(
+          `${params.label} search index exists with unexpected type (${current.type}); keeping current type`,
+        );
+        return true;
+      }
+      if (
+        searchIndexDefinitionSignature(current.latestDefinition ?? current.definition) !==
+        searchIndexDefinitionSignature(params.definition)
+      ) {
+        if (typeof searchCollection.updateSearchIndex === "function") {
+          await searchCollection.updateSearchIndex(params.name, params.definition);
+          log.info(`updated ${params.label} search index`);
+        } else {
+          log.warn(
+            `${params.label} search index definition drift detected but updateSearchIndex() is unavailable`,
+          );
+        }
+      }
+      if (current.queryable === false) {
+        log.warn(`${params.label} search index exists but is not yet queryable`);
+      }
+      return true;
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      throw err;
+    }
+    log.warn(`${params.label} search index inspection failed; attempting create: ${msg}`);
+  }
+
+  await searchCollection.createSearchIndex({
+    name: params.name,
+    type: params.type,
+    definition: params.definition,
+  });
+  log.info(`created ${params.label} search index`);
+  return true;
+}
+
 export async function ensureSearchIndexes(
   db: Db,
   prefix: string,
@@ -1391,17 +1486,18 @@ export async function ensureSearchIndexes(
           agentId: { type: "token" },
           scope: { type: "token" },
           scopeRef: { type: "token" },
+          timestamp: { type: "date" },
           updatedAt: { type: "date" },
         },
       },
     };
-    await chunks.createSearchIndex({
+    textCreated = await ensureNamedSearchIndex({
+      collection: chunks,
       name: `${prefix}chunks_text`,
       type: "search",
       definition: textDef,
+      label: "chunks text",
     });
-    textCreated = true;
-    log.info("created text search index");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("already exists") || msg.includes("duplicate")) {
@@ -1422,6 +1518,9 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "agentId" },
       { type: "filter", path: "scope" },
       { type: "filter", path: "scopeRef" },
+      { type: "filter", path: "sessionId" },
+      { type: "filter", path: "timestamp" },
+      { type: "filter", path: "updatedAt" },
     ];
 
     const vectorDef: Document = {
@@ -1436,13 +1535,13 @@ export async function ensureSearchIndexes(
       ],
     };
 
-    await chunks.createSearchIndex({
+    vectorCreated = await ensureNamedSearchIndex({
+      collection: chunks,
       name: `${prefix}chunks_vector`,
       type: "vectorSearch",
       definition: vectorDef,
+      label: "chunks vector",
     });
-    vectorCreated = true;
-    log.info(`created vector search index (mode=${embeddingMode}, quantization=${quantization})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("already exists") || msg.includes("duplicate")) {
@@ -1468,14 +1567,17 @@ export async function ensureSearchIndexes(
           text: { type: "string", analyzer: "lucene.standard" },
           path: { type: "token" },
           docId: { type: "token" },
+          source: { type: "token" },
           updatedAt: { type: "date" },
         },
       },
     };
-    await kbChunks.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: kbChunks,
       name: `${prefix}kb_chunks_text`,
       type: "search",
       definition: kbTextDef,
+      label: "kb_chunks text",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1492,6 +1594,7 @@ export async function ensureSearchIndexes(
     const kbFilterFields: Document[] = [
       { type: "filter", path: "docId" },
       { type: "filter", path: "path" },
+      { type: "filter", path: "source" },
     ];
 
     const kbVectorDef: Document = {
@@ -1501,10 +1604,12 @@ export async function ensureSearchIndexes(
       ],
     };
 
-    await kbChunks.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: kbChunks,
       name: `${prefix}kb_chunks_vector`,
       type: "vectorSearch",
       definition: kbVectorDef,
+      label: "kb_chunks vector",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1538,10 +1643,12 @@ export async function ensureSearchIndexes(
         },
       },
     };
-    await structured.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: structured,
       name: `${prefix}structured_mem_text`,
       type: "search",
       definition: structTextDef,
+      label: "structured_mem text",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1572,10 +1679,12 @@ export async function ensureSearchIndexes(
       ],
     };
 
-    await structured.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: structured,
       name: `${prefix}structured_mem_vector`,
       type: "vectorSearch",
       definition: structVectorDef,
+      label: "structured_mem vector",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1605,10 +1714,12 @@ export async function ensureSearchIndexes(
         },
       },
     };
-    await procedures.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: procedures,
       name: `${prefix}procedures_text`,
       type: "search",
       definition: procedureTextDef,
+      label: "procedures text",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1633,10 +1744,12 @@ export async function ensureSearchIndexes(
       ],
     };
 
-    await procedures.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: procedures,
       name: `${prefix}procedures_vector`,
       type: "vectorSearch",
       definition: procedureVectorDef,
+      label: "procedures vector",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1655,15 +1768,18 @@ export async function ensureSearchIndexes(
     const cacheVectorDef: Document = {
       fields: [
         { type: "autoEmbed", modality: "text", path: "queryNorm", model: "voyage-4-large" },
+        { type: "filter", path: "requestSignature" },
         { type: "filter", path: "agentId" },
         { type: "filter", path: "scope" },
         { type: "filter", path: "scopeRef" },
       ],
     };
-    await queryCache.createSearchIndex({
+    await ensureNamedSearchIndex({
+      collection: queryCache,
       name: `${prefix}query_cache_vector`,
       type: "vectorSearch",
       definition: cacheVectorDef,
+      label: "query_cache vector",
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

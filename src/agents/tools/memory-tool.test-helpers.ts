@@ -7,7 +7,10 @@ export function asOpenClawConfig(config: Partial<OpenClawConfig>): OpenClawConfi
 }
 
 export function createDefaultMemoryToolConfig(): OpenClawConfig {
-  return asOpenClawConfig({ agents: { list: [{ id: "main", default: true }] } });
+  return asOpenClawConfig({
+    agents: { list: [{ id: "main", default: true }] },
+    memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+  });
 }
 
 export function createMemorySearchToolOrThrow(params?: {

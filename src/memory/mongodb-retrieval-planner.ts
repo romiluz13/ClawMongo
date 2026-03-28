@@ -1,4 +1,5 @@
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { MemorySearchClassification } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:planner");
 
@@ -52,6 +53,7 @@ export type RetrievalConstraints = {
 
 export type RetrievalPlan = {
   paths: RetrievalPath[];
+  classification: "direct" | "family" | "comparison" | "temporal" | "scoped" | "multi-hop";
   confidence: "high" | "medium" | "low";
   reasoning: string;
   constraints?: RetrievalConstraints;
@@ -67,6 +69,38 @@ export type RetrievalContext = {
   /** Whether graph has entities */
   hasGraphData?: boolean;
 };
+
+export function classifyRetrievalQuery(params: {
+  query: string;
+  hasTimeRange?: boolean;
+  hasScopes?: boolean;
+}): MemorySearchClassification {
+  const query = params.query.trim().toLowerCase();
+  if (!query) {
+    return "direct";
+  }
+  if (params.hasTimeRange || TIME_REGEXES.some((re) => re.test(query))) {
+    return "temporal";
+  }
+  if (params.hasScopes) {
+    return "scoped";
+  }
+  if (/\b(compare|comparison|difference|different|vs|versus|better than)\b/i.test(query)) {
+    return "comparison";
+  }
+  if (
+    /\b(family|alternatives?|similar|related tools|ecosystem|what else|options|which tools|all the tools|all tools)\b/i.test(
+      query,
+    ) ||
+    /כל המשפחה|עוד כלים|חלופות|מה עוד/u.test(query)
+  ) {
+    return "family";
+  }
+  if (/\b(because|why did|how did|lead to|after that|before that|then what)\b/i.test(query)) {
+    return "multi-hop";
+  }
+  return "direct";
+}
 
 // ---------------------------------------------------------------------------
 // Keyword lists and pre-compiled word-boundary regexes
@@ -174,6 +208,31 @@ const PROCEDURAL_KEYWORDS = [
   "checklist",
 ];
 const PROCEDURAL_REGEXES = buildKeywordRegexes(PROCEDURAL_KEYWORDS);
+const FAMILY_REGEXES = buildKeywordRegexes([
+  "family",
+  "alternatives",
+  "alternative",
+  "similar",
+  "related",
+  "what else",
+  "ecosystem",
+  "other tools",
+]);
+const COMPARISON_REGEXES = buildKeywordRegexes([
+  "compare",
+  "comparison",
+  "difference",
+  "versus",
+  "vs",
+]);
+const MULTI_HOP_REGEXES = buildKeywordRegexes([
+  "and then",
+  "after that",
+  "followed by",
+  "step by step",
+  "how did",
+  "why did",
+]);
 
 // Deterministic tie-breaking priority (lower = higher priority)
 const PATH_PRIORITY: Record<RetrievalPath, number> = {
@@ -367,6 +426,7 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
     if (!query.trim()) {
       return {
         paths: context.availablePaths.has("hybrid") ? ["hybrid"] : [],
+        classification: "direct",
         confidence: "low" as const,
         reasoning: "empty query",
       };
@@ -458,12 +518,38 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
     // Return empty paths if nothing available (do not inject unavailable hybrid)
     const finalPaths = sorted;
 
+    const classification = (() => {
+      if (COMPARISON_REGEXES.some((re) => re.test(query))) {
+        return "comparison" as const;
+      }
+      if (FAMILY_REGEXES.some((re) => re.test(query))) {
+        return "family" as const;
+      }
+      if (timeConstraint) {
+        return "temporal" as const;
+      }
+      const hasExplicitScopeConstraint =
+        structuredConstraint?.hard === true || kbConstraint?.hard === true || !!entityConstraint;
+      if (hasExplicitScopeConstraint) {
+        return "scoped" as const;
+      }
+      if (
+        MULTI_HOP_REGEXES.some((re) => re.test(query)) ||
+        /\b(and|then)\b/i.test(query) ||
+        (query.match(/\?/g)?.length ?? 0) > 1
+      ) {
+        return "multi-hop" as const;
+      }
+      return "direct" as const;
+    })();
+
     // Confidence based on signal strength
     const topScore = scores[finalPaths[0]] ?? 0;
     const confidence = topScore >= 3 ? "high" : topScore >= 2 ? "medium" : "low";
 
     return {
       paths: finalPaths,
+      classification,
       confidence,
       reasoning:
         reasons.length > 0 ? reasons.join("; ") : "no strong signals, defaulting to hybrid",

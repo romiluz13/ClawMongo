@@ -1,12 +1,27 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
-import type { MemorySearchResult } from "../../memory/types.js";
+import type {
+  MemorySearchMode,
+  MemorySearchRequest,
+  MemorySearchResponse,
+  MemorySearchResult,
+  MemorySearchSourcePreference,
+  MemorySearchTimeRangePreset,
+} from "../../memory/types.js";
+import { readSnakeCaseParamRaw } from "../../param-key.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveSessionAgentId } from "../agent-scope.js";
 import { resolveMemorySearchConfig } from "../memory-search.js";
+import { optionalStringEnum, stringEnum } from "../schema/typebox.js";
 import type { AnyAgentTool } from "./common.js";
-import { jsonResult, readNumberParam, readStringParam } from "./common.js";
+import {
+  ToolInputError,
+  jsonResult,
+  readNumberParam,
+  readStringArrayParam,
+  readStringParam,
+} from "./common.js";
 
 type MemoryToolRuntime = typeof import("./memory-tool.runtime.js");
 type MemorySearchManagerResult = Awaited<
@@ -20,10 +35,268 @@ async function loadMemoryToolRuntime(): Promise<MemoryToolRuntime> {
   return await memoryToolRuntimePromise;
 }
 
+function readBooleanParam(params: Record<string, unknown>, key: string): boolean | undefined {
+  const raw = readSnakeCaseParamRaw(params, key);
+  return typeof raw === "boolean" ? raw : undefined;
+}
+
+function readObjectParam(
+  params: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  const raw = readSnakeCaseParamRaw(params, key);
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : undefined;
+}
+
+function readStringArrayFromObject(
+  params: Record<string, unknown> | undefined,
+  key: string,
+): string[] | undefined {
+  if (!params) {
+    return undefined;
+  }
+  const raw = readSnakeCaseParamRaw(params, key);
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+  const values = raw
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return values.length > 0 ? values : undefined;
+}
+
+function readValidatedEnum<T extends string>(
+  params: Record<string, unknown>,
+  key: string,
+  allowed: ReadonlySet<T>,
+): T | undefined {
+  const value = readStringParam(params, key);
+  if (!value) {
+    return undefined;
+  }
+  if (!allowed.has(value as T)) {
+    throw new ToolInputError(`invalid ${key}`);
+  }
+  return value as T;
+}
+
+function readValidatedEnumArray<T extends string>(
+  params: Record<string, unknown>,
+  key: string,
+  allowed: ReadonlySet<T>,
+): T[] | undefined {
+  const values = readStringArrayParam(params, key);
+  if (!values) {
+    return undefined;
+  }
+  for (const value of values) {
+    if (!allowed.has(value as T)) {
+      throw new ToolInputError(`invalid ${key}`);
+    }
+  }
+  return values as T[];
+}
+
+function readMemorySearchRequest(
+  params: Record<string, unknown>,
+  sessionKey?: string,
+): MemorySearchRequest {
+  const query = readStringParam(params, "query", { required: true });
+  const maxResults = readNumberParam(params, "maxResults");
+  const minScore = readNumberParam(params, "minScore");
+  const searchMode = readValidatedEnum<MemorySearchMode>(
+    params,
+    "searchMode",
+    new Set(MEMORY_SEARCH_MODE_VALUES),
+  );
+  const sourcePreference = readValidatedEnumArray<MemorySearchSourcePreference>(
+    params,
+    "sourcePreference",
+    new Set(MEMORY_SEARCH_SOURCE_VALUES),
+  );
+  const timeRangeRaw = readObjectParam(params, "timeRange");
+  const timeRangePreset = timeRangeRaw
+    ? readValidatedEnum<MemorySearchTimeRangePreset>(
+        timeRangeRaw,
+        "preset",
+        new Set(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
+      )
+    : undefined;
+  const timeRangeStart = timeRangeRaw ? readStringParam(timeRangeRaw, "start") : undefined;
+  const timeRangeEnd = timeRangeRaw ? readStringParam(timeRangeRaw, "end") : undefined;
+  const conversationScopeRaw = readObjectParam(params, "conversationScope");
+  const structuredScopeRaw = readObjectParam(params, "structuredScope");
+  const referenceScopeRaw = readObjectParam(params, "referenceScope");
+  const proceduralScopeRaw = readObjectParam(params, "proceduralScope");
+  const explicitSessionKey = conversationScopeRaw
+    ? readStringParam(conversationScopeRaw, "sessionKey")
+    : undefined;
+  const needExactEvidence = readBooleanParam(params, "needExactEvidence");
+  const returnPlan = readBooleanParam(params, "returnPlan");
+  const maxPasses = readNumberParam(params, "maxPasses", { integer: true });
+
+  return {
+    query,
+    ...(maxResults !== undefined ? { maxResults } : {}),
+    ...(minScore !== undefined ? { minScore } : {}),
+    ...(searchMode ? { searchMode } : {}),
+    ...(sourcePreference ? { sourcePreference } : {}),
+    ...(timeRangePreset || timeRangeStart || timeRangeEnd
+      ? {
+          timeRange: {
+            ...(timeRangePreset ? { preset: timeRangePreset } : {}),
+            ...(timeRangeStart ? { start: timeRangeStart } : {}),
+            ...(timeRangeEnd ? { end: timeRangeEnd } : {}),
+          },
+        }
+      : {}),
+    ...(needExactEvidence !== undefined ? { needExactEvidence } : {}),
+    ...(maxPasses !== undefined ? { maxPasses } : {}),
+    ...(returnPlan !== undefined ? { returnPlan } : {}),
+    ...(explicitSessionKey || sessionKey
+      ? { conversationScope: { sessionKey: explicitSessionKey ?? sessionKey } }
+      : {}),
+    ...(structuredScopeRaw
+      ? {
+          structuredScope: {
+            ...(readStringParam(structuredScopeRaw, "type")
+              ? { type: readStringParam(structuredScopeRaw, "type") }
+              : {}),
+            ...(readStringArrayFromObject(structuredScopeRaw, "state")
+              ? { state: readStringArrayFromObject(structuredScopeRaw, "state") }
+              : {}),
+            ...(readStringArrayFromObject(structuredScopeRaw, "salience")
+              ? { salience: readStringArrayFromObject(structuredScopeRaw, "salience") }
+              : {}),
+          },
+        }
+      : {}),
+    ...(referenceScopeRaw
+      ? {
+          referenceScope: {
+            ...(readStringParam(referenceScopeRaw, "source")
+              ? { source: readStringParam(referenceScopeRaw, "source") }
+              : {}),
+            ...(readStringParam(referenceScopeRaw, "category")
+              ? { category: readStringParam(referenceScopeRaw, "category") }
+              : {}),
+            ...(readStringArrayFromObject(referenceScopeRaw, "tags")
+              ? { tags: readStringArrayFromObject(referenceScopeRaw, "tags") }
+              : {}),
+          },
+        }
+      : {}),
+    ...(proceduralScopeRaw
+      ? {
+          proceduralScope: {
+            ...(readStringParam(proceduralScopeRaw, "state")
+              ? { state: readStringParam(proceduralScopeRaw, "state") }
+              : {}),
+            ...(readStringArrayFromObject(proceduralScopeRaw, "intentTags")
+              ? { intentTags: readStringArrayFromObject(proceduralScopeRaw, "intentTags") }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
+function buildFallbackDetailedResponse(
+  request: MemorySearchRequest,
+  results: MemorySearchResult[],
+): MemorySearchResponse {
+  return {
+    results,
+    metadata: {
+      mode: request.searchMode ?? "auto",
+      classification: "direct",
+      sourceOrder: request.sourcePreference ?? ["conversation", "reference", "structured"],
+      passes: [
+        {
+          pass: 1,
+          query: request.query,
+          reason: "compatibility fallback",
+          pathsExecuted: [],
+          resultCount: results.length,
+          queryRewritten: false,
+          reranked: false,
+        },
+      ],
+      queriesTried: [request.query],
+      constraintsApplied: [],
+      resultsRejected: [],
+      evidenceCoverage: results.length > 0 ? "direct" : "none",
+      pathsExecuted: [],
+      resultsByPath: {},
+      queryRewritten: false,
+      reranked: false,
+    },
+  };
+}
+
+const MEMORY_SEARCH_MODE_VALUES = ["auto", "direct", "agentic"] as const;
+const MEMORY_SEARCH_SOURCE_VALUES = [
+  "conversation",
+  "reference",
+  "structured",
+  "procedural",
+  "episodic",
+  "graph",
+] as const;
+const MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES = [
+  "today",
+  "yesterday",
+  "last-24h",
+  "last-7d",
+  "this-week",
+  "last-30d",
+  "this-month",
+] as const;
+
 const MemorySearchSchema = Type.Object({
   query: Type.String(),
   maxResults: Type.Optional(Type.Number()),
   minScore: Type.Optional(Type.Number()),
+  searchMode: optionalStringEnum(MEMORY_SEARCH_MODE_VALUES),
+  sourcePreference: Type.Optional(Type.Array(stringEnum(MEMORY_SEARCH_SOURCE_VALUES))),
+  timeRange: Type.Optional(
+    Type.Object({
+      preset: optionalStringEnum(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
+      start: Type.Optional(Type.String()),
+      end: Type.Optional(Type.String()),
+    }),
+  ),
+  needExactEvidence: Type.Optional(Type.Boolean()),
+  maxPasses: Type.Optional(Type.Number()),
+  returnPlan: Type.Optional(Type.Boolean()),
+  conversationScope: Type.Optional(
+    Type.Object({
+      sessionKey: Type.Optional(Type.String()),
+    }),
+  ),
+  structuredScope: Type.Optional(
+    Type.Object({
+      type: Type.Optional(Type.String()),
+      state: Type.Optional(Type.Array(Type.String())),
+      salience: Type.Optional(Type.Array(Type.String())),
+    }),
+  ),
+  referenceScope: Type.Optional(
+    Type.Object({
+      source: Type.Optional(Type.String()),
+      category: Type.Optional(Type.String()),
+      tags: Type.Optional(Type.Array(Type.String())),
+    }),
+  ),
+  proceduralScope: Type.Optional(
+    Type.Object({
+      state: Type.Optional(Type.String()),
+      intentTags: Type.Optional(Type.Array(Type.String())),
+    }),
+  ),
 });
 
 const MemoryGetSchema = Type.Object({
@@ -138,14 +411,12 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      "Mandatory recall step: search MongoDB-backed runtime memory before answering questions about prior work, decisions, dates, people, preferences, or todos. Results may include bridge notes synced from memory/*.md plus active structured and KB-backed recall, and the runtime search order is cache -> searchV2 -> legacy fallback. Returns top snippets with reopenable locators and line ranges when available. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user. Example: use memory_search for runtime recall about prior work, then kb_search if you specifically need reference material.",
+      "Mandatory recall step: search MongoDB-backed runtime memory before answering questions about prior work, decisions, dates, people, preferences, or todos. Results may include bridge notes synced from memory/*.md plus active structured and KB-backed recall, and the runtime search order is cache -> searchV2 -> legacy fallback. Supports direct or bounded agentic recall controls, returns planner-visible metadata, and preserves reopenable locators and line ranges when available. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user. Example: use memory_search for runtime recall about prior work, then kb_search if you specifically need reference material.",
     parameters: MemorySearchSchema,
     execute:
       ({ cfg, agentId }) =>
       async (_toolCallId, params) => {
-        const query = readStringParam(params, "query", { required: true });
-        const maxResults = readNumberParam(params, "maxResults");
-        const minScore = readNumberParam(params, "minScore");
+        const request = readMemorySearchRequest(params, options.agentSessionKey);
         const { resolveMemoryBackendConfig } = await loadMemoryToolRuntime();
         const memory = await getMemoryManagerContext({ cfg, agentId });
         if ("error" in memory) {
@@ -157,11 +428,17 @@ export function createMemorySearchTool(options: {
             mode: citationsMode,
             sessionKey: options.agentSessionKey,
           });
-          const rawResults = await memory.manager.search(query, {
-            maxResults,
-            minScore,
-            sessionKey: options.agentSessionKey,
-          });
+          const detailed = memory.manager.searchDetailed
+            ? await memory.manager.searchDetailed(request)
+            : buildFallbackDetailedResponse(
+                request,
+                await memory.manager.search(request.query, {
+                  maxResults: request.maxResults,
+                  minScore: request.minScore,
+                  sessionKey: request.conversationScope?.sessionKey ?? options.agentSessionKey,
+                }),
+              );
+          const rawResults = detailed.results;
           const status = memory.manager.status();
           const decorated = decorateCitations(rawResults, includeCitations);
           const resolved = resolveMemoryBackendConfig({ cfg, agentId });
@@ -180,11 +457,12 @@ export function createMemorySearchTool(options: {
           const feedbackHint = computeFeedbackHint(rawResults, status.backend);
           return jsonResult({
             results,
+            metadata: detailed.metadata,
             provider: status.provider,
             model: status.model,
             fallback: (status as Record<string, unknown>).fallback,
             citations: citationsMode,
-            mode: searchMode,
+            mode: detailed.metadata.mode ?? searchMode,
             ...(feedbackHint ? { feedbackHint } : {}),
           });
         } catch (err) {

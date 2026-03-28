@@ -18,8 +18,14 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { MongoClient, type Db, type Document } from "mongodb";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createMemorySearchTool } from "../agents/tools/memory-tool.js";
+import type { OpenClawConfig } from "../config/config.js";
+import { resolveMemoryBackendConfig } from "./backend-config.js";
 // v2 episodes
 import { materializeEpisode, updateEpisodeStatus } from "./mongodb-episodes.js";
 import type { EpisodeSummarizer } from "./mongodb-episodes.js";
@@ -27,15 +33,20 @@ import { getEventsByTimeRange } from "./mongodb-events.js";
 // v2 graph functions
 import { extractAndUpsertEntities } from "./mongodb-graph.js";
 // v2 event functions
-import { writeEventAndProject, searchV2 } from "./mongodb-manager.js";
+import { MongoDBMemoryManager, writeEventAndProject, searchV2 } from "./mongodb-manager.js";
 // Mutation audit trail
 import { recordMutation, getMutationHistory } from "./mongodb-mutations.js";
 // Procedure evolution
-import { writeProcedure, recordProcedureOutcome, evolveProcedure } from "./mongodb-procedures.js";
+import {
+  writeProcedure,
+  recordProcedureOutcome,
+  evolveProcedure,
+  searchProcedures,
+} from "./mongodb-procedures.js";
 // Profile synthesis
 import { synthesizeProfile } from "./mongodb-profile.js";
 // Semantic query cache
-import { checkCache, writeCache } from "./mongodb-query-cache.js";
+import { checkCache, hashQuery, normalizeQuery, writeCache } from "./mongodb-query-cache.js";
 // Query rewriter
 import { rewriteQuery, expandSynonyms } from "./mongodb-query-rewriter.js";
 // Reranker
@@ -56,9 +67,11 @@ import {
   kbChunksCollection,
   mutationsCollection,
   proceduresCollection,
+  detectCapabilities,
 } from "./mongodb-schema.js";
 // Scope resolution
 import { resolveScopeRef } from "./mongodb-scope.js";
+import { buildMemorySearchRequestSignature } from "./mongodb-search-executor.js";
 // Structured memory
 import { writeStructuredMemory } from "./mongodb-structured-memory.js";
 // Time series telemetry
@@ -69,7 +82,7 @@ import {
   getOperationDistribution,
 } from "./mongodb-telemetry.js";
 // Types
-import type { MemorySearchResult } from "./types.js";
+import type { MemorySearchRequest, MemorySearchResult } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -82,6 +95,7 @@ const PREFIX = "prodready_";
 const AGENT_ID = `agent-prodready-${randomUUID().slice(0, 8)}`;
 const VOYAGE_API_KEY = process.env.VOYAGE_RERANK_API_KEY ?? process.env.VOYAGE_API_KEY ?? "";
 const _TELEMETRY_FLUSH_MS = 500;
+const EVIDENCE_RANK = { none: 0, indirect: 1, partial: 2, direct: 3 } as const;
 
 // ---------------------------------------------------------------------------
 // Polling helpers — replace raw setTimeout with deterministic waits
@@ -117,6 +131,43 @@ async function waitForCache(
     }
     await new Promise((r) => setTimeout(r, 200));
   }
+}
+
+async function waitForProcedureSearchability(params: {
+  db: Db;
+  prefix: string;
+  query: string;
+  agentId: string;
+  scopeRef: string;
+  maxWaitMs?: number;
+}): Promise<void> {
+  const capabilities = await detectCapabilities(params.db, `${params.prefix}procedures`);
+  const start = Date.now();
+  while (Date.now() - start < (params.maxWaitMs ?? 60_000)) {
+    const hits = await searchProcedures(
+      proceduresCollection(params.db, params.prefix),
+      params.query,
+      null,
+      {
+        maxResults: 3,
+        minScore: 0.1,
+        filter: {
+          agentId: params.agentId,
+          scope: "agent",
+          scopeRef: params.scopeRef,
+          state: "active",
+        },
+        capabilities,
+        vectorIndexName: `${params.prefix}procedures_vector`,
+        embeddingMode: "automated",
+      },
+    );
+    if (hits.some((hit) => hit.path.startsWith("procedure:"))) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error("Timed out waiting for procedure search index visibility");
 }
 
 // Skip entire suite if no MongoDB URI available
@@ -299,6 +350,9 @@ const testSummarizer: EpisodeSummarizer = async (events) => {
 describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () => {
   let client: MongoClient;
   let db: Db;
+  let manager: MongoDBMemoryManager;
+  let managerWorkspaceDir: string;
+  let cfg: OpenClawConfig;
 
   beforeAll(async () => {
     client = new MongoClient(TEST_URI, {
@@ -342,9 +396,41 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
     } catch {
       /* ignore if collection doesn't exist yet */
     }
+
+    managerWorkspaceDir = await mkdtemp(path.join(tmpdir(), "clawmongo-prodready-"));
+    cfg = {
+      agents: {
+        defaults: { workspace: managerWorkspaceDir },
+        list: [{ id: AGENT_ID, default: true, workspace: managerWorkspaceDir }],
+      },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: TEST_URI,
+          database: "openclaw",
+          collectionPrefix: PREFIX,
+          deploymentProfile: "community-mongot",
+          embeddingMode: "automated",
+          reranking: {
+            enabled: true,
+            voyageApiKey: VOYAGE_API_KEY,
+          },
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: AGENT_ID });
+    const created = await MongoDBMemoryManager.create({ cfg, agentId: AGENT_ID, resolved });
+    if (!created) {
+      throw new Error("Failed to create MongoDBMemoryManager for production-readiness suite");
+    }
+    manager = created;
   }, 30_000);
 
   afterAll(async () => {
+    await manager?.close();
+    if (managerWorkspaceDir) {
+      await rm(managerWorkspaceDir, { recursive: true, force: true });
+    }
     await client?.close();
   });
 
@@ -2339,6 +2425,478 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       expect(updateRecord).toBeDefined();
       expect(updateRecord!.changedFields).toEqual(["value"]);
     });
+  });
+
+  // =========================================================================
+  // PHASE 15: Selective Agentic Internal Search
+  // =========================================================================
+
+  describe("Phase 15: Selective Agentic Internal Search", () => {
+    const agenticProcedureId = `proc-agentic-${randomUUID().slice(0, 8)}`;
+
+    beforeAll(async () => {
+      await writeProcedure({
+        db,
+        prefix: PREFIX,
+        entry: {
+          procedureId: agenticProcedureId,
+          name: "Emergency rollback procedure",
+          triggerQueries: ["rollback the API gateway deployment and verify health checks"],
+          steps: [
+            "Check Grafana for latency spikes",
+            "Run kubectl rollout undo deployment/atlas-api-gateway -n atlas",
+            "Verify health endpoints return 200",
+            "Notify Marcus and Sarah in the incident channel",
+          ],
+          intentTags: ["rollback", "deployment", "incident-response"],
+          agentId: AGENT_ID,
+          scope: "agent",
+          scopeRef: resolveScopeRef({ scope: "agent", agentId: AGENT_ID }),
+        },
+        embeddingMode: "automated",
+      });
+      await waitForProcedureSearchability({
+        db,
+        prefix: PREFIX,
+        query: "rollback procedure family",
+        agentId: AGENT_ID,
+        scopeRef: resolveScopeRef({ scope: "agent", agentId: AGENT_ID }),
+      });
+    }, 300_000);
+
+    it("compares direct and bounded-agentic retrieval on a family query using the real manager", async () => {
+      const request: MemorySearchRequest = {
+        query: "rollback procedure family",
+        sourcePreference: ["procedural", "reference", "conversation"],
+        maxResults: 5,
+        returnPlan: true,
+      };
+
+      const direct = await manager.searchDetailed({
+        ...request,
+        searchMode: "direct",
+      });
+      const agentic = await manager.searchDetailed({
+        ...request,
+        searchMode: "agentic",
+        maxPasses: 2,
+      });
+
+      expect(direct.metadata.classification).toBe("family");
+      expect(agentic.metadata.classification).toBe("family");
+      expect(direct.metadata.passes).toHaveLength(1);
+      expect(agentic.metadata.passes.length).toBeGreaterThan(1);
+      expect(agentic.metadata.queriesTried.length).toBeGreaterThan(
+        direct.metadata.queriesTried.length,
+      );
+      expect(agentic.metadata.sourceOrder).toEqual(["procedural", "reference", "conversation"]);
+      expect(agentic.metadata.pathsExecuted).toContain("procedural");
+      expect(agentic.metadata.passes.length).toBeGreaterThan(1);
+      expect(agentic.results.length).toBeGreaterThan(0);
+      expect(EVIDENCE_RANK[agentic.metadata.evidenceCoverage]).toBeGreaterThanOrEqual(
+        EVIDENCE_RANK[direct.metadata.evidenceCoverage],
+      );
+      expect(agentic.metadata.plan?.paths.length).toBeGreaterThan(0);
+    }, 300_000);
+
+    it("produces live eval-style corpus signals across direct, family, scoped, and temporal queries", async () => {
+      const corpus: Array<{
+        name: string;
+        directRequest: MemorySearchRequest;
+        agenticRequest: MemorySearchRequest;
+        validate(params: {
+          direct: Awaited<ReturnType<typeof manager.searchDetailed>>;
+          agentic: Awaited<ReturnType<typeof manager.searchDetailed>>;
+        }): void;
+      }> = [
+        {
+          name: "direct-procedural",
+          directRequest: {
+            query: "Emergency rollback procedure",
+            searchMode: "direct",
+            sourcePreference: ["procedural"],
+            needExactEvidence: true,
+            maxResults: 5,
+          },
+          agenticRequest: {
+            query: "Emergency rollback procedure",
+            searchMode: "agentic",
+            sourcePreference: ["procedural", "reference"],
+            needExactEvidence: true,
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          validate({ direct, agentic }) {
+            expect(direct.metadata.classification).toBe("direct");
+            expect(direct.metadata.passes).toHaveLength(1);
+            expect(agentic.metadata.sourceOrder).toEqual(["procedural", "reference"]);
+            expect(agentic.results.some((result) => result.source === "conversation")).toBe(false);
+            expect(agentic.metadata.pathsExecuted).toContain("procedural");
+            expect(agentic.metadata.evidenceCoverage).toBe("direct");
+          },
+        },
+        {
+          name: "family-procedural",
+          directRequest: {
+            query: "rollback procedure family",
+            searchMode: "direct",
+            sourcePreference: ["procedural", "reference", "conversation"],
+            maxResults: 5,
+          },
+          agenticRequest: {
+            query: "rollback procedure family",
+            searchMode: "agentic",
+            sourcePreference: ["procedural", "reference", "conversation"],
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          validate({ direct, agentic }) {
+            expect(direct.metadata.queriesTried).toContain("rollback procedure family");
+            expect(agentic.metadata.passes.length).toBeGreaterThan(1);
+            expect(agentic.metadata.queriesTried.length).toBeGreaterThan(
+              direct.metadata.queriesTried.length,
+            );
+          },
+        },
+        {
+          name: "scoped-exact",
+          directRequest: {
+            query: "rollback runbook",
+            searchMode: "direct",
+            sourcePreference: ["conversation", "reference"],
+            conversationScope: { sessionKey: "session-does-not-exist" },
+            needExactEvidence: true,
+            maxResults: 5,
+          },
+          agenticRequest: {
+            query: "rollback runbook",
+            searchMode: "agentic",
+            sourcePreference: ["conversation", "reference"],
+            conversationScope: { sessionKey: "session-does-not-exist" },
+            needExactEvidence: true,
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          validate({ agentic }) {
+            expect(agentic.results.every((result) => result.source === "reference")).toBe(true);
+            expect(agentic.results.every((result) => result.sessionId == null)).toBe(true);
+            expect(agentic.metadata.pathsExecuted).not.toContain("raw-window");
+          },
+        },
+        {
+          name: "temporal-reference",
+          directRequest: {
+            query: "Helm chart best practices",
+            searchMode: "direct",
+            sourcePreference: ["reference"],
+            timeRange: {
+              start: "2020-01-01T00:00:00.000Z",
+              end: "2030-01-01T00:00:00.000Z",
+            },
+            needExactEvidence: true,
+            maxResults: 5,
+          },
+          agenticRequest: {
+            query: "Helm chart best practices",
+            searchMode: "agentic",
+            sourcePreference: ["reference"],
+            timeRange: {
+              start: "2020-01-01T00:00:00.000Z",
+              end: "2030-01-01T00:00:00.000Z",
+            },
+            needExactEvidence: true,
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          validate({ agentic }) {
+            expect(agentic.results).toEqual([]);
+            expect(
+              agentic.metadata.constraintsApplied.some((entry) => entry.startsWith("timeRange:")),
+            ).toBe(true);
+            expect(agentic.metadata.noDirectEvidenceReason).toContain("No exact-evidence results");
+          },
+        },
+      ];
+
+      const rows: Array<{
+        name: string;
+        direct: Awaited<ReturnType<typeof manager.searchDetailed>>;
+        agentic: Awaited<ReturnType<typeof manager.searchDetailed>>;
+      }> = [];
+
+      for (const entry of corpus) {
+        const direct = await manager.searchDetailed(entry.directRequest);
+        const agentic = await manager.searchDetailed(entry.agenticRequest);
+        rows.push({ name: entry.name, direct, agentic });
+        expect(direct.metadata.queriesTried.length).toBeGreaterThanOrEqual(1);
+        expect(agentic.metadata.queriesTried.length).toBeGreaterThanOrEqual(1);
+        expect(agentic.metadata.passes.length).toBeLessThanOrEqual(
+          entry.agenticRequest.maxPasses ?? 3,
+        );
+        entry.validate({ direct, agentic });
+      }
+
+      expect(rows.some((row) => row.agentic.metadata.passes.length > 1)).toBe(true);
+      expect(
+        rows.some(
+          (row) =>
+            JSON.stringify(row.direct.metadata.queriesTried) !==
+            JSON.stringify(row.agentic.metadata.queriesTried),
+        ),
+      ).toBe(true);
+      expect(
+        rows.some(
+          (row) =>
+            EVIDENCE_RANK[row.agentic.metadata.evidenceCoverage] >=
+            EVIDENCE_RANK[row.direct.metadata.evidenceCoverage],
+        ),
+      ).toBe(true);
+    }, 300_000);
+
+    it("blocks wrong-session conversation leakage while still allowing exact reference evidence", async () => {
+      const response = await manager.searchDetailed({
+        query: "rollback runbook",
+        searchMode: "agentic",
+        sourcePreference: ["conversation", "reference"],
+        conversationScope: { sessionKey: "session-does-not-exist" },
+        needExactEvidence: true,
+        maxPasses: 2,
+        returnPlan: true,
+      });
+
+      expect(response.results.every((result) => result.source === "reference")).toBe(true);
+      expect(response.results.every((result) => result.sessionId == null)).toBe(true);
+      expect(response.metadata.pathsExecuted).not.toContain("raw-window");
+      expect(response.metadata.queriesTried.length).toBeGreaterThanOrEqual(1);
+      if (response.results.length === 0) {
+        expect(response.metadata.evidenceCoverage).toBe("none");
+        expect(response.metadata.noDirectEvidenceReason).toContain("No exact-evidence results");
+      } else {
+        expect(response.metadata.evidenceCoverage).toBe("direct");
+      }
+    });
+
+    it("rejects timestampless reference evidence when an explicit time window is required", async () => {
+      const response = await manager.searchDetailed({
+        query: "Helm chart best practices",
+        searchMode: "agentic",
+        sourcePreference: ["reference"],
+        timeRange: {
+          start: "2020-01-01T00:00:00.000Z",
+          end: "2030-01-01T00:00:00.000Z",
+        },
+        needExactEvidence: true,
+        maxPasses: 2,
+      });
+
+      expect(response.results).toEqual([]);
+      expect(
+        response.metadata.constraintsApplied.some((entry) => entry.startsWith("timeRange:")),
+      ).toBe(true);
+      expect(response.metadata.sourceOrder).toEqual(["reference"]);
+      expect(response.metadata.pathsExecuted).not.toContain("hybrid");
+      expect(response.metadata.pathsExecuted).not.toContain("raw-window");
+      expect(response.metadata.pathsExecuted).not.toContain("episodic");
+      expect(response.metadata.noDirectEvidenceReason).toContain("No exact-evidence results");
+    });
+
+    it("partitions live cache entries by request signature for direct vs agentic search", async () => {
+      const query = "rollback procedure family";
+      const directRequest: MemorySearchRequest = {
+        query,
+        searchMode: "direct",
+        sourcePreference: ["procedural"],
+        maxResults: 5,
+      };
+      const agenticRequest: MemorySearchRequest = {
+        query,
+        searchMode: "agentic",
+        sourcePreference: ["procedural", "reference", "conversation"],
+        maxResults: 5,
+        maxPasses: 2,
+      };
+      const normalizedDirectSignature = buildMemorySearchRequestSignature({
+        ...directRequest,
+        minScore: 0.1,
+        needExactEvidence: false,
+      });
+      const normalizedAgenticSignature = buildMemorySearchRequestSignature({
+        ...agenticRequest,
+        minScore: 0.1,
+        needExactEvidence: false,
+      });
+
+      await manager.searchDetailed(directRequest);
+      await manager.searchDetailed(agenticRequest);
+
+      const queryHash = hashQuery(normalizeQuery(query));
+      await waitForCache(db, PREFIX, {
+        queryHash,
+        requestSignature: normalizedDirectSignature,
+        agentId: AGENT_ID,
+      });
+      await waitForCache(db, PREFIX, {
+        queryHash,
+        requestSignature: normalizedAgenticSignature,
+        agentId: AGENT_ID,
+      });
+
+      const cacheDocs = await queryCacheCollection(db, PREFIX)
+        .find({
+          queryHash,
+          requestSignature: { $in: [normalizedDirectSignature, normalizedAgenticSignature] },
+          agentId: AGENT_ID,
+        })
+        .project({ requestSignature: 1 })
+        .toArray();
+
+      expect(new Set(cacheDocs.map((doc) => String(doc.requestSignature)))).toEqual(
+        new Set([normalizedDirectSignature, normalizedAgenticSignature]),
+      );
+    });
+
+    it("validates public memory_search auto mode stays selective on real Mongo", async () => {
+      const tool = createMemorySearchTool({ config: cfg });
+      expect(tool).not.toBeNull();
+
+      const exactRaw = await tool!.execute("memory-search-auto-exact", {
+        query: "Emergency rollback procedure",
+        sourcePreference: ["procedural", "reference"],
+        needExactEvidence: true,
+        returnPlan: true,
+      });
+      const exactParsed = JSON.parse(
+        (exactRaw as { content: Array<{ text: string }> }).content[0].text,
+      ) as {
+        mode: string;
+        metadata: {
+          classification: string;
+          passes: unknown[];
+          queriesTried: string[];
+          evidenceCoverage: string;
+        };
+      };
+
+      expect(exactParsed.mode).toBe("auto");
+      expect(exactParsed.metadata.classification).toBe("direct");
+      expect(exactParsed.metadata.passes).toHaveLength(1);
+      expect(exactParsed.metadata.queriesTried).toHaveLength(1);
+      expect(exactParsed.metadata.evidenceCoverage).toBe("direct");
+
+      const familyRaw = await tool!.execute("memory-search-auto-family", {
+        query: "rollback procedure family",
+        sourcePreference: ["procedural", "reference"],
+        maxPasses: 2,
+        returnPlan: true,
+      });
+      const familyParsed = JSON.parse(
+        (familyRaw as { content: Array<{ text: string }> }).content[0].text,
+      ) as {
+        mode: string;
+        results: unknown[];
+        metadata: {
+          classification: string;
+          passes: unknown[];
+          queriesTried: string[];
+          pathsExecuted: string[];
+        };
+      };
+
+      expect(familyParsed.mode).toBe("auto");
+      expect(familyParsed.metadata.classification).toBe("family");
+      expect(familyParsed.metadata.passes.length).toBeGreaterThan(1);
+      expect(familyParsed.metadata.queriesTried.length).toBeGreaterThan(1);
+      expect(familyParsed.metadata.pathsExecuted).toContain("procedural");
+      expect(familyParsed.results.length).toBeGreaterThan(0);
+    }, 300_000);
+
+    it("proves exact lookups stay cache-fast while family queries pay for bounded expansion only when needed", async () => {
+      const tool = createMemorySearchTool({ config: cfg });
+      expect(tool).not.toBeNull();
+
+      const exactRequest: MemorySearchRequest = {
+        query: "Emergency rollback procedure",
+        searchMode: "direct",
+        sourcePreference: ["procedural", "reference"],
+        needExactEvidence: true,
+        returnPlan: true,
+      };
+      const familyRequest: MemorySearchRequest = {
+        query: "rollback procedure family",
+        sourcePreference: ["procedural", "reference", "conversation"],
+        maxPasses: 2,
+        returnPlan: true,
+      };
+
+      const exactSignature = buildMemorySearchRequestSignature({
+        ...exactRequest,
+        maxResults: 10,
+        minScore: 0.1,
+        maxPasses: 1,
+      });
+      const familySignature = buildMemorySearchRequestSignature({
+        ...familyRequest,
+        maxResults: 10,
+        minScore: 0.1,
+        needExactEvidence: false,
+      });
+
+      await queryCacheCollection(db, PREFIX).deleteMany({
+        agentId: AGENT_ID,
+        queryHash: {
+          $in: [
+            hashQuery(normalizeQuery(exactRequest.query)),
+            hashQuery(normalizeQuery(familyRequest.query)),
+          ],
+        },
+        requestSignature: { $in: [exactSignature, familySignature] },
+      });
+
+      const runTool = async (id: string, request: MemorySearchRequest) => {
+        const started = Date.now();
+        const raw = await tool!.execute(id, request);
+        const elapsedMs = Date.now() - started;
+        const parsed = JSON.parse(
+          (raw as { content: Array<{ text: string }> }).content[0].text,
+        ) as {
+          results: MemorySearchResult[];
+          metadata: {
+            classification: string;
+            passes: unknown[];
+            queriesTried: string[];
+            evidenceCoverage: string;
+            pathsExecuted: string[];
+          };
+        };
+        return { elapsedMs, parsed };
+      };
+
+      const exactCold = await runTool("memory-search-exact-cold", exactRequest);
+      const exactWarm = await runTool("memory-search-exact-warm", exactRequest);
+      const familyAuto = await runTool("memory-search-family-auto", familyRequest);
+
+      expect(exactCold.parsed.metadata.classification).toBe("direct");
+      expect(exactCold.parsed.metadata.passes).toHaveLength(1);
+      expect(exactCold.parsed.metadata.evidenceCoverage).toBe("direct");
+
+      expect(exactWarm.parsed.metadata.classification).toBe("direct");
+      expect(exactWarm.parsed.metadata.passes).toHaveLength(1);
+      expect(exactWarm.parsed.metadata.queriesTried).toHaveLength(1);
+      expect(exactWarm.parsed.metadata.evidenceCoverage).toBe("direct");
+      expect(exactWarm.parsed.metadata.pathsExecuted).toContain("procedural");
+
+      expect(familyAuto.parsed.metadata.classification).toBe("family");
+      expect(familyAuto.parsed.metadata.passes.length).toBeGreaterThan(1);
+      expect(familyAuto.parsed.metadata.queriesTried.length).toBeGreaterThan(1);
+      expect(familyAuto.parsed.metadata.evidenceCoverage).toBe("direct");
+      expect(familyAuto.parsed.results.length).toBeGreaterThanOrEqual(
+        exactWarm.parsed.results.length,
+      );
+
+      // This is the human-facing runtime promise: exact lookups stay cheap,
+      // while broader family queries spend latency only when they expand.
+      expect(exactWarm.elapsedMs).toBeLessThan(familyAuto.elapsedMs);
+    }, 300_000);
   });
 
   // ---------------------------------------------------------------------------

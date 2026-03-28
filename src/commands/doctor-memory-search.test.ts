@@ -37,8 +37,8 @@ vi.mock("../memory/backend-config.js", () => ({
 
 const mockSearchIndexes = vi.hoisted(() =>
   vi.fn(async () => [
-    { name: "chunks_vector", type: "vectorSearch" },
-    { name: "chunks_text", type: "search" },
+    { name: "openclaw_chunks_vector", type: "vectorSearch" },
+    { name: "openclaw_chunks_text", type: "search" },
   ]),
 );
 vi.mock("mongodb", () => ({
@@ -432,7 +432,8 @@ describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
       const allNotes = note.mock.calls.map((c: unknown[]) => String(c[0]));
       const vectorNote = allNotes.find((n: string) => n.includes("Vector search indexes:"));
       expect(vectorNote).toBeDefined();
-      expect(vectorNote).toContain("1 found");
+      expect(vectorNote).toContain("1/5 expected indexes found");
+      expect(vectorNote).toContain("openclaw_chunks_vector on openclaw_chunks");
     } finally {
       if (origKey !== undefined) {
         process.env.VOYAGE_API_KEY = origKey;

@@ -31,6 +31,7 @@ import * as mongodbOps from "./mongodb-ops.js";
 import type { IngestRun, ProjectionRun } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
 import { searchProcedures } from "./mongodb-procedures.js";
+import type { ProcedureState } from "./mongodb-procedures.js";
 import { synthesizeProfile, type ProfileSynthesis } from "./mongodb-profile.js";
 import {
   checkCache,
@@ -75,6 +76,16 @@ import {
   structuredMemCollection,
 } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
+import {
+  buildConstraintSummaries,
+  buildExecutorPasses,
+  buildMemorySearchRequestSignature,
+  classifyExecutorSearch,
+  computeEvidenceCoverage,
+  executeMongoSearchPlan,
+  normalizeMemorySearchRequest,
+  requestHasHardConstraints,
+} from "./mongodb-search-executor.js";
 import { mongoSearch } from "./mongodb-search.js";
 import type {
   SearchExplainOptions,
@@ -83,13 +94,21 @@ import type {
 } from "./mongodb-search.js";
 import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 import { searchStructuredMemory } from "./mongodb-structured-memory.js";
+import type {
+  StructuredMemorySalience,
+  StructuredMemoryState,
+} from "./mongodb-structured-memory.js";
 import { syncToMongoDB } from "./mongodb-sync.js";
 import * as mongodbTelemetry from "./mongodb-telemetry.js";
 import type {
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
+  MemorySearchMetadata,
   MemorySearchManager,
+  MemorySearchRequest,
+  MemorySearchResponse,
   MemorySearchResult,
+  MemorySearchSourcePreference,
   MemorySource,
   MemorySyncProgressUpdate,
 } from "./types.js";
@@ -174,6 +193,39 @@ export function resolveQueryCacheTtlSec(
 ): number {
   const sources = collectSearchResultSources(results);
   return sources.has("reference") ? config.kbTtlSec : config.conversationTtlSec;
+}
+
+function normalizeSearchRequest(request: MemorySearchRequest): MemorySearchRequest {
+  const query = request.query.trim();
+  return {
+    ...request,
+    query,
+    searchMode: request.searchMode ?? "auto",
+    maxResults: request.maxResults ?? 10,
+    minScore: request.minScore ?? 0.1,
+    needExactEvidence: request.needExactEvidence === true,
+    returnPlan: request.returnPlan === true,
+    ...(request.maxPasses != null
+      ? { maxPasses: Math.max(1, Math.min(3, request.maxPasses)) }
+      : {}),
+  };
+}
+
+function emptySearchMetadata(request: MemorySearchRequest): MemorySearchMetadata {
+  return {
+    mode: request.searchMode ?? "auto",
+    classification: "direct",
+    sourceOrder: request.sourcePreference ?? ["conversation", "structured", "reference"],
+    passes: [],
+    queriesTried: [],
+    constraintsApplied: [],
+    resultsRejected: [],
+    evidenceCoverage: "none",
+    pathsExecuted: [],
+    resultsByPath: {},
+    queryRewritten: false,
+    reranked: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -562,22 +614,42 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   // MemorySearchManager.search
   // ---------------------------------------------------------------------------
 
-  private buildConversationChunkFilter(): Document {
-    return {
+  private buildConversationChunkFilter(params?: {
+    sessionKey?: string;
+    timeRange?: { start: Date; end: Date };
+  }): Document {
+    const filter: Document = {
       source: { $in: ["conversation", "sessions"] },
       agentId: this.agentId,
       status: { $ne: "deleted" },
     };
+    if (params?.sessionKey) {
+      filter.sessionId = params.sessionKey;
+    }
+    if (params?.timeRange) {
+      filter.timestamp = {
+        $gte: params.timeRange.start,
+        $lte: params.timeRange.end,
+      };
+    }
+    return filter;
   }
 
-  private buildBridgeChunkFilter(): Document {
-    return {
+  private buildBridgeChunkFilter(params?: { timeRange?: { start: Date; end: Date } }): Document {
+    const filter: Document = {
       source: { $in: ["conversation", "memory"] },
       agentId: this.agentId,
       scope: "workspace",
       scopeRef: this.workspaceScopeRef,
       status: { $ne: "deleted" },
     };
+    if (params?.timeRange) {
+      filter.updatedAt = {
+        $gte: params.timeRange.start,
+        $lte: params.timeRange.end,
+      };
+    }
+    return filter;
   }
 
   private getBridgeChunkBudget(maxResults: number): number {
@@ -794,24 +866,34 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     query: string,
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
   ): Promise<MemorySearchResult[]> {
-    const cleaned = query.trim();
-    if (!cleaned) {
+    const response = await this.searchDetailed({
+      query,
+      maxResults: opts?.maxResults,
+      minScore: opts?.minScore,
+      ...(opts?.sessionKey ? { conversationScope: { sessionKey: opts.sessionKey } } : {}),
+    });
+    return response.results;
+  }
+
+  async searchDetailed(request: MemorySearchRequest): Promise<MemorySearchResponse> {
+    const normalized = normalizeSearchRequest(request);
+    if (!normalized.query) {
       this.setLastSearchMode("v2:empty-query");
-      return [];
+      return { results: [], metadata: emptySearchMetadata(normalized) };
     }
 
     const mongoCfg = this.config.mongodb!;
-    const maxResults = opts?.maxResults ?? 10;
-    const minScore = opts?.minScore ?? 0.1;
     const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
     const availablePaths = this.buildV2AvailablePaths(activeSources);
+    const cacheQuery = normalized.query;
+    const requestSignature = buildMemorySearchRequestSignature(normalized);
 
-    // Cache check: BEFORE search pipeline
     if (mongoCfg.cache.enabled) {
       const cacheResult = await checkCache({
         db: this.db,
         prefix: this.prefix,
-        query: cleaned,
+        query: cacheQuery,
+        requestSignature,
         agentId: this.agentId,
         scope: "agent",
         scopeRef: this.agentScopeRef,
@@ -822,93 +904,146 @@ export class MongoDBMemoryManager implements MemorySearchManager {
           pathUsed: cacheResult.pathUsed,
           sourceScope: cacheResult.sourceScope,
         });
-        return cacheResult.results;
+        const executorRequest = normalizeMemorySearchRequest(normalized);
+        const classification = classifyExecutorSearch(executorRequest);
+        const cachedPaths = cacheResult.pathUsed
+          ? cacheResult.pathUsed.split(",").filter(Boolean)
+          : [];
+        const plannedPasses = buildExecutorPasses(executorRequest, classification).map(
+          (pass, index) => ({
+            pass: pass.pass,
+            query: pass.query,
+            reason: index === 0 ? `${pass.reason} (cache hit)` : pass.reason,
+            pathsExecuted: index === 0 ? cachedPaths : [],
+            resultCount: index === 0 ? cacheResult.results.length : 0,
+            queryRewritten: false,
+            reranked: false,
+          }),
+        );
+        return {
+          results: cacheResult.results,
+          metadata: {
+            ...emptySearchMetadata(normalized),
+            classification,
+            passes: plannedPasses,
+            queriesTried: plannedPasses.map((pass) => pass.query),
+            constraintsApplied: [
+              ...buildConstraintSummaries(executorRequest),
+              ...(requestHasHardConstraints(normalized) ? ["cache-hit-constrained"] : []),
+            ],
+            evidenceCoverage: computeEvidenceCoverage(cacheResult.results),
+            pathsExecuted: cachedPaths,
+          },
+        };
       }
     }
 
     const searchStart = Date.now();
-    try {
-      const v2 = await searchV2(this.db, this.prefix, cleaned, this.agentId, {
-        availablePaths,
-        hasEpisodes: mongoCfg.episodes.enabled,
-        hasGraphData: mongoCfg.graph.enabled,
-        maxResults,
-        searchOptions: {
-          minScore,
-          sessionKey: opts?.sessionKey,
-          numCandidates: mongoCfg.numCandidates,
-          capabilities: this.capabilities,
-          fusionMethod: mongoCfg.fusionMethod,
-          embeddingMode: mongoCfg.embeddingMode,
-          conversationFilter: this.buildConversationChunkFilter(),
-          bridgeFilter: activeSources.conversation ? this.buildBridgeChunkFilter() : undefined,
-          bridgeMaxResults: this.getBridgeChunkBudget(maxResults),
-          scope: "agent",
-          scopeRef: this.agentScopeRef,
-          rerankConfig: mongoCfg.reranking,
-          queryRewriteConfig: mongoCfg.queryRewriting,
-          enableContiguousMerge: mongoCfg.enableContiguousMerge,
-          enableContextExpansion: mongoCfg.enableContextExpansion,
-        },
-      });
-
-      // Emit search telemetry (fire-and-forget)
-      mongodbTelemetry.emitTelemetry(this.db, this.prefix, {
-        meta: { agentId: this.agentId, operation: "search" },
-        durationMs: Date.now() - searchStart,
-        ok: v2.results.length > 0,
-        pathUsed: v2.metadata.pathsExecuted.join(","),
-        resultCount: v2.results.length,
-        topScore: v2.results[0]?.score ?? 0,
-        fusionMethod: mongoCfg.fusionMethod,
-      });
-
-      const v2Details = {
-        plan: v2.metadata.plan.paths,
-        confidence: v2.metadata.plan.confidence,
-        constraints: v2.metadata.plan.constraints,
-        pathsExecuted: v2.metadata.pathsExecuted,
-        resultsByPath: v2.metadata.resultsByPath,
-      };
-
-      if (v2.results.length > 0) {
-        this.setLastSearchMode("v2", v2Details);
-        // Fire-and-forget cache write
-        if (mongoCfg.cache.enabled) {
-          const sourceScope = classifyQueryCacheSourceScope(v2.results);
-          const ttlSec = resolveQueryCacheTtlSec(v2.results, mongoCfg.cache);
-          writeCache({
-            db: this.db,
-            prefix: this.prefix,
-            query: cleaned,
-            agentId: this.agentId,
+    const response = await executeMongoSearchPlan({
+      request: normalized,
+      availablePaths,
+      executePass: async ({ query: passQuery, availablePaths: passPaths, timeRange }) =>
+        searchV2(this.db, this.prefix, passQuery, this.agentId, {
+          availablePaths: passPaths,
+          hasEpisodes: mongoCfg.episodes.enabled,
+          hasGraphData: mongoCfg.graph.enabled,
+          maxResults: normalized.maxResults,
+          searchOptions: {
+            minScore: normalized.minScore,
+            sessionKey: normalized.conversationScope?.sessionKey,
+            numCandidates: mongoCfg.numCandidates,
+            capabilities: this.capabilities,
+            fusionMethod: mongoCfg.fusionMethod,
+            embeddingMode: mongoCfg.embeddingMode,
+            conversationFilter: this.buildConversationChunkFilter({
+              sessionKey: normalized.conversationScope?.sessionKey,
+              ...(timeRange ? { timeRange } : {}),
+            }),
+            bridgeFilter: activeSources.conversation
+              ? this.buildBridgeChunkFilter(timeRange ? { timeRange } : undefined)
+              : undefined,
+            bridgeMaxResults: this.getBridgeChunkBudget(normalized.maxResults ?? 10),
             scope: "agent",
             scopeRef: this.agentScopeRef,
-            results: v2.results,
-            pathUsed: v2.metadata.pathsExecuted.join(","),
-            sourceScope,
-            ttlSec,
-          });
-        }
-        return v2.results;
-      }
+            rerankConfig: mongoCfg.reranking,
+            queryRewriteConfig: mongoCfg.queryRewriting,
+            enableContiguousMerge: mongoCfg.enableContiguousMerge,
+            enableContextExpansion: mongoCfg.enableContextExpansion,
+            ...(normalized.sourcePreference
+              ? { sourcePreference: normalized.sourcePreference }
+              : {}),
+            ...(timeRange ? { explicitTimeRange: timeRange } : {}),
+            ...(normalized.structuredScope ? { structuredScope: normalized.structuredScope } : {}),
+            ...(normalized.referenceScope ? { referenceScope: normalized.referenceScope } : {}),
+            ...(normalized.proceduralScope ? { proceduralScope: normalized.proceduralScope } : {}),
+          },
+        }),
+    });
 
-      const fallbackResults = await this.legacySearch(cleaned, opts);
-      this.setLastSearchMode("v2->legacy-empty", {
-        ...v2Details,
-        fallbackResults: fallbackResults.length,
-      });
-      return fallbackResults;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.warn(`planner search failed, falling back to legacy search: ${message}`);
-      const fallbackResults = await this.legacySearch(cleaned, opts);
-      this.setLastSearchMode("v2->legacy-error", {
-        error: message,
-        fallbackResults: fallbackResults.length,
-      });
-      return fallbackResults;
+    mongodbTelemetry.emitTelemetry(this.db, this.prefix, {
+      meta: { agentId: this.agentId, operation: "search" },
+      durationMs: Date.now() - searchStart,
+      ok: response.results.length > 0,
+      pathUsed: response.metadata.pathsExecuted.join(","),
+      resultCount: response.results.length,
+      topScore: response.results[0]?.score ?? 0,
+      fusionMethod: mongoCfg.fusionMethod,
+    });
+
+    const v2Details = {
+      classification: response.metadata.classification,
+      sourceOrder: response.metadata.sourceOrder,
+      constraintsApplied: response.metadata.constraintsApplied,
+      pathsExecuted: response.metadata.pathsExecuted,
+      resultsByPath: response.metadata.resultsByPath,
+      evidenceCoverage: response.metadata.evidenceCoverage,
+    };
+
+    if (response.results.length > 0) {
+      this.setLastSearchMode("v2", v2Details);
+      if (mongoCfg.cache.enabled) {
+        const sourceScope = classifyQueryCacheSourceScope(response.results);
+        const ttlSec = resolveQueryCacheTtlSec(response.results, mongoCfg.cache);
+        writeCache({
+          db: this.db,
+          prefix: this.prefix,
+          query: cacheQuery,
+          requestSignature,
+          agentId: this.agentId,
+          scope: "agent",
+          scopeRef: this.agentScopeRef,
+          results: response.results,
+          pathUsed: response.metadata.pathsExecuted.join(","),
+          sourceScope,
+          ttlSec,
+        });
+      }
+      return response;
     }
+
+    if (requestHasHardConstraints(normalized)) {
+      this.setLastSearchMode("v2:constrained-empty", v2Details);
+      return response;
+    }
+
+    const fallbackResults = await this.legacySearch(normalized.query, {
+      maxResults: normalized.maxResults,
+      minScore: normalized.minScore,
+      sessionKey: normalized.conversationScope?.sessionKey,
+    });
+    this.setLastSearchMode("v2->legacy-empty", {
+      ...v2Details,
+      fallbackResults: fallbackResults.length,
+    });
+    return {
+      results: fallbackResults,
+      metadata: {
+        ...response.metadata,
+        pathsExecuted: response.metadata.pathsExecuted.length
+          ? response.metadata.pathsExecuted
+          : ["legacy"],
+      },
+    };
   }
 
   async relevanceExplain(params: {
@@ -2588,6 +2723,48 @@ export type V2SearchMetadata = {
   queryRewritten?: boolean;
 };
 
+function pathMatchesSourcePreference(
+  path: RetrievalPath,
+  source: MemorySearchSourcePreference,
+): boolean {
+  switch (source) {
+    case "conversation":
+      return path === "hybrid" || path === "raw-window";
+    case "reference":
+      return path === "kb";
+    case "structured":
+      return path === "structured" || path === "active-critical";
+    case "procedural":
+      return path === "procedural";
+    case "episodic":
+      return path === "episodic";
+    case "graph":
+      return path === "graph";
+    default:
+      return false;
+  }
+}
+
+function reorderPathsBySourcePreference(
+  paths: RetrievalPath[],
+  sourcePreference?: MemorySearchSourcePreference[],
+): RetrievalPath[] {
+  if (!sourcePreference || sourcePreference.length === 0) {
+    return paths;
+  }
+  return [...paths].toSorted((left, right) => {
+    const leftRank = sourcePreference.findIndex((source) =>
+      pathMatchesSourcePreference(left, source),
+    );
+    const rightRank = sourcePreference.findIndex((source) =>
+      pathMatchesSourcePreference(right, source),
+    );
+    const normalizedLeft = leftRank === -1 ? sourcePreference.length : leftRank;
+    const normalizedRight = rightRank === -1 ? sourcePreference.length : rightRank;
+    return normalizedLeft - normalizedRight;
+  });
+}
+
 function graphRelationPriority(type: RelationType): number {
   switch (type) {
     case "works_on":
@@ -2716,6 +2893,22 @@ export async function searchV2(
       projection?: "full" | "ids-only";
       enableContiguousMerge?: boolean;
       enableContextExpansion?: boolean;
+      sourcePreference?: MemorySearchSourcePreference[];
+      explicitTimeRange?: { start: Date; end: Date };
+      structuredScope?: {
+        type?: string;
+        state?: string | string[];
+        salience?: string[];
+      };
+      referenceScope?: {
+        source?: string;
+        category?: string;
+        tags?: string[];
+      };
+      proceduralScope?: {
+        state?: string;
+        intentTags?: string[];
+      };
     };
   },
 ): Promise<{ results: MemorySearchResult[]; metadata: V2SearchMetadata }> {
@@ -2735,23 +2928,23 @@ export async function searchV2(
     const maxResults = context.maxResults ?? 20;
     const minScore = context.searchOptions?.minScore ?? 0.1;
     const numCandidates = context.searchOptions?.numCandidates ?? 200;
-    const capabilities = context.searchOptions?.capabilities ?? {
-      vectorSearch: true,
-      textSearch: true,
-      scoreFusion: true,
-      rankFusion: false,
-    };
+    const capabilities =
+      context.searchOptions?.capabilities ?? (await detectCapabilities(db, `${prefix}chunks`));
     const fusionMethod = context.searchOptions?.fusionMethod ?? "scoreFusion";
     const embeddingMode = context.searchOptions?.embeddingMode ?? "automated";
     const bridgeMaxResults =
       context.searchOptions?.bridgeMaxResults ?? Math.max(2, Math.ceil(maxResults / 3));
     const allowHybridBackstop = context.searchOptions?.allowHybridBackstop ?? true;
-    const plan = planRetrieval(query, {
+    const rawPlan = planRetrieval(query, {
       availablePaths: context.availablePaths,
       knownEntityNames: graphQueryCandidates,
       hasEpisodes: context.hasEpisodes,
       hasGraphData: context.hasGraphData,
     });
+    const plan = {
+      ...rawPlan,
+      paths: reorderPathsBySourcePreference(rawPlan.paths, context.searchOptions?.sourcePreference),
+    };
 
     // Rewrite query for search execution (NOT for planner or cache key):
     const qrConfig = context.searchOptions?.queryRewriteConfig;
@@ -2775,31 +2968,67 @@ export async function searchV2(
       plan.constraints?.entities?.names && plan.constraints.entities.names.length > 0
         ? plan.constraints.entities.names
         : graphQueryCandidates;
-    const timeRange = plan.constraints?.timeRange
-      ? resolveTimeRangePreset(plan.constraints.timeRange.preset)
-      : undefined;
+    const explicitTimeRange = context.searchOptions?.explicitTimeRange;
+    const timeRange =
+      explicitTimeRange ??
+      (plan.constraints?.timeRange
+        ? resolveTimeRangePreset(plan.constraints.timeRange.preset)
+        : undefined);
     const structuredFilter: {
       agentId: string;
+      scope?: MemoryScope;
+      scopeRef?: string;
       type?: string;
+      state?: StructuredMemoryState | StructuredMemoryState[];
+      salience?: StructuredMemorySalience[];
     } = {
       agentId,
+      scope,
+      scopeRef: agentScopeRef,
       ...(plan.constraints?.structured?.type ? { type: plan.constraints.structured.type } : {}),
+      ...(context.searchOptions?.structuredScope?.type
+        ? { type: context.searchOptions.structuredScope.type }
+        : {}),
+      ...(context.searchOptions?.structuredScope?.state
+        ? {
+            state: Array.isArray(context.searchOptions.structuredScope.state)
+              ? (context.searchOptions.structuredScope.state as StructuredMemoryState[])
+              : (context.searchOptions.structuredScope.state as StructuredMemoryState),
+          }
+        : {}),
+      ...(context.searchOptions?.structuredScope?.salience?.length
+        ? { salience: context.searchOptions.structuredScope.salience as StructuredMemorySalience[] }
+        : {}),
     };
     const activeCriticalFilter = {
       agentId,
+      scope,
+      scopeRef: agentScopeRef,
       state: "active" as const,
       salience: plan.constraints?.activeCritical?.salience ?? (["critical", "high"] as const),
       currentOnly: true,
     };
     const proceduralFilter = {
       agentId,
-      state: "active" as const,
+      scope,
+      scopeRef: agentScopeRef,
+      state: (context.searchOptions?.proceduralScope?.state ?? "active") as ProcedureState,
+      ...(context.searchOptions?.proceduralScope?.intentTags?.length
+        ? { intentTags: context.searchOptions.proceduralScope.intentTags }
+        : {}),
     };
-    const kbFilter = plan.constraints?.kb
-      ? plan.constraints.kb.source
-        ? { source: plan.constraints.kb.source }
-        : {}
-      : undefined;
+    const kbFilter = {
+      ...(plan.constraints?.kb?.source ? { source: plan.constraints.kb.source } : {}),
+      ...(context.searchOptions?.referenceScope?.source
+        ? { source: context.searchOptions.referenceScope.source }
+        : {}),
+      ...(context.searchOptions?.referenceScope?.category
+        ? { category: context.searchOptions.referenceScope.category }
+        : {}),
+      ...(context.searchOptions?.referenceScope?.tags?.length
+        ? { tags: context.searchOptions.referenceScope.tags }
+        : {}),
+    };
 
     const results: MemorySearchResult[] = [];
     const pathsExecuted: RetrievalPath[] = [];
@@ -2861,16 +3090,24 @@ export async function searchV2(
           case "raw-window": {
             // M2 audit fix: cap raw-window events at 50 to avoid unbounded result sets
             const rawWindowLimit = 50;
-            const events = await mongodbEvents.getEventsByTimeRange({
-              db,
-              prefix,
-              agentId,
-              start: timeRange?.start ?? new Date(Date.now() - 24 * 60 * 60 * 1000),
-              end: timeRange?.end ?? new Date(),
-              scope,
-              scopeRef: agentScopeRef,
-              limit: rawWindowLimit,
-            });
+            const events = context.searchOptions?.sessionKey
+              ? await mongodbEvents.getEventsBySession({
+                  db,
+                  prefix,
+                  agentId,
+                  sessionId: context.searchOptions.sessionKey,
+                  limit: rawWindowLimit,
+                })
+              : await mongodbEvents.getEventsByTimeRange({
+                  db,
+                  prefix,
+                  agentId,
+                  start: timeRange?.start ?? new Date(Date.now() - 24 * 60 * 60 * 1000),
+                  end: timeRange?.end ?? new Date(),
+                  scope,
+                  scopeRef: agentScopeRef,
+                  limit: rawWindowLimit,
+                });
             const recentFirst = [...events].toSorted(
               (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
             );
@@ -3036,7 +3273,7 @@ export async function searchV2(
             const kbHits = await searchKB(kbChunksCollection(db, prefix), searchQuery, null, {
               maxResults: Math.max(3, Math.floor((context.maxResults ?? 10) / 3)),
               minScore,
-              ...(kbFilter ? { filter: kbFilter } : {}),
+              ...(Object.keys(kbFilter).length > 0 ? { filter: kbFilter } : {}),
               numCandidates,
               vectorIndexName: `${prefix}kb_chunks_vector`,
               textIndexName: `${prefix}kb_chunks_text`,

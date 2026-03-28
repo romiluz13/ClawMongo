@@ -209,6 +209,35 @@ describe("checkCache", () => {
     expect(result.sourceScope).toBe("conversation");
   });
 
+  it("partitions exact cache hits by requestSignature", async () => {
+    const cachedDoc = {
+      _id: "doc-1",
+      results: [],
+      pathUsed: "conversation-vector",
+      sourceScope: "conversation",
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+    vi.mocked(mockCol.findOne).mockResolvedValue(cachedDoc as never);
+
+    await checkCache({
+      db: createMockDb(mockCol),
+      prefix: PREFIX,
+      query: "test query",
+      requestSignature: "scoped-request",
+      agentId: AGENT_ID,
+      scope: SCOPE,
+      scopeRef: SCOPE_REF,
+      config: DEFAULT_CONFIG,
+    });
+
+    expect(mockCol.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryHash: hashQuery(normalizeQuery("test query")),
+        requestSignature: "scoped-request",
+      }),
+    );
+  });
+
   it("Tier 1 skips expired entries", async () => {
     // findOne returns null when expiresAt filter doesn't match (expired)
     vi.mocked(mockCol.findOne).mockResolvedValue(null as never);
@@ -561,6 +590,43 @@ describe("writeCache", () => {
 
     // Upsert enabled
     expect(options).toEqual(expect.objectContaining({ upsert: true }));
+  });
+
+  it("writes requestSignature into the cache identity and stored document", () => {
+    writeCache({
+      db: createMockDb(mockCol),
+      prefix: PREFIX,
+      query: "Test Query",
+      requestSignature: "agentic-family",
+      agentId: AGENT_ID,
+      scope: SCOPE,
+      scopeRef: SCOPE_REF,
+      results: [
+        {
+          path: "/a.md",
+          snippet: "test",
+          score: 0.9,
+          source: "conversation",
+          startLine: 1,
+          endLine: 1,
+        },
+      ],
+      pathUsed: "conversation-vector",
+      sourceScope: "conversation",
+      ttlSec: 300,
+    });
+
+    const [filter, update] = vi.mocked(mockCol.updateOne).mock.calls[0];
+    expect(filter).toEqual(
+      expect.objectContaining({
+        requestSignature: "agentic-family",
+      }),
+    );
+    expect((update as Document).$setOnInsert).toEqual(
+      expect.objectContaining({
+        requestSignature: "agentic-family",
+      }),
+    );
   });
 
   it("skips empty query", () => {

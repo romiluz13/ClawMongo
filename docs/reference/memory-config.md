@@ -313,10 +313,20 @@ agents: {
 ## How the memory tools work
 
 - `memory_search` is the primary runtime recall entrypoint. It searches across active MongoDB-backed recall sources (conversation events, structured memory, KB, episodes, graph). Results include snippet text, locators, scores, and source type. The retrieval planner selects which paths to execute based on the query.
+- `memory_search` now supports a richer generic request contract for selective internal search. Callers can ask for `searchMode` (`auto` / `direct` / `agentic`), ordered `sourcePreference`, bounded `timeRange`, `needExactEvidence`, `maxPasses`, and generic scope objects for conversation, structured, reference, and procedural retrieval.
+- `memory_search` returns planner-visible metadata so maintainers can inspect how recall behaved in production: classification, passes, queries tried, active constraints, rejected results, evidence coverage, paths executed, and whether query rewriting or reranking ran.
 - `memory_get` reopens exact locators returned by recall tools. Supports MongoDB-backed locators for events, episodes, relations, procedures, KB, and structured memory.
 - `kb_search` is a dedicated search for imported docs and reference material.
 - `memory_write` persists durable structured facts (decisions, preferences, todos, people, projects) with salience, temporal validity, provenance, and supersession metadata.
 - All tools are enabled only when the MongoDB memory backend is configured.
+
+### Selective agentic internal search
+
+- `memory_search` stays the single public recall tool. ClawMongo does not introduce `memory_search_v2`.
+- `searchMode: "auto"` keeps simple lookups cheap and escalates only when the query shape looks family-style, comparative, temporal, scoped, or multi-hop.
+- Hard constraints such as explicit time windows, scope filters, and `needExactEvidence` are enforced near MongoDB-backed retrieval lanes and are preserved across passes.
+- Legacy fallback remains part of the runtime search order, but constrained requests do not silently weaken into unconstrained fallback behavior.
+- Search index evolution is part of the feature. ClawMongo refreshes existing Search / Vector Search definitions when runtime-required filter fields drift.
 
 ## What gets indexed (and when)
 

@@ -1,6 +1,7 @@
-import { beforeEach, describe, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   resetMemoryToolMockState,
+  setMemorySearchDetailedImpl,
   setMemorySearchImpl,
 } from "../../../test/helpers/memory-tool-manager-mock.js";
 import {
@@ -39,5 +40,56 @@ describe("memory_search unavailable payloads", () => {
       warning: "Memory search is unavailable due to an embedding/provider error.",
       action: "Check embedding provider configuration and retry memory_search.",
     });
+  });
+
+  it("surfaces detailed search metadata when the backend provides it", async () => {
+    setMemorySearchDetailedImpl(async () => ({
+      results: [
+        {
+          path: "memory/test.md",
+          startLine: 1,
+          endLine: 2,
+          score: 0.9,
+          snippet: "hello",
+          source: "conversation",
+        },
+      ],
+      metadata: {
+        mode: "agentic",
+        classification: "family",
+        sourceOrder: ["conversation", "reference", "structured"],
+        passes: [
+          {
+            pass: 1,
+            query: "hello",
+            reason: "original",
+            pathsExecuted: ["hybrid"],
+            resultCount: 1,
+            queryRewritten: false,
+            reranked: false,
+          },
+        ],
+        queriesTried: ["hello"],
+        constraintsApplied: [],
+        resultsRejected: [],
+        evidenceCoverage: "direct",
+        pathsExecuted: ["hybrid"],
+        resultsByPath: { hybrid: 1 },
+        queryRewritten: false,
+        reranked: false,
+      },
+    }));
+
+    const tool = createMemorySearchToolOrThrow();
+    const result = await tool.execute("detailed", { query: "hello", searchMode: "agentic" });
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        mode: "agentic",
+        metadata: expect.objectContaining({
+          classification: "family",
+          pathsExecuted: ["hybrid"],
+        }),
+      }),
+    );
   });
 });

@@ -18,6 +18,7 @@ export type QueryCacheSourceScope = "conversation" | "reference" | "structured" 
 export type QueryCacheEntry = {
   queryHash: string;
   queryNorm: string;
+  requestSignature: string;
   agentId: string;
   scope: MemoryScope;
   scopeRef: string;
@@ -93,6 +94,7 @@ export async function checkCache(params: {
   db: Db;
   prefix: string;
   query: string;
+  requestSignature?: string;
   agentId: string;
   scope: MemoryScope;
   scopeRef: string;
@@ -113,12 +115,14 @@ export async function checkCache(params: {
   const cacheStart = Date.now();
   const col = queryCacheCollection(db, prefix);
   const qHash = hashQuery(normalized);
+  const requestSignature = params.requestSignature ?? "default";
   const now = new Date();
 
   // Tier 1: Exact match
   try {
     const exact = await col.findOne({
       queryHash: qHash,
+      requestSignature,
       agentId,
       scope,
       scopeRef,
@@ -166,7 +170,7 @@ export async function checkCache(params: {
       indexName,
       numCandidates: 20,
       limit: 1,
-      filter: { agentId, scope, scopeRef },
+      filter: { agentId, scope, scopeRef, requestSignature },
       textFieldPath: "queryNorm",
     });
     if (!vsStage) {
@@ -188,6 +192,7 @@ export async function checkCache(params: {
           results: 1,
           pathUsed: 1,
           sourceScope: 1,
+          requestSignature: 1,
           expiresAt: 1,
           score: { $meta: "vectorSearchScore" },
         },
@@ -247,6 +252,7 @@ export function writeCache(params: {
   db: Db;
   prefix: string;
   query: string;
+  requestSignature?: string;
   agentId: string;
   scope: MemoryScope;
   scopeRef: string;
@@ -266,14 +272,16 @@ export function writeCache(params: {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlSec * 1000);
   const qHash = hashQuery(normalized);
+  const requestSignature = params.requestSignature ?? "default";
   const col = queryCacheCollection(db, prefix);
 
   col
     .updateOne(
-      { queryHash: qHash, agentId, scope, scopeRef },
+      { queryHash: qHash, requestSignature, agentId, scope, scopeRef },
       {
         $setOnInsert: {
           queryNorm: normalized,
+          requestSignature,
           createdAt: now,
           hitCount: 0,
         },

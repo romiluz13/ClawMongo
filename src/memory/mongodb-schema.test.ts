@@ -37,6 +37,7 @@ function mockCollection(name: string): Collection {
     collectionName: name,
     createIndex: vi.fn(async () => name),
     createSearchIndex: vi.fn(async () => name),
+    updateSearchIndex: vi.fn(async () => undefined),
     dropIndex: vi.fn(async () => ({ ok: 1 })),
     listSearchIndexes: vi.fn(() => ({ toArray: async () => [] })),
     aggregate: vi.fn(() => ({ toArray: async () => [] })),
@@ -731,7 +732,7 @@ describe("ensureSearchIndexes", () => {
     expect(autoEmbedField.model).toBe("voyage-4-large");
   });
 
-  it("includes filter fields (source, path) in vector index", async () => {
+  it("includes runtime filter fields in the chunks vector index", async () => {
     const db = mockDb();
     await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
 
@@ -746,6 +747,45 @@ describe("ensureSearchIndexes", () => {
     const filterPaths = filterFields.map((f: Document) => f.path);
     expect(filterPaths).toContain("path");
     expect(filterPaths).toContain("source");
+    expect(filterPaths).toContain("sessionId");
+    expect(filterPaths).toContain("timestamp");
+    expect(filterPaths).toContain("updatedAt");
+  });
+
+  it("updates existing search indexes when definitions drift", async () => {
+    const db = mockDb();
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+      updateSearchIndex: ReturnType<typeof vi.fn>;
+      listSearchIndexes: ReturnType<typeof vi.fn>;
+    };
+    chunks.listSearchIndexes.mockImplementation((name?: string) => ({
+      toArray: async () =>
+        name === "test_chunks_vector"
+          ? [
+              {
+                name,
+                type: "vectorSearch",
+                definition: {
+                  fields: [{ type: "filter", path: "agentId" }],
+                },
+              },
+            ]
+          : [],
+    }));
+
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    expect(chunks.updateSearchIndex).toHaveBeenCalledWith(
+      "test_chunks_vector",
+      expect.objectContaining({
+        fields: expect.arrayContaining([
+          expect.objectContaining({ type: "filter", path: "sessionId" }),
+          expect.objectContaining({ type: "filter", path: "timestamp" }),
+          expect.objectContaining({ type: "filter", path: "updatedAt" }),
+        ]),
+      }),
+    );
   });
 
   it("handles 'already exists' errors gracefully", async () => {
@@ -758,6 +798,48 @@ describe("ensureSearchIndexes", () => {
     const result = await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
     // Both should be true because "already exists" means the index is there
     expect(result).toEqual({ text: true, vector: true });
+  });
+
+  it("updates an existing search index when its definition drifts", async () => {
+    const db = mockDb();
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+      listSearchIndexes: ReturnType<typeof vi.fn>;
+      updateSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    chunks.listSearchIndexes = vi.fn((name?: string) => ({
+      toArray: async () =>
+        name === "test_chunks_vector"
+          ? [
+              {
+                name: "test_chunks_vector",
+                type: "vectorSearch",
+                definition: {
+                  fields: [
+                    { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
+                    { type: "filter", path: "agentId" },
+                  ],
+                },
+              },
+            ]
+          : [],
+    }));
+
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    expect(chunks.updateSearchIndex).toHaveBeenCalledWith(
+      "test_chunks_vector",
+      expect.objectContaining({
+        fields: expect.arrayContaining([
+          expect.objectContaining({ type: "filter", path: "sessionId" }),
+          expect.objectContaining({ type: "filter", path: "timestamp" }),
+          expect.objectContaining({ type: "filter", path: "updatedAt" }),
+        ]),
+      }),
+    );
+    expect(chunks.createSearchIndex).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: "test_chunks_vector" }),
+    );
   });
 
   it("fails fast when Search Index Management is unavailable", async () => {
@@ -1025,6 +1107,7 @@ describe("query_cache schema", () => {
       expect.arrayContaining([
         "queryHash",
         "queryNorm",
+        "requestSignature",
         "agentId",
         "scope",
         "scopeRef",
@@ -1068,7 +1151,7 @@ describe("query_cache schema", () => {
 });
 
 describe("query_cache standard indexes", () => {
-  it("creates unique compound index on (queryHash, agentId, scope, scopeRef)", async () => {
+  it("creates unique compound index on (queryHash, requestSignature, agentId, scope, scopeRef)", async () => {
     const db = mockDb();
     await ensureStandardIndexes(db, "test_");
     const qc = db.collection("test_query_cache") as unknown as {
@@ -1079,11 +1162,26 @@ describe("query_cache standard indexes", () => {
       (c: unknown[]) =>
         c[1] &&
         typeof c[1] === "object" &&
-        (c[1] as Record<string, unknown>).name === "uq_query_cache_hash_agent_scope_scoperef",
+        (c[1] as Record<string, unknown>).name === "uq_query_cache_hash_sig_agent_scope_scoperef",
     );
     expect(uniqueCall).toBeDefined();
-    expect(uniqueCall![0]).toEqual({ queryHash: 1, agentId: 1, scope: 1, scopeRef: 1 });
+    expect(uniqueCall![0]).toEqual({
+      queryHash: 1,
+      requestSignature: 1,
+      agentId: 1,
+      scope: 1,
+      scopeRef: 1,
+    });
     expect((uniqueCall![1] as Record<string, unknown>).unique).toBe(true);
+  });
+
+  it("drops the legacy cache unique index before creating the request-signature index", async () => {
+    const db = mockDb();
+    await ensureStandardIndexes(db, "test_");
+    const qc = db.collection("test_query_cache") as unknown as {
+      dropIndex: ReturnType<typeof vi.fn>;
+    };
+    expect(qc.dropIndex).toHaveBeenCalledWith("uq_query_cache_hash_agent_scope_scoperef");
   });
 
   it("creates TTL index on expiresAt with expireAfterSeconds: 0", async () => {
@@ -1140,7 +1238,7 @@ describe("query_cache vector search index", () => {
     expect(autoEmbed.model).toBe("voyage-4-large");
   });
 
-  it("includes filter paths for agentId, scope, scopeRef", async () => {
+  it("includes filter paths for requestSignature, agentId, scope, scopeRef", async () => {
     const db = mockDb();
     await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
     const qc = db.collection("test_query_cache") as unknown as {
@@ -1151,6 +1249,7 @@ describe("query_cache vector search index", () => {
     const filterPaths = fields
       .filter((f: Document) => f.type === "filter")
       .map((f: Document) => f.path);
+    expect(filterPaths).toContain("requestSignature");
     expect(filterPaths).toContain("agentId");
     expect(filterPaths).toContain("scope");
     expect(filterPaths).toContain("scopeRef");

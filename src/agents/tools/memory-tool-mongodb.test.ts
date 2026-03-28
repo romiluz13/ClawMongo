@@ -1,7 +1,17 @@
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
+import {
+  getStubMemoryManager,
+  resetMemoryToolMockState,
+  setKBSearchImpl,
+  setMemorySearchDetailedImpl,
+  setMemorySearchImpl,
+} from "../../../test/helpers/memory-tool-manager-mock.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import * as memoryIndex from "../../memory/index.js";
-import { createKBSearchTool, createMemoryWriteTool } from "./memory-tool.js";
+import {
+  createKBSearchTool,
+  createMemorySearchTool,
+  createMemoryWriteTool,
+} from "./memory-tool.js";
 
 describe("createKBSearchTool", () => {
   it("returns tool when mongodb backend is active", () => {
@@ -40,13 +50,66 @@ describe("createMemoryWriteTool", () => {
   });
 });
 
+describe("createMemorySearchTool detailed path", () => {
+  beforeEach(() => {
+    resetMemoryToolMockState({ searchDetailedImpl: null });
+  });
+
+  it("forwards the structured search request to searchDetailed() when available", async () => {
+    setMemorySearchDetailedImpl(async () => ({
+      results: [],
+      metadata: {
+        mode: "agentic",
+        classification: "family",
+        sourceOrder: ["reference", "conversation"],
+        passes: [],
+        queriesTried: ["eval tools"],
+        constraintsApplied: ["needExactEvidence"],
+        resultsRejected: [],
+        evidenceCoverage: "none",
+        pathsExecuted: ["kb"],
+        resultsByPath: { kb: 0 },
+        queryRewritten: false,
+        reranked: false,
+      },
+    }));
+
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp" } },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+    } as OpenClawConfig;
+
+    const tool = createMemorySearchTool({ config: cfg, agentSessionKey: "agent:main:session-1" });
+    expect(tool).not.toBeNull();
+
+    await tool!.execute("call-search", {
+      query: "eval tools",
+      searchMode: "agentic",
+      sourcePreference: ["reference", "conversation"],
+      needExactEvidence: true,
+      maxPasses: 3,
+    });
+
+    expect(getStubMemoryManager().searchDetailed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "eval tools",
+        searchMode: "agentic",
+        sourcePreference: ["reference", "conversation"],
+        needExactEvidence: true,
+        maxPasses: 3,
+        conversationScope: { sessionKey: "agent:main:session-1" },
+      }),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // kb_search direct path (searchKB on manager)
 // ---------------------------------------------------------------------------
 
 describe("createKBSearchTool direct searchKB path", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    resetMemoryToolMockState({ searchDetailedImpl: null });
   });
 
   it("uses direct searchKB() when manager has it", async () => {
@@ -60,20 +123,8 @@ describe("createKBSearchTool direct searchKB path", () => {
         source: "reference" as const,
       },
     ];
-    const searchKBMock = vi.fn().mockResolvedValue(kbResults);
-    const searchMock = vi.fn();
-    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
-    getMemorySearchManagerMock.mockResolvedValue({
-      manager: {
-        searchKB: searchKBMock,
-        search: searchMock,
-        status: () => ({ backend: "mongodb", provider: "test" }),
-        readFile: vi.fn().mockResolvedValue(null),
-        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
-        probeVectorAvailability: vi.fn().mockResolvedValue(true),
-      },
-      error: undefined,
-    });
+    setKBSearchImpl(async () => kbResults);
+    setMemorySearchImpl(async () => []);
 
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
@@ -88,31 +139,20 @@ describe("createKBSearchTool direct searchKB path", () => {
     const parsed = JSON.parse(text);
 
     // Direct searchKB should be called
-    expect(searchKBMock).toHaveBeenCalledWith(
+    expect(getStubMemoryManager().searchKB).toHaveBeenCalledWith(
       "API rate limits",
       expect.objectContaining({ maxResults: 5 }),
     );
     // Fallback search should NOT be called
-    expect(searchMock).not.toHaveBeenCalled();
+    expect(getStubMemoryManager().search).not.toHaveBeenCalled();
     // Results should come through
     expect(parsed.results).toHaveLength(1);
     expect(parsed.results[0].source).toBe("reference");
   });
 
   it("forwards tags/category/source filters to direct searchKB()", async () => {
-    const searchKBMock = vi.fn().mockResolvedValue([]);
-    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
-    getMemorySearchManagerMock.mockResolvedValue({
-      manager: {
-        searchKB: searchKBMock,
-        search: vi.fn(),
-        status: () => ({ backend: "mongodb", provider: "test" }),
-        readFile: vi.fn().mockResolvedValue(null),
-        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
-        probeVectorAvailability: vi.fn().mockResolvedValue(true),
-      },
-      error: undefined,
-    });
+    setKBSearchImpl(async () => []);
+    setMemorySearchImpl(async () => []);
 
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
@@ -129,7 +169,7 @@ describe("createKBSearchTool direct searchKB path", () => {
       source: "file",
     });
 
-    expect(searchKBMock).toHaveBeenCalledWith(
+    expect(getStubMemoryManager().searchKB).toHaveBeenCalledWith(
       "vector indexing",
       expect.objectContaining({
         maxResults: 5,
@@ -161,19 +201,8 @@ describe("createKBSearchTool direct searchKB path", () => {
         source: "conversation" as const,
       },
     ];
-    const searchMock = vi.fn().mockResolvedValue(mixedResults);
-    const getMemorySearchManagerMock = vi.spyOn(memoryIndex, "getMemorySearchManager");
-    getMemorySearchManagerMock.mockResolvedValue({
-      manager: {
-        // No searchKB method — should fall back
-        search: searchMock,
-        status: () => ({ backend: "mongodb", provider: "test" }),
-        readFile: vi.fn().mockResolvedValue(null),
-        probeEmbeddingAvailability: vi.fn().mockResolvedValue(true),
-        probeVectorAvailability: vi.fn().mockResolvedValue(true),
-      },
-      error: undefined,
-    });
+    setMemorySearchImpl(async () => mixedResults);
+    (getStubMemoryManager() as { searchKB?: unknown }).searchKB = undefined;
 
     const cfg = {
       agents: { defaults: { workspace: "/tmp" } },
@@ -188,7 +217,7 @@ describe("createKBSearchTool direct searchKB path", () => {
     const parsed = JSON.parse(text);
 
     // Fallback search should be called
-    expect(searchMock).toHaveBeenCalledWith(
+    expect(getStubMemoryManager().search).toHaveBeenCalledWith(
       "API rate limits",
       expect.objectContaining({ maxResults: 5 }),
     );

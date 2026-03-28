@@ -172,11 +172,31 @@ The retrieval planner (`planRetrieval`) scores paths based on query analysis:
 
 After retrieval, `crossEncoderRerank` (Voyage rerank-2.5, on by default) applies cross-encoder precision scoring with a 2-second timeout and graceful fallback, followed by `rerankResults` for source diversity, episode boost, deduplication, and backstop execution.
 
+### Selective Agentic Internal Search
+
+ClawMongo now keeps `memory_search` as one stable public tool while adding a richer MongoDB-first internal contract under the hood:
+
+- `searchMode`: `auto`, `direct`, or `agentic`
+- ordered `sourcePreference`
+- bounded `timeRange`
+- `needExactEvidence`
+- bounded `maxPasses`
+- planner-visible metadata: classification, passes, queries tried, constraints, rejected evidence, and executed paths
+
+The important behavior change is selective, not universal:
+
+- exact lookups stay single-pass and cache-fast
+- family, comparison, scoped, and temporal lookups can expand across bounded extra passes
+- hard constraints stay enforced near MongoDB instead of being treated like prompt suggestions
+- exact evidence remains first-class for auditability and answer discipline
+
+This is validated in the real production-readiness suite against the public `memory_search` tool on `mongodb/mongodb-atlas-local:preview` with a live Voyage key, including direct-vs-agentic behavior, cache-hit metadata, scoped rejection, temporal rejection, and bounded-pass evaluation signals.
+
 ### Test Coverage
 
 - ~300 v2 memory unit tests
 - 1000+ total memory tests across 59 test files
-- 82 live e2e tests against real MongoDB 8.2 + Voyage AI (production-readiness suite)
+- 90 live e2e tests against real MongoDB 8.2 + Voyage AI (production-readiness suite)
 
 ---
 

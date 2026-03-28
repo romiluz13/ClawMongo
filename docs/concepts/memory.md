@@ -42,6 +42,13 @@ OpenClaw exposes two agent-facing tools for these Markdown files:
 - `memory_search` -- semantic recall over indexed snippets.
 - `memory_get` -- targeted read of a specific Markdown file/line range.
 
+When the ClawMongo MongoDB backend is active, `memory_search` remains the same
+public tool name but becomes a planner-visible runtime recall interface. It can
+run in `auto`, `direct`, or bounded `agentic` mode, accepts generic source and
+time constraints, and returns metadata about passes, paths, and evidence
+coverage so maintainers can inspect what happened without changing the
+heart/bridge/brain contract.
+
 `memory_get` now **degrades gracefully when a file doesn't exist** (for example,
 today's daily log before the first write). Both the builtin manager and the QMD
 backend return `{ text: "", path }` instead of throwing `ENOENT`, so agents can

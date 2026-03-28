@@ -459,15 +459,81 @@ async function noteVectorSearchIndexHealth(
     return; // Skip when mongot is not available
   }
   try {
-    const collection = db.collection(`${prefix}chunks`);
-    const indexes = await collection.listSearchIndexes().toArray();
-    const vectorIndexes = indexes.filter(
-      (idx: Record<string, unknown>) => idx.type === "vectorSearch",
-    );
-    if (vectorIndexes.length === 0) {
+    const indexSpecs = [
+      {
+        collectionName: `${prefix}chunks`,
+        indexName: `${prefix}chunks_vector`,
+        requiredPaths: ["agentId", "scope", "scopeRef", "sessionId", "timestamp", "updatedAt"],
+      },
+      {
+        collectionName: `${prefix}kb_chunks`,
+        indexName: `${prefix}kb_chunks_vector`,
+        requiredPaths: ["docId", "path", "source"],
+      },
+      {
+        collectionName: `${prefix}structured_memory`,
+        indexName: `${prefix}structured_mem_vector`,
+        requiredPaths: ["type", "tags", "agentId", "scope", "scopeRef", "state", "salience"],
+      },
+      {
+        collectionName: `${prefix}procedures`,
+        indexName: `${prefix}procedures_vector`,
+        requiredPaths: ["intentTags", "agentId", "scope", "scopeRef", "state"],
+      },
+      {
+        collectionName: `${prefix}query_cache`,
+        indexName: `${prefix}query_cache_vector`,
+        requiredPaths: ["requestSignature", "agentId", "scope", "scopeRef"],
+      },
+    ] as const;
+    const foundIndexes: string[] = [];
+    const missingIndexes: string[] = [];
+    const parityIssues: string[] = [];
+
+    for (const spec of indexSpecs) {
+      const collection = db.collection(spec.collectionName);
+      const indexes = (await collection.listSearchIndexes(spec.indexName).toArray()) as Array<{
+        name?: string;
+        type?: string;
+        definition?: { fields?: Array<Record<string, unknown>> };
+        latestDefinition?: { fields?: Array<Record<string, unknown>> };
+        queryable?: boolean;
+      }>;
+      const current = indexes.find(
+        (idx) => idx.type === "vectorSearch" && idx.name === spec.indexName,
+      );
+      if (!current) {
+        missingIndexes.push(`${spec.indexName} on ${spec.collectionName}`);
+        continue;
+      }
+      foundIndexes.push(`${spec.indexName} on ${spec.collectionName}`);
+
+      if (current.queryable === false) {
+        parityIssues.push(`${spec.indexName} exists but is not yet queryable`);
+      }
+
+      const fields = Array.isArray(current.latestDefinition?.fields)
+        ? current.latestDefinition.fields
+        : Array.isArray(current.definition?.fields)
+          ? current.definition.fields
+          : [];
+      const filterPaths = new Set(
+        fields
+          .filter((field) => field.type === "filter" && typeof field.path === "string")
+          .map((field) => String(field.path)),
+      );
+      const missingPaths = spec.requiredPaths.filter((path) => !filterPaths.has(path));
+      if (missingPaths.length > 0) {
+        parityIssues.push(
+          `${spec.indexName} is missing required filter paths: ${missingPaths.join(", ")}`,
+        );
+      }
+    }
+
+    if (foundIndexes.length === 0) {
       note(
         [
-          `Vector search indexes: none found on ${prefix}chunks`,
+          `Vector search indexes: none found for the expected ClawMongo MongoDB collections`,
           "",
           "Fix: Indexes are created automatically on first gateway start.",
           "Manual: clawmongo memory init --indexes",
@@ -475,13 +541,24 @@ async function noteVectorSearchIndexHealth(
         "Memory (Vector Indexes)",
       );
     } else {
-      const names = vectorIndexes
-        .map((idx: Record<string, unknown>) => idx.name)
-        .filter(Boolean)
-        .join(", ");
       note(
-        `Vector search indexes: ${vectorIndexes.length} found on ${prefix}chunks${names ? ` (${names})` : ""}`,
+        `Vector search indexes: ${foundIndexes.length}/${indexSpecs.length} expected indexes found\n${foundIndexes.map((name) => `- ${name}`).join("\n")}`,
         "Memory (Vector Indexes)",
+      );
+    }
+
+    if (missingIndexes.length > 0 || parityIssues.length > 0) {
+      note(
+        [
+          ...(missingIndexes.length > 0
+            ? [`Missing indexes:`, ...missingIndexes.map((entry) => `- ${entry}`), ""]
+            : []),
+          ...(parityIssues.length > 0
+            ? [`Parity issues:`, ...parityIssues.map((entry) => `- ${entry}`), ""]
+            : []),
+          "Fix: restart the gateway or run memory index bootstrap so ClawMongo can refresh the MongoDB Search and Vector Search definitions.",
+        ].join("\n"),
+        "Memory (Index Parity)",
       );
     }
   } catch {
