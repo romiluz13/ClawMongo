@@ -153,7 +153,7 @@ export async function materializeEpisode(params: {
           itemsProjected: 0,
           durationMs: Date.now() - startMs,
         },
-      }).catch(() => {});
+      }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
       return null;
     }
 
@@ -179,7 +179,7 @@ export async function materializeEpisode(params: {
           itemsProjected: 0,
           durationMs: Date.now() - startMs,
         },
-      }).catch(() => {});
+      }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
       return null;
     }
     const summarizerResult = await summarizer(summarizerInput);
@@ -287,7 +287,7 @@ export async function materializeEpisode(params: {
         itemsProjected: 1,
         durationMs: Date.now() - startMs,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     return episode;
   } catch (err) {
     await recordProjectionRun({
@@ -300,7 +300,7 @@ export async function materializeEpisode(params: {
         itemsProjected: 0,
         durationMs: Date.now() - startMs,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     log.error(`materializeEpisode failed: ${err instanceof Error ? err.message : String(err)}`);
     throw err;
   }

@@ -390,7 +390,7 @@ export async function promoteDerivedMemoryFromEvent(params: {
           itemsProjected: structuredCreated,
           durationMs: 0,
         },
-      }).catch(() => {});
+      }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     }
   } catch (err) {
     await recordProjectionRun({
@@ -403,7 +403,7 @@ export async function promoteDerivedMemoryFromEvent(params: {
         itemsProjected: structuredCreated,
         durationMs: 0,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     log.warn(`structured promotion failed for ${event.eventId}: ${String(err)}`);
   }
 
@@ -431,7 +431,7 @@ export async function promoteDerivedMemoryFromEvent(params: {
           itemsProjected: proceduresCreated,
           durationMs: 0,
         },
-      }).catch(() => {});
+      }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     }
   } catch (err) {
     await recordProjectionRun({
@@ -444,7 +444,7 @@ export async function promoteDerivedMemoryFromEvent(params: {
         itemsProjected: proceduresCreated,
         durationMs: 0,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     log.warn(`procedure promotion failed for ${event.eventId}: ${String(err)}`);
   }
 
