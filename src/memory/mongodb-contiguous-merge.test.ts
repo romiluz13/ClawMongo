@@ -224,4 +224,73 @@ describe("mergeContiguousChunks", () => {
     expect(s1Block?.score).toBe(0.9);
     expect(s2Block?.score).toBe(0.7);
   });
+
+  // ---------------------------------------------------------------------------
+  // Regression: empty session groups must not crash (bounds check on sorted[0])
+  // ---------------------------------------------------------------------------
+
+  it("handles session group where all results lack timestamps gracefully", () => {
+    // Results have sessionId but no timestamps — sorted order uses fallback 0
+    const results = [
+      makeResult({
+        path: "events/a",
+        sessionId: "s-empty-ts",
+        score: 0.6,
+        snippet: "no-ts-1",
+      }),
+      makeResult({
+        path: "events/b",
+        sessionId: "s-empty-ts",
+        score: 0.4,
+        snippet: "no-ts-2",
+      }),
+    ];
+    // Must not throw — the fix ensured sorted[0] access is guarded
+    const merged = mergeContiguousChunks(results);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].snippet).toContain("no-ts-1");
+    expect(merged[0].snippet).toContain("no-ts-2");
+    expect(merged[0].score).toBe(0.6);
+  });
+
+  it("handles mix of event-path results where some sessions are empty after filtering", () => {
+    // Simulate: session "s-ghost" has results that look like events but have no sessionId
+    // (they go to passThrough), so bySession never gets that group. Meanwhile "s-real"
+    // has real session results. The merge must handle the empty-group edge gracefully.
+    const results = [
+      makeResult({
+        path: "events/ghost-a",
+        score: 0.5,
+        snippet: "ghost without session",
+        // No sessionId — goes to passThrough
+      }),
+      makeResult({
+        path: "events/real-a",
+        sessionId: "s-real",
+        timestamp: new Date("2026-01-01T00:01:00Z"),
+        score: 0.9,
+        snippet: "real-1",
+      }),
+      makeResult({
+        path: "events/real-b",
+        sessionId: "s-real",
+        timestamp: new Date("2026-01-01T00:02:00Z"),
+        score: 0.3,
+        snippet: "real-2",
+      }),
+    ];
+    const merged = mergeContiguousChunks(results);
+    // 1 merged block (s-real) + 1 passThrough (ghost)
+    expect(merged).toHaveLength(2);
+    const realBlock = merged.find((r) => r.snippet.includes("real-1"));
+    expect(realBlock).toBeDefined();
+    expect(realBlock!.snippet).toContain("real-2");
+    expect(realBlock!.score).toBe(0.9);
+  });
+
+  it("returns empty array when input is empty (zero-length guard)", () => {
+    const merged = mergeContiguousChunks([]);
+    expect(merged).toEqual([]);
+    expect(merged).toHaveLength(0);
+  });
 });

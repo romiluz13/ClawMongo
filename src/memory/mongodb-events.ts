@@ -313,7 +313,7 @@ export async function projectChunksFromEvents(params: {
         itemsProjected: chunksCreated,
         durationMs: Date.now() - startMs,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
     log.warn(
       `projection failed after ${chunksCreated} chunks created from ${events.length} events for agent=${agentId}: ${msg}`,
     );
@@ -367,7 +367,7 @@ export async function projectEventChunk(params: {
         itemsProjected: result.upsertedCount > 0 ? 1 : 0,
         durationMs: Date.now() - startMs,
       },
-    }).catch(() => {});
+    }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
   }
   return { chunkCreated: result.upsertedCount > 0 };
 }

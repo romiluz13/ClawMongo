@@ -109,17 +109,23 @@ export async function projectConversationWindows(params: {
 
   // Fetch all events for this session
   const eventsCol = eventsCollection(db, prefix);
-  const sessionEvents = (await eventsCol
+  const rawResult = await eventsCol
     .find({ agentId, sessionId })
     // oxlint-disable-next-line unicorn/no-array-sort
     .sort({ timestamp: 1 })
     .limit(1000)
-    .toArray()) as unknown as Array<{
+    .toArray();
+
+  const sessionEvents = rawResult as unknown as Array<{
     eventId: string;
     role: string;
     body: string;
     timestamp: Date;
   }>;
+
+  if (!Array.isArray(sessionEvents) || sessionEvents.length === 0) {
+    return { windowsCreated: 0 };
+  }
 
   const windows = buildConversationWindows(sessionId, sessionEvents, windowSize, overlap);
 

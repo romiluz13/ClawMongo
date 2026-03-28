@@ -65,6 +65,9 @@ export function mergeContiguousChunks(results: MemorySearchResult[]): MemorySear
     });
 
     // Walk and merge consecutive
+    if (sorted.length === 0) {
+      continue;
+    }
     let current = { ...sorted[0] };
     let maxScore = current.score;
     const snippets = [current.snippet];

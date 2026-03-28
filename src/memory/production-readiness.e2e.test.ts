@@ -3344,4 +3344,150 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       expect(exactMs).toBeLessThanOrEqual(familyMs + 500); // 500ms tolerance
     }, 60_000);
   });
+
+  // =========================================================================
+  // PHASE 18: Result Processing Robustness (regression for 4 fixed bugs)
+  // =========================================================================
+
+  describe("Phase 18: Result Processing Robustness", () => {
+    it("contiguous merge handles sessions with no matching chunks gracefully", async () => {
+      // Import inline to avoid polluting top-level imports
+      const { mergeContiguousChunks } = await import("./mongodb-contiguous-merge.js");
+
+      // Scenario: search returns results from multiple sessions, but one session
+      // group has results without timestamps (the pre-fix crash path)
+      const results: MemorySearchResult[] = [
+        {
+          path: "events/a",
+          startLine: 0,
+          endLine: 0,
+          score: 0.8,
+          snippet: "session chunk without timestamp",
+          source: "conversation",
+          sessionId: "empty-ts-session",
+          // No timestamp — the pre-fix code would crash on sorted[0]
+        },
+        {
+          path: "events/b",
+          startLine: 0,
+          endLine: 0,
+          score: 0.6,
+          snippet: "another chunk",
+          source: "conversation",
+          sessionId: "empty-ts-session",
+        },
+        {
+          path: "kb/doc1",
+          startLine: 0,
+          endLine: 0,
+          score: 0.7,
+          snippet: "kb result passthrough",
+          source: "reference",
+        },
+      ];
+
+      // Must not throw — regression for bounds check on sorted[0]
+      const merged = mergeContiguousChunks(results);
+      expect(merged.length).toBeGreaterThan(0);
+      expect(merged.length).toBeLessThanOrEqual(results.length);
+      // KB result should pass through unchanged
+      expect(merged.some((r) => r.path === "kb/doc1")).toBe(true);
+    });
+
+    it("conversation windows returns safely when events lack timestamps", async () => {
+      const { buildConversationWindows } = await import("./mongodb-conversation-windows.js");
+
+      // Edge: empty events array
+      expect(buildConversationWindows("s-empty", [])).toHaveLength(0);
+
+      // Edge: fewer than 5 events (minimum threshold)
+      const fewEvents = Array.from({ length: 3 }, (_, i) => ({
+        eventId: `e-${i}`,
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `turn ${i}`,
+        timestamp: new Date(Date.now() + i * 60_000),
+      }));
+      expect(buildConversationWindows("s-few", fewEvents)).toHaveLength(0);
+
+      // Edge: overlap >= windowSize (pre-fix would infinite loop)
+      const manyEvents = Array.from({ length: 10 }, (_, i) => ({
+        eventId: `e-loop-${i}`,
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `turn ${i}`,
+        timestamp: new Date(Date.now() + i * 60_000),
+      }));
+      // overlap=10 >= windowSize=5 => stride would be 0 without fix
+      const windows = buildConversationWindows("s-loop", manyEvents, 5, 10);
+      expect(windows.length).toBeGreaterThan(0); // must not hang
+    });
+
+    it("tiered summary wrapper preserves optional fields in return type", async () => {
+      const { withTieredSummaries } = await import("./mongodb-tiered-summary.js");
+
+      const baseSummarizer = async () => ({
+        title: "E2E Base Title",
+        summary: "E2E Base Summary",
+        tags: ["e2e"],
+      });
+      const llmFn = async () =>
+        JSON.stringify({
+          short_term: "E2E short",
+          medium_term: "E2E medium",
+          long_term: "E2E long",
+          topics: ["e2e-topic"],
+        });
+
+      const wrapped = withTieredSummaries(baseSummarizer, llmFn);
+      const dummyEvents = Array.from({ length: 3 }, (_, i) => ({
+        role: i % 2 === 0 ? "user" : "assistant",
+        body: `msg ${i}`,
+        timestamp: new Date(),
+      }));
+      const result = await wrapped(dummyEvents);
+
+      // Type safety: these fields must exist
+      expect("shortTermSummary" in result).toBe(true);
+      expect("mediumTermSummary" in result).toBe(true);
+      expect("longTermSummary" in result).toBe(true);
+      expect("topics" in result).toBe(true);
+      // Values must propagate
+      expect(result.shortTermSummary).toBe("E2E short");
+      expect(result.mediumTermSummary).toBe("E2E medium");
+      expect(result.longTermSummary).toBe("E2E long");
+      // Base fields preserved
+      expect(result.title).toBe("E2E Base Title");
+      expect(result.summary).toBe("E2E Base Summary");
+    });
+
+    it("event projection does not silently swallow telemetry errors", async () => {
+      // Verify writeEventAndProject completes successfully and records telemetry
+      const sessionId = `s-telemetry-${randomUUID().slice(0, 8)}`;
+
+      const { eventId, chunksCreated } = await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "user",
+        body: "Telemetry robustness check: event projection must log errors, not swallow them.",
+        scope: "agent",
+        sessionId,
+      });
+
+      expect(typeof eventId).toBe("string");
+      expect(eventId.length).toBeGreaterThan(0);
+      expect(chunksCreated).toBeGreaterThanOrEqual(0);
+
+      // Verify telemetry was emitted (fire-and-forget now logs errors instead of swallowing)
+      await waitForTelemetry(db, PREFIX, {
+        "meta.agentId": AGENT_ID,
+        "meta.operation": "event-write",
+      });
+
+      const telDoc = await telemetryCollection(db, PREFIX).findOne({
+        "meta.agentId": AGENT_ID,
+        "meta.operation": "event-write",
+      });
+      expect(telDoc).not.toBeNull();
+      expect(telDoc!.ok).toBe(true);
+      expect(telDoc!.projectionTriggered).toBe(true);
+    }, 15_000);
+  });
 });

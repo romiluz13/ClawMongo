@@ -148,4 +148,85 @@ describe("withTieredSummaries", () => {
     expect(result.summary).toBe("Test Summary");
     expect(result.shortTermSummary).toBeUndefined();
   });
+
+  // ---------------------------------------------------------------------------
+  // Regression: withTieredSummaries return type preserves optional fields
+  // ---------------------------------------------------------------------------
+
+  it("preserves all optional tiered fields in the return type (type safety regression)", async () => {
+    const baseSummarizer = vi.fn().mockResolvedValue({
+      title: "Base Title",
+      summary: "Base Summary",
+      tags: ["base"],
+    });
+    const llmFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        short_term: "Short term detail",
+        medium_term: "Medium term detail",
+        long_term: "Long term detail",
+        topics: ["alpha", "beta"],
+      }),
+    );
+
+    const wrapped = withTieredSummaries(baseSummarizer, llmFn);
+    const result = await wrapped(makeEvents(3));
+
+    // These fields MUST exist on the returned object (not just be non-null)
+    expect("shortTermSummary" in result).toBe(true);
+    expect("mediumTermSummary" in result).toBe(true);
+    expect("longTermSummary" in result).toBe(true);
+    expect("topics" in result).toBe(true);
+
+    // Values must match what the LLM returned
+    expect(result.shortTermSummary).toBe("Short term detail");
+    expect(result.mediumTermSummary).toBe("Medium term detail");
+    expect(result.longTermSummary).toBe("Long term detail");
+    expect(result.topics).toEqual(["alpha", "beta"]);
+
+    // Base fields must also be preserved (spread correctness)
+    expect(result.title).toBe("Base Title");
+    expect(result.summary).toBe("Base Summary");
+    expect(result.tags).toEqual(["base"]);
+  });
+
+  it("returns base-only result WITHOUT tiered fields when LLM returns unparseable JSON", async () => {
+    const baseSummarizer = vi.fn().mockResolvedValue({
+      title: "Fallback Title",
+      summary: "Fallback Summary",
+    });
+    const llmFn = vi.fn().mockResolvedValue("This is not JSON at all");
+
+    const wrapped = withTieredSummaries(baseSummarizer, llmFn);
+    const result = await wrapped(makeEvents(3));
+
+    expect(result.title).toBe("Fallback Title");
+    expect(result.summary).toBe("Fallback Summary");
+    // Tiered fields should NOT be set
+    expect(result.shortTermSummary).toBeUndefined();
+    expect(result.mediumTermSummary).toBeUndefined();
+    expect(result.longTermSummary).toBeUndefined();
+  });
+
+  it("returns base-only result when LLM JSON has empty string summaries", async () => {
+    const baseSummarizer = vi.fn().mockResolvedValue({
+      title: "Title",
+      summary: "Summary",
+    });
+    const llmFn = vi.fn().mockResolvedValue(
+      JSON.stringify({
+        short_term: "",
+        medium_term: "Valid",
+        long_term: "Valid",
+        topics: [],
+      }),
+    );
+
+    const wrapped = withTieredSummaries(baseSummarizer, llmFn);
+    const result = await wrapped(makeEvents(3));
+
+    // parseTieredSummaryResponse returns null for empty strings
+    // so base-only result should be returned
+    expect(result.title).toBe("Title");
+    expect(result.shortTermSummary).toBeUndefined();
+  });
 });

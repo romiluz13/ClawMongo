@@ -201,3 +201,60 @@ describe("projectConversationWindows", () => {
     expect(typeof allFields.windowIndex).toBe("number");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regression: edge cases for buildConversationWindows
+// ---------------------------------------------------------------------------
+
+describe("buildConversationWindows — regression: timestamp and empty edge cases", () => {
+  it("returns empty array for zero events", () => {
+    const windows = buildConversationWindows("s1", []);
+    expect(windows).toHaveLength(0);
+  });
+
+  it("returns empty array for 1 event (below minimum threshold)", () => {
+    const windows = buildConversationWindows("s1", [
+      { eventId: "e1", role: "user", body: "hello", timestamp: new Date() },
+    ]);
+    expect(windows).toHaveLength(0);
+  });
+
+  it("handles events with identical timestamps without crashing", () => {
+    const sameTs = new Date("2026-03-28T12:00:00Z");
+    const events = Array.from({ length: 7 }, (_, i) => ({
+      eventId: `evt-same-${i}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      body: `msg ${i}`,
+      timestamp: sameTs, // all same timestamp
+    }));
+    const windows = buildConversationWindows("s-same-ts", events);
+    expect(windows.length).toBeGreaterThan(0);
+    // All events should appear in at least one window
+    const allEventIds = new Set(windows.flatMap((w) => w.events.map((e) => e.eventId)));
+    for (let i = 0; i < 7; i++) {
+      expect(allEventIds.has(`evt-same-${i}`)).toBe(true);
+    }
+  });
+
+  it("does not infinite-loop when overlap >= windowSize", () => {
+    // The fix ensures stride = max(1, windowSize - overlap)
+    const events = makeEvents(10);
+    // overlap (10) >= windowSize (5) would cause stride=0 => infinite loop without fix
+    const windows = buildConversationWindows("s-bad-overlap", events, 5, 10);
+    // Must return without hanging; stride forced to 1
+    expect(windows.length).toBeGreaterThan(0);
+  });
+
+  it("handles events where body is empty string", () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      eventId: `evt-empty-body-${i}`,
+      role: i % 2 === 0 ? "user" : "assistant",
+      body: "", // empty body
+      timestamp: new Date(Date.now() + i * 60_000),
+    }));
+    // Must not crash — renderEventChunkText should handle empty body
+    const windows = buildConversationWindows("s-empty-body", events);
+    expect(windows.length).toBeGreaterThan(0);
+    expect(windows[0].text).toBeDefined();
+  });
+});
