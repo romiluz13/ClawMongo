@@ -4,6 +4,19 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+## 2026.3.34
+
+### Changes
+
+- Upstream sync wave 6: absorb ~1,098 upstream commits including the memory-to-plugin architecture refactor, using HYBRID strategy that accepts upstream plugin infrastructure as dead code while preserving MongoDB as the sole memory runtime.
+- Memory/plugins: wire MongoDB into upstream's plugin bridge via `registerMemoryRuntime()` adapter in `server-startup-memory.ts`, so upstream callers of `getActiveMemorySearchManager()` transparently resolve to the MongoDB manager.
+- Agentic search hardening: CRAG corrective retrieval, MMR diversity scoring, constraint relaxation fallback, and Phase 17/18 stress tests for result processing robustness.
+
+### Fixes
+
+- Memory: replace 8 remaining swallowed `.catch(() => {})` handlers with `log.warn` in episodes and derived-memory modules for diagnostic visibility.
+- Memory: harden result processing contiguous merge bounds, conversation window safety, and tiered summary type safety.
+
 ## 2026.3.28-beta.1
 
 ### Breaking
