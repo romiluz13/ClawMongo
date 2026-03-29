@@ -37,6 +37,11 @@ function registerMongoDBPluginRuntime(): void {
       return { manager: wrapForPluginBridge(result.manager), error: undefined };
     },
     resolveMemoryBackendConfig(_params) {
+      // INTENTIONAL: returns "builtin" to satisfy upstream's MemoryBackend
+      // type union ("builtin" | "qmd"). The actual runtime backend is always
+      // MongoDB — MongoDBMemoryManager.status() reports backend: "mongodb".
+      // This adapter field is only read by upstream plugin metadata paths
+      // (e.g. doctor diagnostics), never by our MongoDB retrieval pipeline.
       return { backend: "builtin" as const, qmd: undefined };
     },
     async closeAllMemorySearchManagers() {
