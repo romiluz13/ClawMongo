@@ -1,4 +1,52 @@
-export type MemoryBackend = "mongodb";
+// Runtime: always "mongodb". The "builtin" | "qmd" variants exist only for upstream
+// plugin dead-code compilation (packages/memory-host-sdk, extensions/memory-core).
+export type MemoryBackend = "mongodb" | "builtin" | "qmd";
+
+// QMD compatibility types — dead code in ClawMongo (no QMD runtime path).
+// Kept so packages/memory-host-sdk/src/host/backend-config.ts compiles.
+export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
+export type MemoryQmdConfig = {
+  command?: string;
+  mcporter?: MemoryQmdMcporterConfig;
+  searchMode?: MemoryQmdSearchMode;
+  includeDefaultMemory?: boolean;
+  paths?: MemoryQmdIndexPath[];
+  sessions?: MemoryQmdSessionConfig;
+  update?: MemoryQmdUpdateConfig;
+  limits?: MemoryQmdLimitsConfig;
+  scope?: unknown;
+};
+export type MemoryQmdMcporterConfig = {
+  enabled?: boolean;
+  serverName?: string;
+  startDaemon?: boolean;
+};
+export type MemoryQmdIndexPath = {
+  path: string;
+  name?: string;
+  pattern?: string;
+};
+export type MemoryQmdSessionConfig = {
+  enabled?: boolean;
+  exportDir?: string;
+  retentionDays?: number;
+};
+export type MemoryQmdUpdateConfig = {
+  interval?: string;
+  debounceMs?: number;
+  onBoot?: boolean;
+  waitForBootSync?: boolean;
+  embedInterval?: string;
+  commandTimeoutMs?: number;
+  updateTimeoutMs?: number;
+  embedTimeoutMs?: number;
+};
+export type MemoryQmdLimitsConfig = {
+  maxResults?: number;
+  maxSnippetChars?: number;
+  maxInjectedChars?: number;
+  timeoutMs?: number;
+};
 
 export type MemoryMongoDBDeploymentProfile = "community-mongot";
 
@@ -176,4 +224,6 @@ export type MemoryConfig = {
     structured?: MemorySourceToggleConfig;
   };
   mongodb?: MemoryMongoDBConfig;
+  /** QMD compatibility — dead code in ClawMongo (no QMD runtime path). */
+  qmd?: MemoryQmdConfig;
 };

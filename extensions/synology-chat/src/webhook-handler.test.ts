@@ -1,18 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { resolveLegacyWebhookNameToChatUserId, sendMessage } from "./client.js";
 import { makeFormBody, makeReq, makeRes, makeStalledReq } from "./test-http-utils.js";
 import type { ResolvedSynologyChatAccount } from "./types.js";
 import type { WebhookHandlerDeps } from "./webhook-handler.js";
-import {
-  clearSynologyWebhookRateLimiterStateForTest,
-  createWebhookHandler,
-} from "./webhook-handler.js";
-
-// Mock sendMessage and resolveLegacyWebhookNameToChatUserId to prevent real HTTP calls
-vi.mock("./client.js", () => ({
-  sendMessage: vi.fn().mockResolvedValue(true),
-  resolveLegacyWebhookNameToChatUserId: vi.fn().mockResolvedValue(undefined),
-}));
+const clientModule = await import("./client.js");
+const sendMessage = vi.spyOn(clientModule, "sendMessage").mockResolvedValue(true);
+const resolveLegacyWebhookNameToChatUserId = vi
+  .spyOn(clientModule, "resolveLegacyWebhookNameToChatUserId")
+  .mockResolvedValue(undefined);
+const { clearSynologyWebhookRateLimiterStateForTest, createWebhookHandler } =
+  await import("./webhook-handler.js");
 
 function makeAccount(
   overrides: Partial<ResolvedSynologyChatAccount> = {},
@@ -43,11 +39,48 @@ const validBody = makeFormBody({
   text: "Hello bot",
 });
 
+async function runDangerousNameMatchReply(
+  log: { info: any; warn: any; error: any },
+  options: {
+    resolvedChatUserId?: number;
+    accountIdSuffix: string;
+  },
+) {
+  vi.mocked(resolveLegacyWebhookNameToChatUserId).mockResolvedValueOnce(options.resolvedChatUserId);
+  const deliver = vi.fn().mockResolvedValue("Bot reply");
+  const handler = createWebhookHandler({
+    account: makeAccount({
+      accountId: `${options.accountIdSuffix}-${Date.now()}`,
+      dangerouslyAllowNameMatching: true,
+    }),
+    deliver,
+    log,
+  });
+
+  const req = makeReq("POST", validBody);
+  const res = makeRes();
+  await handler(req, res);
+
+  expect(res._status).toBe(204);
+  expect(resolveLegacyWebhookNameToChatUserId).toHaveBeenCalledWith({
+    incomingUrl: "https://nas.example.com/incoming",
+    mutableWebhookUsername: "testuser",
+    allowInsecureSsl: true,
+    log,
+  });
+
+  return { deliver };
+}
+
 describe("createWebhookHandler", () => {
   let log: { info: any; warn: any; error: any };
 
   beforeEach(() => {
     clearSynologyWebhookRateLimiterStateForTest();
+    sendMessage.mockClear();
+    sendMessage.mockResolvedValue(true);
+    resolveLegacyWebhookNameToChatUserId.mockClear();
+    resolveLegacyWebhookNameToChatUserId.mockResolvedValue(undefined);
     log = {
       info: vi.fn(),
       warn: vi.fn(),
@@ -479,27 +512,9 @@ describe("createWebhookHandler", () => {
   });
 
   it("only resolves reply recipient by username when break-glass mode is enabled", async () => {
-    vi.mocked(resolveLegacyWebhookNameToChatUserId).mockResolvedValueOnce(456);
-    const deliver = vi.fn().mockResolvedValue("Bot reply");
-    const handler = createWebhookHandler({
-      account: makeAccount({
-        accountId: "dangerous-name-match-test-" + Date.now(),
-        dangerouslyAllowNameMatching: true,
-      }),
-      deliver,
-      log,
-    });
-
-    const req = makeReq("POST", validBody);
-    const res = makeRes();
-    await handler(req, res);
-
-    expect(res._status).toBe(204);
-    expect(resolveLegacyWebhookNameToChatUserId).toHaveBeenCalledWith({
-      incomingUrl: "https://nas.example.com/incoming",
-      mutableWebhookUsername: "testuser",
-      allowInsecureSsl: true,
-      log,
+    const { deliver } = await runDangerousNameMatchReply(log, {
+      resolvedChatUserId: 456,
+      accountIdSuffix: "dangerous-name-match-test",
     });
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -516,27 +531,8 @@ describe("createWebhookHandler", () => {
   });
 
   it("falls back to payload.user_id when break-glass resolution does not find a match", async () => {
-    vi.mocked(resolveLegacyWebhookNameToChatUserId).mockResolvedValueOnce(undefined);
-    const deliver = vi.fn().mockResolvedValue("Bot reply");
-    const handler = createWebhookHandler({
-      account: makeAccount({
-        accountId: "dangerous-name-fallback-test-" + Date.now(),
-        dangerouslyAllowNameMatching: true,
-      }),
-      deliver,
-      log,
-    });
-
-    const req = makeReq("POST", validBody);
-    const res = makeRes();
-    await handler(req, res);
-
-    expect(res._status).toBe(204);
-    expect(resolveLegacyWebhookNameToChatUserId).toHaveBeenCalledWith({
-      incomingUrl: "https://nas.example.com/incoming",
-      mutableWebhookUsername: "testuser",
-      allowInsecureSsl: true,
-      log,
+    const { deliver } = await runDangerousNameMatchReply(log, {
+      accountIdSuffix: "dangerous-name-fallback-test",
     });
     expect(log.warn).toHaveBeenCalledWith(
       'Could not resolve Chat API user_id for "testuser" — falling back to webhook user_id 123. Reply delivery may fail.',

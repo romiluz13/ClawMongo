@@ -34,5 +34,8 @@ src/memory/mongodb-structured-memory.ts
 src/memory/mongodb-sync.ts
 src/memory/mongodb-scope.ts
 src/memory/runtime-write.ts
+src/memory/prompt-section.ts
 src/memory/search-manager.ts
+src/plugins/memory-runtime.ts
+src/plugins/memory-state.ts
 src/wizard/onboarding-memory.ts

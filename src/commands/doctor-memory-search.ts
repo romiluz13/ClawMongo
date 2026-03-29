@@ -395,7 +395,7 @@ function hasLocalEmbeddings(local: { modelPath?: string }, useDefaultFallback = 
 }
 
 async function hasApiKeyForProvider(
-  provider: "openai" | "gemini" | "voyage" | "mistral" | "ollama",
+  provider: string,
   cfg: OpenClawConfig,
   agentDir: string,
 ): Promise<boolean> {

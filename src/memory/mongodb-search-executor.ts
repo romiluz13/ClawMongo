@@ -46,6 +46,9 @@ function sourcePreferencePaths(source: MemorySearchSourcePreference): RetrievalP
       return ["episodic"];
     case "graph":
       return ["graph"];
+    default:
+      // Legacy sources ("memory", "sessions") map to conversation paths
+      return ["hybrid", "raw-window"];
   }
 }
 

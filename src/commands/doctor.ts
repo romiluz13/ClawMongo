@@ -26,7 +26,7 @@ import { stylePromptTitle } from "../terminal/prompt-style.js";
 import { shortenHomePath } from "../utils.js";
 import {
   maybeRemoveDeprecatedCliAuthProfiles,
-  maybeRepairAnthropicOAuthProfileId,
+  maybeRepairLegacyOAuthProfileIds,
   noteAuthProfileHealth,
 } from "./doctor-auth.js";
 import { noteBootstrapFileSize } from "./doctor-bootstrap-size.js";
@@ -131,7 +131,7 @@ export async function doctorCommand(
     );
   }
 
-  cfg = await maybeRepairAnthropicOAuthProfileId(cfg, prompter);
+  cfg = await maybeRepairLegacyOAuthProfileIds(cfg, prompter);
   cfg = await maybeRemoveDeprecatedCliAuthProfiles(cfg, prompter);
   await noteAuthProfileHealth({
     cfg,

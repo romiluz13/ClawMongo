@@ -2,7 +2,40 @@ import { listAgentIds } from "../agents/agent-scope.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
-import { getMemorySearchManager } from "../memory/index.js";
+import { closeAllMemorySearchManagers, getMemorySearchManager } from "../memory/index.js";
+import type { MemorySearchManager } from "../memory/types.js";
+import {
+  registerMemoryRuntime,
+  type RegisteredMemorySearchManager,
+} from "../plugins/memory-state.js";
+
+/**
+ * Thin adapter: our MemorySearchManager already implements every method
+ * RegisteredMemorySearchManager requires (status, probeEmbedding/Vector,
+ * sync, close). TypeScript structural typing makes the shapes compatible;
+ * this wrapper only bridges the nominal type boundary.
+ */
+function wrapForPluginBridge(manager: MemorySearchManager): RegisteredMemorySearchManager {
+  return manager as unknown as RegisteredMemorySearchManager;
+}
+
+// Register MongoDB as the plugin runtime so upstream callers of
+// getActiveMemorySearchManager() get our MongoDB manager.
+registerMemoryRuntime({
+  async getMemorySearchManager(params) {
+    const result = await getMemorySearchManager(params);
+    if (!result.manager) {
+      return { manager: null, error: result.error ?? "MongoDB manager not initialized" };
+    }
+    return { manager: wrapForPluginBridge(result.manager), error: undefined };
+  },
+  resolveMemoryBackendConfig(_params) {
+    return { backend: "builtin" as const, qmd: undefined };
+  },
+  async closeAllMemorySearchManagers() {
+    await closeAllMemorySearchManagers();
+  },
+});
 
 export async function startGatewayMemoryBackend(params: {
   cfg: OpenClawConfig;

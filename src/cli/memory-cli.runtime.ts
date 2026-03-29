@@ -14,7 +14,8 @@ import { colorize, isRich, theme } from "../terminal/theme.js";
 import { shortenHomeInString, shortenHomePath } from "../utils.js";
 import { formatErrorMessage, withManager } from "./cli-utils.js";
 import { resolveCommandSecretRefsViaGateway } from "./command-secret-gateway.js";
-import { getMemoryCommandSecretTargetIds } from "./command-secret-targets.js";
+// Upstream moved memory secret targets to plugin system; stub for compat.
+const getMemoryCommandSecretTargetIds = (): Set<string> => new Set();
 import type { MemoryCommandOptions, MemorySearchCommandOptions } from "./memory-cli.types.js";
 import { withProgress, withProgressTotals } from "./progress.js";
 export { registerMemoryCli } from "./memory-cli.js";

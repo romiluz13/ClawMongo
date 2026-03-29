@@ -1,54 +1,37 @@
-import type { MemoryPromptSectionBuilder } from "openclaw/plugin-sdk/memory-core";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-
-export const buildPromptSection: MemoryPromptSectionBuilder = ({
-  availableTools,
-  citationsMode,
-}) => {
-  const hasMemorySearch = availableTools.has("memory_search");
-  const hasMemoryGet = availableTools.has("memory_get");
-
-  if (!hasMemorySearch && !hasMemoryGet) {
-    return [];
-  }
-
-  let toolGuidance: string;
-  if (hasMemorySearch && hasMemoryGet) {
-    toolGuidance =
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MongoDB-backed runtime memory, which may include bridge notes synced from memory/*.md; then use memory_get to pull only the needed lines from a specific note or file when appropriate. If low confidence after search, say you checked.";
-  } else if (hasMemorySearch) {
-    toolGuidance =
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MongoDB-backed runtime memory, which may include bridge notes synced from memory/*.md, and answer from the matching results. If low confidence after search, say you checked.";
-  } else {
-    toolGuidance =
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos that already point to a specific memory file or note: run memory_get to pull only the needed lines. If low confidence after reading them, say you checked.";
-  }
-
-  const lines = ["## Memory Recall", toolGuidance];
-  if (citationsMode === "off") {
-    lines.push(
-      "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks.",
-    );
-  } else {
-    lines.push(
-      "Citations: include Source: <path#line> when it helps the user verify memory snippets.",
-    );
-  }
-  lines.push("");
-  return lines;
-};
+import { registerMemoryCli } from "./src/cli.js";
+import {
+  buildMemoryFlushPlan,
+  DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES,
+  DEFAULT_MEMORY_FLUSH_PROMPT,
+  DEFAULT_MEMORY_FLUSH_SOFT_TOKENS,
+} from "./src/flush-plan.js";
+import { registerBuiltInMemoryEmbeddingProviders } from "./src/memory/provider-adapters.js";
+import { buildPromptSection } from "./src/prompt-section.js";
+import { memoryRuntime } from "./src/runtime-provider.js";
+import { createMemoryGetTool, createMemorySearchTool } from "./src/tools.js";
+export {
+  buildMemoryFlushPlan,
+  DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES,
+  DEFAULT_MEMORY_FLUSH_PROMPT,
+  DEFAULT_MEMORY_FLUSH_SOFT_TOKENS,
+} from "./src/flush-plan.js";
+export { buildPromptSection } from "./src/prompt-section.js";
 
 export default definePluginEntry({
   id: "memory-core",
   name: "Memory (Core)",
-  description: "Mongo-canonical runtime memory tools and CLI",
+  description: "File-backed memory search tools and CLI",
   kind: "memory",
   register(api) {
+    registerBuiltInMemoryEmbeddingProviders(api);
     api.registerMemoryPromptSection(buildPromptSection);
+    api.registerMemoryFlushPlan(buildMemoryFlushPlan);
+    api.registerMemoryRuntime(memoryRuntime);
 
     api.registerTool(
       (ctx) =>
-        api.runtime.tools.createMemorySearchTool({
+        createMemorySearchTool({
           config: ctx.config,
           agentSessionKey: ctx.sessionKey,
         }),
@@ -57,45 +40,26 @@ export default definePluginEntry({
 
     api.registerTool(
       (ctx) =>
-        api.runtime.tools.createMemoryGetTool({
+        createMemoryGetTool({
           config: ctx.config,
           agentSessionKey: ctx.sessionKey,
         }),
       { names: ["memory_get"] },
     );
 
-    api.registerTool(
-      (ctx) => {
-        const kbSearchTool = api.runtime.tools.createKBSearchTool({
-          config: ctx.config,
-          agentSessionKey: ctx.sessionKey,
-        });
-        if (!kbSearchTool) {
-          return null;
-        }
-        return kbSearchTool;
-      },
-      { names: ["kb_search"] },
-    );
-
-    api.registerTool(
-      (ctx) => {
-        const memoryWriteTool = api.runtime.tools.createMemoryWriteTool({
-          config: ctx.config,
-        });
-        if (!memoryWriteTool) {
-          return null;
-        }
-        return memoryWriteTool;
-      },
-      { names: ["memory_write"] },
-    );
-
     api.registerCli(
       ({ program }) => {
-        api.runtime.tools.registerMemoryCli(program);
+        registerMemoryCli(program);
       },
-      { commands: ["memory"] },
+      {
+        descriptors: [
+          {
+            name: "memory",
+            description: "Search, inspect, and reindex memory files",
+            hasSubcommands: true,
+          },
+        ],
+      },
     );
   },
 });

@@ -1,4 +1,7 @@
-export type MemorySource = "reference" | "conversation" | "structured";
+// "memory" | "sessions" are legacy upstream source values preserved for
+// extensions/memory-core dead-code compilation. Runtime code uses
+// "reference" | "conversation" | "structured".
+export type MemorySource = "reference" | "conversation" | "structured" | "memory" | "sessions";
 export type LegacyMemorySource = "memory" | "sessions" | "kb" | "structured";
 export type InternalMemoryStoredSource = LegacyMemorySource | "conversation";
 export type MemorySearchMode = "auto" | "direct" | "agentic";
@@ -150,7 +153,7 @@ export type MemorySyncProgressUpdate = {
 };
 
 export type MemoryProviderStatus = {
-  backend: "mongodb";
+  backend: "mongodb" | "builtin" | "qmd";
   provider: string;
   model?: string;
   requestedProvider?: string;
@@ -162,11 +165,18 @@ export type MemoryProviderStatus = {
   sourceCounts?: Array<{ source: MemorySource; files: number; chunks: number }>;
   cache?: { enabled: boolean; entries?: number; maxEntries?: number };
   fts?: { enabled: boolean; available: boolean; error?: string };
+  /** SQLite store path — dead code in ClawMongo. */
+  dbPath?: string;
+  /** Extra memory paths — dead code in ClawMongo. */
+  extraPaths?: string[];
+  /** Fallback provider — dead code in ClawMongo. */
+  fallback?: string | { from: string; reason: string };
   vector?: {
     enabled: boolean;
     available?: boolean;
     loadError?: string;
     dims?: number;
+    extensionPath?: string;
   };
   batch?: {
     enabled: boolean;
