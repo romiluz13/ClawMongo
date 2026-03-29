@@ -19,6 +19,12 @@ import { createCronTool } from "./tools/cron-tool.js";
 import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
+import {
+  createKBSearchTool,
+  createMemoryGetTool,
+  createMemorySearchTool,
+  createMemoryWriteTool,
+} from "./tools/memory-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
@@ -164,6 +170,22 @@ export function createOpenClawTools(
     sandboxed: options?.sandboxed,
     runtimeFirecrawl: runtimeWebTools?.fetch.firecrawl,
   });
+  const memorySearchTool = createMemorySearchTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
+  const memoryGetTool = createMemoryGetTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
+  const kbSearchTool = createKBSearchTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
+  const memoryWriteTool = createMemoryWriteTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
   const messageTool = options?.disableMessageTool
     ? null
     : createMessageTool({
@@ -258,6 +280,10 @@ export function createOpenClawTools(
     ...(webFetchTool ? [webFetchTool] : []),
     ...(imageTool ? [imageTool] : []),
     ...(pdfTool ? [pdfTool] : []),
+    ...(memorySearchTool ? [memorySearchTool] : []),
+    ...(memoryGetTool ? [memoryGetTool] : []),
+    ...(kbSearchTool ? [kbSearchTool] : []),
+    ...(memoryWriteTool ? [memoryWriteTool] : []),
   ];
 
   const pluginTools = resolvePluginTools({
