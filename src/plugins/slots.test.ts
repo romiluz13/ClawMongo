@@ -142,7 +142,7 @@ describe("applyExclusiveSlotSelection", () => {
       name: "warns when the slot falls back to a default",
       config: createMemoryConfig(),
       warningChecks: {
-        contains: ['Exclusive slot "memory" switched from "memory-core" to "memory".'],
+        contains: ['Exclusive slot "memory" switched from "none" to "memory".'],
       },
     },
     {
@@ -154,7 +154,7 @@ describe("applyExclusiveSlotSelection", () => {
       }),
       expectedDisabled: false,
       warningChecks: {
-        contains: ['Exclusive slot "memory" switched from "memory-core" to "memory".'],
+        contains: ['Exclusive slot "memory" switched from "none" to "memory".'],
         excludes: ['Disabled other "memory" slot plugins: memory-core.'],
       },
     },
