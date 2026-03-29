@@ -1,17 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
-const { getMemorySearchManagerMock, resolveMemoryBackendConfigMock } = vi.hoisted(() => ({
-  getMemorySearchManagerMock: vi.fn(),
-  resolveMemoryBackendConfigMock: vi.fn(),
-}));
+const { getMemorySearchManagerMock, resolveMemoryBackendConfigMock, registerMemoryRuntimeMock } =
+  vi.hoisted(() => ({
+    getMemorySearchManagerMock: vi.fn(),
+    resolveMemoryBackendConfigMock: vi.fn(),
+    registerMemoryRuntimeMock: vi.fn(),
+  }));
 
 vi.mock("../memory/index.js", () => ({
   getMemorySearchManager: getMemorySearchManagerMock,
+  closeAllMemorySearchManagers: vi.fn(),
 }));
 
 vi.mock("../memory/backend-config.js", () => ({
   resolveMemoryBackendConfig: resolveMemoryBackendConfigMock,
+}));
+
+vi.mock("../plugins/memory-state.js", () => ({
+  registerMemoryRuntime: registerMemoryRuntimeMock,
 }));
 
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
@@ -31,10 +38,30 @@ describe("startGatewayMemoryBackend", () => {
   beforeEach(() => {
     getMemorySearchManagerMock.mockReset();
     resolveMemoryBackendConfigMock.mockReset();
+    registerMemoryRuntimeMock.mockReset();
     resolveMemoryBackendConfigMock.mockReturnValue({
       backend: "mongodb",
       mongodb: { uri: "mongodb://localhost:27017/openclaw" },
     });
+  });
+
+  it("registers MongoDB memory runtime inside startGatewayMemoryBackend (Layer B defense)", async () => {
+    const cfg = createMongoConfig();
+    const log = createLogMock();
+    getMemorySearchManagerMock.mockResolvedValue({ manager: { search: vi.fn() } });
+
+    // registerMemoryRuntime must NOT have been called at module import time
+    // It should only be called when startGatewayMemoryBackend runs
+    registerMemoryRuntimeMock.mockReset();
+
+    await startGatewayMemoryBackend({ cfg, log });
+
+    expect(registerMemoryRuntimeMock).toHaveBeenCalledTimes(1);
+    // Verify the registered runtime has the expected shape
+    const runtime = registerMemoryRuntimeMock.mock.calls[0][0];
+    expect(runtime).toHaveProperty("getMemorySearchManager");
+    expect(runtime).toHaveProperty("resolveMemoryBackendConfig");
+    expect(runtime).toHaveProperty("closeAllMemorySearchManagers");
   });
 
   it("initializes MongoDB memory for each enabled agent", async () => {

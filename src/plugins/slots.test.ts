@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import { applyExclusiveSlotSelection } from "./slots.js";
+import { applyExclusiveSlotSelection, defaultSlotIdForKey } from "./slots.js";
 import type { PluginKind } from "./types.js";
+
+describe("defaultSlotIdForKey", () => {
+  it("returns 'none' for the memory slot so memory-core never loads in ClawMongo", () => {
+    expect(defaultSlotIdForKey("memory")).toBe("none");
+  });
+});
 
 describe("applyExclusiveSlotSelection", () => {
   const createMemoryConfig = (plugins?: OpenClawConfig["plugins"]): OpenClawConfig => ({
