@@ -598,13 +598,13 @@ describe("gateway server chat", () => {
       expect(sideResult.payload).toMatchObject({
         kind: "btw",
         runId: "idem-btw-1",
-        sessionKey: "main",
+        sessionKey: "agent:main:main",
         question: "what is 17 * 19?",
         text: "323",
       });
       expect(finalEvent.payload).toMatchObject({
         runId: "idem-btw-1",
-        sessionKey: "main",
+        sessionKey: "agent:main:main",
         state: "final",
       });
 
