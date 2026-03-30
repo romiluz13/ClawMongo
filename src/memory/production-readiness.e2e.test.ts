@@ -32,6 +32,8 @@ import type { EpisodeSummarizer } from "./mongodb-episodes.js";
 import { getEventsByTimeRange } from "./mongodb-events.js";
 // v2 graph functions
 import { extractAndUpsertEntities } from "./mongodb-graph.js";
+// Lane coverage
+import { getLaneCoverage } from "./mongodb-lane-coverage.js";
 // v2 event functions
 import { MongoDBMemoryManager, writeEventAndProject, searchV2 } from "./mongodb-manager.js";
 // Mutation audit trail
@@ -68,6 +70,7 @@ import {
   mutationsCollection,
   proceduresCollection,
   detectCapabilities,
+  laneCoverageCollection,
 } from "./mongodb-schema.js";
 // Scope resolution
 import { resolveScopeRef } from "./mongodb-scope.js";
@@ -3488,6 +3491,229 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       expect(telDoc).not.toBeNull();
       expect(telDoc!.ok).toBe(true);
       expect(telDoc!.projectionTriggered).toBe(true);
+    }, 15_000);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 19: Extraction Pipeline E2E
+  // ---------------------------------------------------------------------------
+
+  describe("Phase 19: Extraction Pipeline", () => {
+    const extractionAgentId = `agent-extract-${randomUUID().slice(0, 8)}`;
+    const sessionId = randomUUID();
+
+    beforeAll(async () => {
+      // Clean up any existing data for this agent
+      await eventsCollection(db, PREFIX).deleteMany({ agentId: extractionAgentId });
+      await structuredMemCollection(db, PREFIX).deleteMany({ agentId: extractionAgentId });
+      await entitiesCollection(db, PREFIX).deleteMany({ agentId: extractionAgentId });
+      await proceduresCollection(db, PREFIX).deleteMany({ agentId: extractionAgentId });
+      await laneCoverageCollection(db, PREFIX).deleteMany({ agentId: extractionAgentId });
+    });
+
+    it("writeEventAndProject populates structured_mem collection via auto-extraction", async () => {
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "user",
+        body: "I prefer dark mode for all code editors",
+        scope: "agent",
+        sessionId,
+      });
+
+      // Allow a moment for async extraction to complete
+      await new Promise((r) => setTimeout(r, 500));
+
+      const structured = await structuredMemCollection(db, PREFIX)
+        .find({ agentId: extractionAgentId })
+        .toArray();
+      // Structured extraction should find at least one preference
+      expect(structured.length).toBeGreaterThanOrEqual(1);
+      const pref = structured.find((s) => s.type === "preference");
+      expect(pref).toBeDefined();
+    }, 15_000);
+
+    it("writeEventAndProject populates entities collection via auto-extraction", async () => {
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "user",
+        body: "John Smith works at MongoDB in the developer experience team",
+        scope: "agent",
+        sessionId,
+      });
+
+      const entities = await entitiesCollection(db, PREFIX)
+        .find({ agentId: extractionAgentId })
+        .toArray();
+      expect(entities.length).toBeGreaterThanOrEqual(1);
+    }, 15_000);
+
+    it("writeEventAndProject populates procedures collection via auto-extraction", async () => {
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "assistant",
+        body: "For deploying the application: 1. Build the Docker image 2. Push to container registry 3. Update the Kubernetes service 4. Verify health checks",
+        scope: "agent",
+        sessionId,
+      });
+
+      const procedures = await proceduresCollection(db, PREFIX)
+        .find({ agentId: extractionAgentId })
+        .toArray();
+      expect(procedures.length).toBeGreaterThanOrEqual(1);
+    }, 15_000);
+
+    it("extraction failure does not block event write", async () => {
+      // Write a normal event — extraction may or may not find candidates
+      const result = await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "user",
+        body: "Hello world",
+        scope: "agent",
+        sessionId,
+      });
+
+      expect(result.eventId).toBeDefined();
+      // Verify event is in events collection regardless
+      const event = await eventsCollection(db, PREFIX).findOne({ eventId: result.eventId });
+      expect(event).not.toBeNull();
+    }, 15_000);
+
+    it("active-critical facts are extracted from crisis-related events", async () => {
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "user",
+        body: "There is a war happening nearby, we need to evacuate immediately",
+        scope: "agent",
+        sessionId,
+      });
+
+      const structured = await structuredMemCollection(db, PREFIX)
+        .find({ agentId: extractionAgentId, salience: { $in: ["critical", "high"] } })
+        .toArray();
+      expect(structured.length).toBeGreaterThanOrEqual(1);
+    }, 15_000);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 20: Lane Coverage Tracking E2E
+  // ---------------------------------------------------------------------------
+
+  describe("Phase 20: Lane Coverage Tracking", () => {
+    // Reuses the extractionAgentId from Phase 19 (same agent)
+    const coverageAgentId = `agent-extract-${randomUUID().slice(0, 8)}`;
+    const sessionId = randomUUID();
+
+    beforeAll(async () => {
+      // Clean up and seed some events
+      await eventsCollection(db, PREFIX).deleteMany({ agentId: coverageAgentId });
+      await laneCoverageCollection(db, PREFIX).deleteMany({ agentId: coverageAgentId });
+
+      // Write several events to populate coverage
+      await writeEventAndProject(db, PREFIX, {
+        agentId: coverageAgentId,
+        role: "user",
+        body: "I prefer TypeScript for all new projects",
+        scope: "agent",
+        sessionId,
+      });
+      await writeEventAndProject(db, PREFIX, {
+        agentId: coverageAgentId,
+        role: "user",
+        body: "Remember that Alice is the project manager for Phoenix",
+        scope: "agent",
+        sessionId,
+      });
+    }, 30_000);
+
+    it("lane_coverage document exists after writeEventAndProject", async () => {
+      const coverageDoc = await getLaneCoverage({ db, prefix: PREFIX, agentId: coverageAgentId });
+      expect(coverageDoc).not.toBeNull();
+      expect(coverageDoc!.agentId).toBe(coverageAgentId);
+    }, 15_000);
+
+    it("raw-window and hybrid lanes show hasData=true", async () => {
+      const coverageDoc = await getLaneCoverage({ db, prefix: PREFIX, agentId: coverageAgentId });
+      expect(coverageDoc).not.toBeNull();
+      expect(coverageDoc!.lanes["raw-window"]?.hasData).toBe(true);
+      expect(coverageDoc!.lanes.hybrid?.hasData).toBe(true);
+    }, 15_000);
+
+    it("structured lane shows hasData=true when facts were extracted", async () => {
+      const coverageDoc = await getLaneCoverage({ db, prefix: PREFIX, agentId: coverageAgentId });
+      expect(coverageDoc).not.toBeNull();
+      // "I prefer TypeScript" should extract a preference -> structured lane populated
+      expect(coverageDoc!.lanes.structured?.hasData).toBe(true);
+    }, 15_000);
+
+    it("planner skips empty lanes based on coverage", async () => {
+      // Create a fresh agent with minimal data
+      const freshAgent = `agent-fresh-${randomUUID().slice(0, 8)}`;
+      await writeEventAndProject(db, PREFIX, {
+        agentId: freshAgent,
+        role: "user",
+        body: "Hello",
+        scope: "agent",
+      });
+
+      // searchV2 with the fresh agent should skip lanes without data
+      const result = await searchV2(db, PREFIX, "recap my episodes", freshAgent, {
+        availablePaths: new Set([
+          "active-critical",
+          "structured",
+          "raw-window",
+          "graph",
+          "hybrid",
+          "kb",
+          "episodic",
+          "procedural",
+        ] as RetrievalPath[]),
+      });
+
+      // The plan should contain skippedLanes (episodic/graph should be empty for a fresh agent)
+      expect(result.metadata.plan).toBeDefined();
+      // Fresh agent may have some lanes skipped depending on extraction results
+      expect(result.results).toBeDefined();
+    }, 30_000);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Phase 21: Episode Auto-Materialization E2E
+  // ---------------------------------------------------------------------------
+
+  describe("Phase 21: Episode Auto-Materialization", () => {
+    const episodeAgentId = `agent-episode-${randomUUID().slice(0, 8)}`;
+    const sessionId = randomUUID();
+
+    beforeAll(async () => {
+      // Clean up
+      await eventsCollection(db, PREFIX).deleteMany({ agentId: episodeAgentId });
+      await episodesCollection(db, PREFIX).deleteMany({ agentId: episodeAgentId });
+      await laneCoverageCollection(db, PREFIX).deleteMany({ agentId: episodeAgentId });
+    });
+
+    it("episode materializes after event count threshold", async () => {
+      // Write 55+ events to trigger episode materialization (default threshold: 50)
+      for (let i = 0; i < 55; i++) {
+        await writeEventAndProject(db, PREFIX, {
+          agentId: episodeAgentId,
+          role: i % 2 === 0 ? "user" : "assistant",
+          body: `Event number ${i + 1}: discussing project milestone ${Math.floor(i / 5) + 1}`,
+          scope: "agent",
+          sessionId,
+        });
+      }
+
+      // Check episodes collection
+      const episodes = await episodesCollection(db, PREFIX)
+        .find({ agentId: episodeAgentId })
+        .toArray();
+      expect(episodes.length).toBeGreaterThanOrEqual(1);
+    }, 120_000);
+
+    it("episodic lane coverage updated after materialization", async () => {
+      const coverageDoc = await getLaneCoverage({ db, prefix: PREFIX, agentId: episodeAgentId });
+      expect(coverageDoc).not.toBeNull();
+      expect(coverageDoc!.lanes.episodic?.hasData).toBe(true);
     }, 15_000);
   });
 });

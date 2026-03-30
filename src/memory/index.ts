@@ -91,7 +91,15 @@ export {
   queryCacheCollection,
   telemetryCollection,
   mutationsCollection,
+  laneCoverageCollection,
 } from "./mongodb-schema.js";
+export {
+  updateLaneCoverage,
+  getLaneCoverage,
+  emptyLaneCoverage,
+  type LaneCoverageDocument,
+  type LaneStatus,
+} from "./mongodb-lane-coverage.js";
 export {
   recordMutation,
   getMutationHistory,

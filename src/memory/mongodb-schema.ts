@@ -128,6 +128,10 @@ export function mutationsCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "memory_mutations");
 }
 
+export function laneCoverageCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "lane_coverage");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -1324,6 +1328,14 @@ export async function ensureStandardIndexes(
   await mutations.createIndex(
     { documentId: 1, collectionName: 1, timestamp: -1 },
     { name: "idx_mutations_doc_collection_ts" },
+  );
+  applied++;
+
+  // Lane coverage: unique agentId for per-agent coverage tracking
+  const laneCoverage = laneCoverageCollection(db, prefix);
+  await laneCoverage.createIndex(
+    { agentId: 1 },
+    { name: "uq_lane_coverage_agentid", unique: true },
   );
   applied++;
 

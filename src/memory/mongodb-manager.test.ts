@@ -43,6 +43,7 @@ vi.mock("./mongodb-retrieval-planner.js", () => ({
 
 vi.mock("./mongodb-episodes.js", () => ({
   searchEpisodes: vi.fn(),
+  checkAutoEpisodeTriggers: vi.fn(),
 }));
 
 vi.mock("./mongodb-graph.js", () => ({
@@ -69,6 +70,18 @@ vi.mock("./mongodb-schema.js", () => ({
   ensureSchemaValidation: vi.fn(),
   ensureSearchIndexes: vi.fn(),
   ensureStandardIndexes: vi.fn(),
+}));
+
+vi.mock("./mongodb-derived-memory.js", () => ({
+  promoteDerivedMemoryFromEvent: vi.fn(),
+  heuristicEpisodeSummarizer: vi.fn(),
+  extractStructuredCandidatesFromEvent: vi.fn(),
+  extractProcedureCandidatesFromEvent: vi.fn(),
+}));
+
+vi.mock("./mongodb-lane-coverage.js", () => ({
+  updateLaneCoverage: vi.fn(),
+  getLaneCoverage: vi.fn(),
 }));
 
 vi.mock("./mongodb-query-cache.js", () => ({
@@ -452,10 +465,17 @@ describe("resolveExplainSources", () => {
 const { writeEvent, projectEventChunk, getEventsByTimeRange } = await import("./mongodb-events.js");
 const { recordIngestRun, getProjectionLag } = await import("./mongodb-ops.js");
 const { planRetrieval } = await import("./mongodb-retrieval-planner.js");
-const { searchEpisodes } = await import("./mongodb-episodes.js");
+const { searchEpisodes, checkAutoEpisodeTriggers } = await import("./mongodb-episodes.js");
 const { findEntitiesByName, expandGraph } = await import("./mongodb-graph.js");
 const { eventsCollection, entitiesCollection, relationsCollection, episodesCollection } =
   await import("./mongodb-schema.js");
+const {
+  promoteDerivedMemoryFromEvent,
+  extractStructuredCandidatesFromEvent,
+  extractProcedureCandidatesFromEvent,
+} = await import("./mongodb-derived-memory.js");
+const { updateLaneCoverage } = await import("./mongodb-lane-coverage.js");
+const { extractAndUpsertEntities } = await import("./mongodb-graph.js");
 
 // Fake Db — the real calls are mocked at the module level
 const fakeDb = {} as unknown as import("mongodb").Db;
@@ -942,27 +962,22 @@ describe("rerankResults", () => {
 describe("writeEventAndProject telemetry emission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setupExtractionMocks();
   });
 
   it("emits event-write telemetry after successful write", async () => {
-    const fakeCollection = {
-      updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1 }),
-      updateMany: vi.fn().mockResolvedValue({ modifiedCount: 1 }),
-      insertOne: vi.fn().mockResolvedValue({ insertedId: "ok" }),
-    };
-    const fakeDb = {
-      collection: vi.fn().mockReturnValue(fakeCollection),
-    } as unknown as import("mongodb").Db;
+    const { emitTelemetry } = await import("./mongodb-telemetry.js");
 
-    await writeEventAndProject(fakeDb, "test_", {
+    await writeEventAndProject(fakeDb, fakePrefix, {
       agentId: "agent-1",
       role: "user",
       body: "Hello world",
       scope: "agent",
     });
 
-    expect(fakeCollection.insertOne).toHaveBeenCalled();
-    expect(fakeCollection.insertOne.mock.calls).toContainEqual([
+    expect(emitTelemetry).toHaveBeenCalledWith(
+      fakeDb,
+      fakePrefix,
       expect.objectContaining({
         meta: { agentId: "agent-1", operation: "event-write" },
         ok: true,
@@ -970,6 +985,297 @@ describe("writeEventAndProject telemetry emission", () => {
         projectionTriggered: true,
         durationMs: expect.any(Number),
       }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 2: Structured + procedure extraction wiring
+// ---------------------------------------------------------------------------
+
+// Shared helper: set up module mocks for writeEventAndProject extraction tests
+function setupExtractionMocks() {
+  vi.mocked(writeEvent).mockResolvedValue({
+    eventId: "evt-test",
+    timestamp: new Date("2026-03-30T00:00:00.000Z"),
+    scopeRef: "agent:agent-1",
+  });
+  vi.mocked(projectEventChunk).mockResolvedValue({ chunkCreated: true });
+  vi.mocked(recordIngestRun).mockResolvedValue("run-ok");
+  vi.mocked(promoteDerivedMemoryFromEvent).mockResolvedValue({
+    structuredCreated: 1,
+    proceduresCreated: 0,
+  });
+  vi.mocked(extractAndUpsertEntities).mockResolvedValue({
+    entities: [{ entityId: "e1", name: "TestEntity", type: "person" }],
+    relationsCreated: 0,
+  });
+  vi.mocked(checkAutoEpisodeTriggers).mockResolvedValue({
+    triggered: false,
+  });
+  vi.mocked(extractStructuredCandidatesFromEvent).mockReturnValue([]);
+  vi.mocked(extractProcedureCandidatesFromEvent).mockReturnValue([]);
+  vi.mocked(updateLaneCoverage).mockResolvedValue(undefined);
+}
+
+describe("writeEventAndProject extraction wiring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupExtractionMocks();
+  });
+
+  it("calls promoteDerivedMemoryFromEvent after chunk projection", async () => {
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "I prefer dark mode",
+      scope: "agent",
+    });
+
+    expect(promoteDerivedMemoryFromEvent).toHaveBeenCalledOnce();
+    expect(promoteDerivedMemoryFromEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: fakeDb,
+        prefix: fakePrefix,
+        embeddingMode: "automated",
+        event: expect.objectContaining({
+          agentId: "agent-1",
+          role: "user",
+          body: "I prefer dark mode",
+        }),
+      }),
+    );
+  });
+
+  it("succeeds even when promoteDerivedMemoryFromEvent throws", async () => {
+    vi.mocked(promoteDerivedMemoryFromEvent).mockRejectedValue(
+      new Error("structured extraction boom"),
+    );
+
+    const result = await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    // Event was still written successfully
+    expect(result.eventId).toBe("evt-test");
+  });
+
+  it("returns correct eventId and chunksCreated regardless of extraction outcome", async () => {
+    vi.mocked(promoteDerivedMemoryFromEvent).mockRejectedValue(new Error("fail"));
+    vi.mocked(extractAndUpsertEntities).mockRejectedValue(new Error("fail"));
+
+    const result = await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(result.eventId).toBe("evt-test");
+    expect(result.chunksCreated).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 3: Episode trigger wiring
+// ---------------------------------------------------------------------------
+
+describe("writeEventAndProject episode triggers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupExtractionMocks();
+  });
+
+  it("calls checkAutoEpisodeTriggers after extraction", async () => {
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(checkAutoEpisodeTriggers).toHaveBeenCalledOnce();
+    expect(checkAutoEpisodeTriggers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        db: fakeDb,
+        prefix: fakePrefix,
+        agentId: "agent-1",
+      }),
+    );
+  });
+
+  it("succeeds even when checkAutoEpisodeTriggers throws", async () => {
+    vi.mocked(checkAutoEpisodeTriggers).mockRejectedValue(new Error("episode boom"));
+
+    const result = await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(result.eventId).toBe("evt-test");
+  });
+
+  it("passes heuristicEpisodeSummarizer as summarizer", async () => {
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(checkAutoEpisodeTriggers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summarizer: expect.any(Function),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 4: Lane coverage wiring
+// ---------------------------------------------------------------------------
+
+describe("writeEventAndProject lane coverage", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupExtractionMocks();
+    // Default to no entities for lane coverage tests
+    vi.mocked(extractAndUpsertEntities).mockResolvedValue({
+      entities: [],
+      relationsCreated: 0,
+    });
+  });
+
+  it("updates lane coverage for raw-window and hybrid after event write", async () => {
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(updateLaneCoverage).toHaveBeenCalledOnce();
+    expect(updateLaneCoverage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "agent-1",
+        increments: expect.objectContaining({
+          "raw-window": 1,
+        }),
+      }),
+    );
+  });
+
+  it("updates lane coverage for structured lane when facts extracted", async () => {
+    vi.mocked(extractStructuredCandidatesFromEvent).mockReturnValue([
+      {
+        type: "preference",
+        key: "theme",
+        value: "dark",
+        salience: "normal",
+      } as unknown as ReturnType<typeof extractStructuredCandidatesFromEvent>[number],
     ]);
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "I prefer dark mode",
+      scope: "agent",
+    });
+
+    expect(updateLaneCoverage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        increments: expect.objectContaining({
+          structured: 1,
+        }),
+      }),
+    );
+  });
+
+  it("updates lane coverage for graph lane when entities extracted", async () => {
+    vi.mocked(extractAndUpsertEntities).mockResolvedValue({
+      entities: [
+        { entityId: "e1", name: "Alice", type: "person" },
+        { entityId: "e2", name: "Bob", type: "person" },
+      ],
+      relationsCreated: 1,
+    });
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Alice and Bob met",
+      scope: "agent",
+    });
+
+    expect(updateLaneCoverage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        increments: expect.objectContaining({
+          graph: 2,
+        }),
+      }),
+    );
+  });
+
+  it("updates lane coverage for episodic lane when episode triggered", async () => {
+    vi.mocked(checkAutoEpisodeTriggers).mockResolvedValue({
+      triggered: true,
+      reason: "event_count",
+    });
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(updateLaneCoverage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        increments: expect.objectContaining({
+          episodic: 1,
+        }),
+      }),
+    );
+  });
+
+  it("does not increment structured lane when no facts extracted", async () => {
+    vi.mocked(extractStructuredCandidatesFromEvent).mockReturnValue([]);
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    const call = vi.mocked(updateLaneCoverage).mock.calls[0]?.[0];
+    expect(call?.increments.structured).toBeUndefined();
+  });
+
+  it("does not increment episodic lane when episode not triggered", async () => {
+    vi.mocked(checkAutoEpisodeTriggers).mockResolvedValue({ triggered: false });
+    await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    const call = vi.mocked(updateLaneCoverage).mock.calls[0]?.[0];
+    expect(call?.increments.episodic).toBeUndefined();
+  });
+
+  it("succeeds even when updateLaneCoverage throws", async () => {
+    vi.mocked(updateLaneCoverage).mockRejectedValue(new Error("coverage update boom"));
+
+    const result = await writeEventAndProject(fakeDb, fakePrefix, {
+      agentId: "agent-1",
+      role: "user",
+      body: "Hello world",
+      scope: "agent",
+    });
+
+    expect(result.eventId).toBeDefined();
   });
 });

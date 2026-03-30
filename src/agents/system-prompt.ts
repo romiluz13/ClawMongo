@@ -53,6 +53,12 @@ function buildMongoDBBridgeSection(params: {
     lines.push("- To find reference docs: use kb_search");
   }
   lines.push("- Do not write runtime memory to workspace files");
+  lines.push(
+    "- Automatic extraction: every event is analyzed for structured facts (preferences, decisions, identities, project context, critical context), entities (named references detected by pattern matching -- people, projects, tools, and other capitalized terms), and procedures (step-by-step workflows). This happens automatically -- you do not need to explicitly store routine observations.",
+  );
+  lines.push(
+    "- Use memory_write for HIGH-IMPORTANCE facts the agent should never forget, or for corrections/updates to previously stored facts. Automatic extraction handles routine observations.",
+  );
   lines.push("");
   return lines;
 }
@@ -100,7 +106,7 @@ function buildMemorySection(params: {
     lines.push("");
     lines.push("### When to use each tool");
     lines.push(
-      "- **memory_search** — Your primary runtime recall tool. Searches across active MongoDB-backed recall sources for prior work, decisions, people, preferences, and recent history. It may include active KB-backed snippets, but you should treat it as memory-first recall.",
+      "- **memory_search** — Your primary runtime recall tool. Searches across all populated MongoDB-backed retrieval lanes (conversation history, structured facts, entities/graph, episodes, procedures, knowledge base). Coverage varies by agent -- the planner automatically skips empty lanes.",
     );
     if (params.availableTools.has("kb_search")) {
       lines.push(
@@ -110,14 +116,14 @@ function buildMemorySection(params: {
     if (params.availableTools.has("memory_write")) {
       lines.push(
         [
-          "- **memory_write** — Store structured observations to persistent memory. Use for:",
-          '  - **decision**: choices made (e.g., "We chose TypeScript for the backend")',
-          '  - **preference**: user likes/dislikes (e.g., "User prefers concise responses")',
-          '  - **fact**: objective information (e.g., "API rate limit is 100 req/min")',
+          "- **memory_write** — Store high-importance structured observations to persistent memory. Routine facts are auto-extracted from events, so use this for:",
+          '  - **decision**: choices made that should persist (e.g., "We chose TypeScript for the backend")',
+          '  - **preference**: user likes/dislikes worth remembering (e.g., "User prefers concise responses")',
+          '  - **fact**: important information (e.g., "API rate limit is 100 req/min")',
           '  - **person**: info about people (e.g., "Alice is the project manager")',
           '  - **todo**: action items (e.g., "Migrate auth to OAuth2 by March")',
-          '  - **project**: project-level info (e.g., "Project codename is Phoenix")',
-          '  - **architecture**: technical decisions (e.g., "Using event-driven architecture")',
+          '  - **project**: project context (e.g., "Building ClawMongo with MongoDB 8.2")',
+          "  - corrections or updates to auto-extracted facts",
           "  Type+key is the dedup key — writing the same type+key updates the existing record.",
           "  Use heart/bootstrap Markdown for guidance only; do not store runtime knowledge there.",
         ].join("\n"),

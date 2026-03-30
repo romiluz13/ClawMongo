@@ -212,3 +212,133 @@ describe("mongodb-retrieval-planner", () => {
     expect(range.end.toISOString()).toBe("2026-03-20T12:00:00.000Z");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Coverage-aware planner tests
+// ---------------------------------------------------------------------------
+
+describe("planRetrieval with lane coverage", () => {
+  const emptyCoverage = (hasData: boolean) => ({
+    hasData,
+    count: hasData ? 10 : 0,
+    lastUpdated: hasData ? new Date() : null,
+  });
+
+  const fullCoverage = Object.fromEntries(
+    [
+      "active-critical",
+      "structured",
+      "raw-window",
+      "graph",
+      "hybrid",
+      "kb",
+      "episodic",
+      "procedural",
+    ].map((lane) => [lane, emptyCoverage(true)]),
+  );
+
+  const sparseContext = (overrides?: Partial<RetrievalContext>): RetrievalContext => ({
+    availablePaths: ALL_PATHS,
+    ...overrides,
+  });
+
+  it("skips lanes with hasData=false when coverage provided", () => {
+    const coverage = {
+      ...fullCoverage,
+      graph: emptyCoverage(false),
+      episodic: emptyCoverage(false),
+    };
+    const plan = planRetrieval(
+      "who is Alice and give me a recap",
+      sparseContext({ laneCoverage: coverage }),
+    );
+    expect(plan.paths).not.toContain("graph");
+    expect(plan.paths).not.toContain("episodic");
+    expect(plan.skippedLanes).toContain("graph");
+    expect(plan.skippedLanes).toContain("episodic");
+  });
+
+  it("includes all lanes when no coverage provided (backward compatible)", () => {
+    const plan = planRetrieval("who is Alice and recap today", sparseContext());
+    // Without coverage, no lanes are skipped
+    expect(plan.skippedLanes).toBeUndefined();
+  });
+
+  it("does not skip hybrid lane even with hasData=false (backstop)", () => {
+    const coverage = {
+      ...fullCoverage,
+      hybrid: emptyCoverage(false),
+    };
+    const plan = planRetrieval(
+      "tell me about the project",
+      sparseContext({ laneCoverage: coverage }),
+    );
+    expect(plan.paths).toContain("hybrid");
+  });
+
+  it("does not skip raw-window lane even with hasData=false (always has events)", () => {
+    const coverage = {
+      ...fullCoverage,
+      "raw-window": emptyCoverage(false),
+    };
+    const plan = planRetrieval("what happened today", sparseContext({ laneCoverage: coverage }));
+    expect(plan.paths).toContain("raw-window");
+  });
+
+  it("does not skip kb lane even with hasData=false (separate ingestion path)", () => {
+    const coverage = {
+      ...fullCoverage,
+      kb: emptyCoverage(false),
+    };
+    const plan = planRetrieval(
+      "what does the docs say about auth",
+      sparseContext({ laneCoverage: coverage }),
+    );
+    expect(plan.paths).toContain("kb");
+  });
+
+  it("includes coverage note in reasoning when lanes skipped", () => {
+    const coverage = {
+      ...fullCoverage,
+      procedural: emptyCoverage(false),
+    };
+    const plan = planRetrieval("how to deploy", sparseContext({ laneCoverage: coverage }));
+    expect(plan.reasoning).toContain("skipped empty lanes");
+  });
+
+  it("returns skippedLanes in plan", () => {
+    const coverage = {
+      ...fullCoverage,
+      structured: emptyCoverage(false),
+      "active-critical": emptyCoverage(false),
+    };
+    const plan = planRetrieval("remember my preference", sparseContext({ laneCoverage: coverage }));
+    expect(plan.skippedLanes).toBeDefined();
+    expect(plan.skippedLanes).toContain("structured");
+    expect(plan.skippedLanes).toContain("active-critical");
+  });
+
+  it("skips episodic lane when episodes hasData=false", () => {
+    const coverage = {
+      ...fullCoverage,
+      episodic: emptyCoverage(false),
+    };
+    const plan = planRetrieval("give me a recap", sparseContext({ laneCoverage: coverage }));
+    expect(plan.paths).not.toContain("episodic");
+  });
+
+  it("skips graph lane when graph hasData=false", () => {
+    const coverage = {
+      ...fullCoverage,
+      graph: emptyCoverage(false),
+    };
+    const plan = planRetrieval(
+      "who is connected to Alice",
+      sparseContext({
+        laneCoverage: coverage,
+        knownEntityNames: ["Alice"],
+      }),
+    );
+    expect(plan.paths).not.toContain("graph");
+  });
+});

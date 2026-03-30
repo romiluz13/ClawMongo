@@ -57,6 +57,7 @@ export type RetrievalPlan = {
   confidence: "high" | "medium" | "low";
   reasoning: string;
   constraints?: RetrievalConstraints;
+  skippedLanes?: string[];
 };
 
 export type RetrievalContext = {
@@ -68,6 +69,8 @@ export type RetrievalContext = {
   hasEpisodes?: boolean;
   /** Whether graph has entities */
   hasGraphData?: boolean;
+  /** Lane coverage data for skipping empty lanes */
+  laneCoverage?: Record<string, { hasData: boolean; count: number; lastUpdated: Date | null }>;
 };
 
 export function classifyRetrievalQuery(params: {
@@ -509,9 +512,32 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
     // Hybrid is always baseline
     scores.hybrid += 1;
 
+    // Coverage-aware lane filtering: skip lanes known to be empty.
+    // Exception: hybrid, raw-window, and kb are never skipped.
+    // hybrid/raw-window are backstop lanes (always have data after any event write).
+    // kb is populated by a separate ingestion path, not writeEventAndProject,
+    // so lane coverage has no signal for it.
+    const NEVER_SKIP_LANES = new Set<RetrievalPath>(["hybrid", "raw-window", "kb"]);
+    const skippedLanes: string[] = [];
+    if (context.laneCoverage) {
+      for (const [path] of Object.entries(scores) as [RetrievalPath, number][]) {
+        if (NEVER_SKIP_LANES.has(path)) {
+          continue;
+        }
+        const coverage = context.laneCoverage[path];
+        if (coverage && !coverage.hasData) {
+          scores[path] = -1; // Mark for exclusion
+          skippedLanes.push(path);
+        }
+      }
+      if (skippedLanes.length > 0) {
+        reasons.push(`skipped empty lanes: ${skippedLanes.join(", ")}`);
+      }
+    }
+
     // Sort by score descending, then by priority for deterministic tie-breaking
     const sorted = (Object.entries(scores) as [RetrievalPath, number][])
-      .filter(([path]) => context.availablePaths.has(path))
+      .filter(([path, score]) => context.availablePaths.has(path) && score >= 0)
       .toSorted((a, b) => b[1] - a[1] || PATH_PRIORITY[a[0]] - PATH_PRIORITY[b[0]])
       .map(([path]) => path);
 
@@ -554,6 +580,7 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
       reasoning:
         reasons.length > 0 ? reasons.join("; ") : "no strong signals, defaulting to hybrid",
       ...(Object.keys(constraints).length > 0 ? { constraints } : {}),
+      ...(skippedLanes.length > 0 ? { skippedLanes } : {}),
     };
   } catch (err) {
     log.error("planRetrieval failed", { query, error: err });

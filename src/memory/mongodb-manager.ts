@@ -17,6 +17,8 @@ import { projectConversationWindows } from "./mongodb-conversation-windows.js";
 import {
   heuristicEpisodeSummarizer,
   promoteDerivedMemoryFromEvent,
+  extractStructuredCandidatesFromEvent,
+  extractProcedureCandidatesFromEvent,
 } from "./mongodb-derived-memory.js";
 import type { EntityExtractor } from "./mongodb-entity-extractor.js";
 import { LLMEntityExtractor } from "./mongodb-entity-extractor.js";
@@ -27,6 +29,7 @@ import * as mongodbGraph from "./mongodb-graph.js";
 import type { Entity, RelationType } from "./mongodb-graph.js";
 import { normalizeSearchResults, rrfScore, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
+import { updateLaneCoverage, getLaneCoverage } from "./mongodb-lane-coverage.js";
 import * as mongodbOps from "./mongodb-ops.js";
 import type { IngestRun, ProjectionRun } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
@@ -2649,8 +2652,10 @@ export async function writeEventAndProject(
         ...(event.metadata ? { metadata: event.metadata } : {}),
       },
     });
-    await mongodbGraph
-      .extractAndUpsertEntities({
+    // Entity extraction (sync rule-based, non-blocking)
+    let entityCount = 0;
+    try {
+      const entityResult = await mongodbGraph.extractAndUpsertEntities({
         db,
         prefix,
         agentId: event.agentId,
@@ -2659,10 +2664,123 @@ export async function writeEventAndProject(
         scopeRef: written.scopeRef,
         sourceEventId: written.eventId,
         extractor: options?.extractor,
-      })
-      .catch((projErr) => {
-        log.warn("entity projection failed during writeEventAndProject", { error: projErr });
       });
+      entityCount = entityResult.entities.length;
+    } catch (err) {
+      log.warn("entity extraction failed during writeEventAndProject", {
+        error: err,
+        eventId: written.eventId,
+      });
+    }
+
+    // Structured fact + procedure extraction (sync rule-based, non-blocking)
+    try {
+      await promoteDerivedMemoryFromEvent({
+        db,
+        prefix,
+        client: undefined,
+        embeddingMode: "automated",
+        event: {
+          eventId: written.eventId,
+          agentId: event.agentId,
+          role: event.role as "user" | "assistant" | "system" | "tool",
+          body: event.body,
+          timestamp: written.timestamp,
+          sessionId: event.sessionId,
+          scope: event.scope as MemoryScope,
+          scopeRef: written.scopeRef,
+        },
+      });
+    } catch (err) {
+      log.warn("structured/procedure extraction failed during writeEventAndProject", {
+        error: err,
+        eventId: written.eventId,
+      });
+    }
+
+    // Episode trigger check (sync, non-blocking)
+    // MUST capture result: episodeTriggered drives episodic lane coverage.
+    let episodeTriggered = false;
+    try {
+      const episodeResult = await checkAutoEpisodeTriggers({
+        db,
+        prefix,
+        agentId: event.agentId,
+        summarizer: heuristicEpisodeSummarizer,
+        scope: event.scope as MemoryScope,
+        scopeRef: written.scopeRef,
+      });
+      episodeTriggered = episodeResult.triggered;
+    } catch (err) {
+      log.warn("episode trigger check failed during writeEventAndProject", {
+        error: err,
+        eventId: written.eventId,
+      });
+    }
+
+    // Lane coverage tracking (non-blocking)
+    try {
+      const increments: Record<string, number> = {
+        "raw-window": 1, // every event populates raw-window
+        hybrid: projected.chunkCreated ? 1 : 0,
+      };
+      if (entityCount > 0) {
+        increments.graph = entityCount;
+      }
+      // Structured lane: use candidate count from re-extraction (pure function),
+      // NOT structuredCreated (upsert count). Reason: for repeated facts,
+      // upsert count = 0 but data exists. Coverage tracks data availability,
+      // not novelty. Pure function call is <1ms, safe to call twice.
+      const candidates = extractStructuredCandidatesFromEvent({
+        eventId: written.eventId,
+        agentId: event.agentId,
+        role: event.role as "user" | "assistant" | "system" | "tool",
+        body: event.body,
+        timestamp: written.timestamp,
+        sessionId: event.sessionId,
+        scope: event.scope as MemoryScope,
+        scopeRef: written.scopeRef,
+      });
+      if (candidates.length > 0) {
+        increments.structured = candidates.length;
+      }
+      // Active-critical: check candidates for salience (same re-extraction, no extra call)
+      const criticalCount = candidates.filter(
+        (c) => c.salience === "critical" || c.salience === "high",
+      ).length;
+      if (criticalCount > 0) {
+        increments["active-critical"] = criticalCount;
+      }
+      // Procedure lane: use candidate count from re-extraction
+      const procedureCandidates = extractProcedureCandidatesFromEvent({
+        eventId: written.eventId,
+        agentId: event.agentId,
+        role: event.role as "user" | "assistant" | "system" | "tool",
+        body: event.body,
+        timestamp: written.timestamp,
+        sessionId: event.sessionId,
+        scope: event.scope as MemoryScope,
+        scopeRef: written.scopeRef,
+      });
+      if (procedureCandidates.length > 0) {
+        increments.procedural = procedureCandidates.length;
+      }
+      // Episodic lane: from captured checkAutoEpisodeTriggers result
+      if (episodeTriggered) {
+        increments.episodic = 1;
+      }
+      await updateLaneCoverage({
+        db,
+        prefix,
+        agentId: event.agentId,
+        increments,
+      });
+    } catch (err) {
+      log.warn("lane coverage update failed during writeEventAndProject", {
+        error: err,
+        eventId: written.eventId,
+      });
+    }
 
     const durationMs = Date.now() - startMs;
     await mongodbOps.recordIngestRun({
@@ -2935,11 +3053,25 @@ export async function searchV2(
     const bridgeMaxResults =
       context.searchOptions?.bridgeMaxResults ?? Math.max(2, Math.ceil(maxResults / 3));
     const allowHybridBackstop = context.searchOptions?.allowHybridBackstop ?? true;
+    // Load lane coverage for planner (non-blocking: fallback to no coverage on error)
+    let laneCoverage:
+      | Record<string, { hasData: boolean; count: number; lastUpdated: Date | null }>
+      | undefined;
+    try {
+      const coverageDoc = await getLaneCoverage({ db, prefix, agentId });
+      if (coverageDoc) {
+        laneCoverage = coverageDoc.lanes;
+      }
+    } catch (err) {
+      log.warn("Failed to load lane coverage for planner", { error: err, agentId });
+    }
+
     const rawPlan = planRetrieval(query, {
       availablePaths: context.availablePaths,
       knownEntityNames: graphQueryCandidates,
       hasEpisodes: context.hasEpisodes,
       hasGraphData: context.hasGraphData,
+      laneCoverage,
     });
     const plan = {
       ...rawPlan,
