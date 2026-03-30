@@ -3536,7 +3536,7 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       await writeEventAndProject(db, PREFIX, {
         agentId: extractionAgentId,
         role: "user",
-        body: "John Smith works at MongoDB in the developer experience team",
+        body: 'I spoke with @john_smith about the project. He shared a doc at https://docs.mongodb.com/manual and mentioned "Alice Johnson" as the tech lead. The deadline is 2026-04-15.',
         scope: "agent",
         sessionId,
       });
