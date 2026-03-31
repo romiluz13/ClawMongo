@@ -53,4 +53,11 @@ describe("stripPluginOnlyAllowlist", () => {
     expect(policy.policy?.allow).toEqual(["read", "lobster"]);
     expect(policy.unknownAllowlist).toEqual(["lobster"]);
   });
+
+  it("keeps allowlist for known core tools even when they are unavailable in the current runtime", () => {
+    const emptyPlugins: PluginToolGroups = { all: [], byPlugin: new Map() };
+    const policy = stripPluginOnlyAllowlist({ allow: ["memory_search"] }, emptyPlugins, coreTools);
+    expect(policy.policy?.allow).toEqual(["memory_search"]);
+    expect(policy.unknownAllowlist).toEqual(["memory_search"]);
+  });
 });

@@ -76,9 +76,11 @@ describe("plugin registration", () => {
     expect(registerMemoryFlushPlan).toHaveBeenCalledWith(buildMemoryFlushPlan);
     expect(registerMemoryRuntime).toHaveBeenCalledWith(memoryRuntime);
     expect(registerMemoryEmbeddingProvider).toHaveBeenCalledTimes(6);
-    expect(registerTool).toHaveBeenCalledTimes(2);
+    expect(registerTool).toHaveBeenCalledTimes(4);
     expect(registerTool.mock.calls[0]?.[1]).toEqual({ names: ["memory_search"] });
     expect(registerTool.mock.calls[1]?.[1]).toEqual({ names: ["memory_get"] });
+    expect(registerTool.mock.calls[2]?.[1]).toEqual({ names: ["kb_search"] });
+    expect(registerTool.mock.calls[3]?.[1]).toEqual({ names: ["memory_write"] });
     expect(registerCli).toHaveBeenCalledWith(expect.any(Function), {
       descriptors: [
         {
@@ -93,14 +95,25 @@ describe("plugin registration", () => {
       | ((ctx: unknown) => unknown)
       | undefined;
     const getFactory = registerTool.mock.calls[1]?.[0] as ((ctx: unknown) => unknown) | undefined;
+    const kbFactory = registerTool.mock.calls[2]?.[0] as ((ctx: unknown) => unknown) | undefined;
+    const writeFactory = registerTool.mock.calls[3]?.[0] as ((ctx: unknown) => unknown) | undefined;
     const cliRegistrar = registerCli.mock.calls[0]?.[0] as
       | ((ctx: { program: unknown }) => void)
       | undefined;
-    const ctx = { config: { plugins: {} }, sessionKey: "agent:main:slack:dm:u123" };
+    const ctx = {
+      config: {
+        agents: { defaults: { workspace: "/tmp" } },
+        memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+        plugins: {},
+      },
+      sessionKey: "agent:main:slack:dm:u123",
+    };
     const program = new Command();
 
     expect((searchFactory?.(ctx) as { name?: string } | null)?.name).toBe("memory_search");
     expect((getFactory?.(ctx) as { name?: string } | null)?.name).toBe("memory_get");
+    expect((kbFactory?.(ctx) as { name?: string } | null)?.name).toBe("kb_search");
+    expect((writeFactory?.(ctx) as { name?: string } | null)?.name).toBe("memory_write");
     expect(() => cliRegistrar?.({ program } as never)).not.toThrow();
     expect(program.commands.map((command) => command.name())).toContain("memory");
   });
@@ -205,7 +218,7 @@ describe("buildMemoryFlushPlan", () => {
 
     expect(plan?.softThresholdTokens).toBe(DEFAULT_MEMORY_FLUSH_SOFT_TOKENS);
     expect(plan?.forceFlushTranscriptBytes).toBe(DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES);
-    expect(plan?.reserveTokensFloor).toBe(20_000);
+    expect(plan?.reserveTokensFloor).toBe(40_000);
   });
 
   it("parses forceFlushTranscriptBytes from byte-size strings", () => {

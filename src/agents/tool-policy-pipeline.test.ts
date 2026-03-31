@@ -112,6 +112,30 @@ describe("tool-policy-pipeline", () => {
     expect(warnings[0]).not.toContain("unless the plugin is enabled");
   });
 
+  test("fails closed when allowlist mentions an unavailable known core tool", () => {
+    const warnings: string[] = [];
+    const filtered = applyToolPolicyPipeline({
+      // oxlint-disable-next-line typescript/no-explicit-any
+      tools: [{ name: "exec" }] as any,
+      toolMeta: () => undefined,
+      warn: (msg: string) => warnings.push(msg),
+      steps: [
+        {
+          policy: { allow: ["memory_search"] },
+          label: "tools.allow",
+          stripPluginOnlyAllowlist: true,
+        },
+      ],
+    });
+
+    expect(filtered).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("unknown entries (memory_search)");
+    expect(warnings[0]).toContain(
+      "shipped core tools but unavailable in the current runtime/provider/model/config",
+    );
+  });
+
   test("dedupes identical unknown-allowlist warnings across repeated runs", () => {
     const warnings: string[] = [];
     const tools = [{ name: "exec" }] as unknown as DummyTool[];

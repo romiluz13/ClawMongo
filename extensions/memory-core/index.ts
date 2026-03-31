@@ -1,4 +1,5 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { createKBSearchTool, createMemoryWriteTool } from "../../src/agents/tools/memory-tool.js";
 import { registerMemoryCli } from "./src/cli.js";
 import {
   buildMemoryFlushPlan,
@@ -45,6 +46,24 @@ export default definePluginEntry({
           agentSessionKey: ctx.sessionKey,
         }),
       { names: ["memory_get"] },
+    );
+
+    api.registerTool(
+      (ctx) =>
+        createKBSearchTool({
+          config: ctx.config,
+          agentSessionKey: ctx.sessionKey,
+        }),
+      { names: ["kb_search"] },
+    );
+
+    api.registerTool(
+      (ctx) =>
+        createMemoryWriteTool({
+          config: ctx.config,
+          agentSessionKey: ctx.sessionKey,
+        }),
+      { names: ["memory_write"] },
     );
 
     api.registerCli(
