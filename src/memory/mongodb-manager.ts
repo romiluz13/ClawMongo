@@ -38,6 +38,7 @@ import type { ProcedureState } from "./mongodb-procedures.js";
 import { synthesizeProfile, type ProfileSynthesis } from "./mongodb-profile.js";
 import {
   checkCache,
+  invalidateQueryCache,
   writeCache,
   type QueryCacheConfig,
   type QueryCacheSourceScope,
@@ -2803,6 +2804,14 @@ export async function writeEventAndProject(
       ok: true,
       eventType: event.role,
       projectionTriggered: true,
+    });
+
+    await invalidateQueryCache({
+      db,
+      prefix,
+      agentId: event.agentId,
+      scope: "agent",
+      scopeRef: resolveScopeRef({ scope: "agent", agentId: event.agentId }),
     });
 
     return { eventId: written.eventId, chunksCreated: projected.chunkCreated ? 1 : 0 };

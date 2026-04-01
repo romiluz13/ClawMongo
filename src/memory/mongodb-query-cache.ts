@@ -299,3 +299,31 @@ export function writeCache(params: {
       log.warn("cache write failed", { error: err });
     });
 }
+
+export async function invalidateQueryCache(params: {
+  db: Db;
+  prefix: string;
+  agentId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
+}): Promise<number> {
+  const filter: Document = { agentId: params.agentId };
+  if (params.scope) {
+    filter.scope = params.scope;
+  }
+  if (params.scopeRef) {
+    filter.scopeRef = params.scopeRef;
+  }
+  try {
+    const result = await queryCacheCollection(params.db, params.prefix).deleteMany(filter);
+    return result.deletedCount ?? 0;
+  } catch (err) {
+    log.warn("query cache invalidation failed", {
+      agentId: params.agentId,
+      scope: params.scope,
+      scopeRef: params.scopeRef,
+      error: err,
+    });
+    return 0;
+  }
+}

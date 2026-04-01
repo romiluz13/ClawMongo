@@ -26,6 +26,7 @@ describe("resolveNpmRunner", () => {
       command: execPath,
       args: [expectedNpmCliPath],
       shell: false,
+      env: {},
     });
   });
 
@@ -47,6 +48,7 @@ describe("resolveNpmRunner", () => {
       command: execPath,
       args: [expectedNpmCliPath],
       shell: false,
+      env: {},
     });
   });
 
@@ -66,6 +68,7 @@ describe("resolveNpmRunner", () => {
       command: expectedNpmExePath,
       args: ["install", "--silent"],
       shell: false,
+      env: {},
     });
   });
 
@@ -86,6 +89,7 @@ describe("resolveNpmRunner", () => {
       command: "C:\\Windows\\System32\\cmd.exe",
       args: ["/d", "/s", "/c", `${npmCmdPath} install --omit=dev`],
       shell: false,
+      env: {},
       windowsVerbatimArguments: true,
     });
   });
@@ -106,6 +110,34 @@ describe("resolveNpmRunner", () => {
       shell: false,
       env: {
         PATH: `/tmp${path.delimiter}/usr/bin:/bin`,
+      },
+    });
+  });
+
+  it("strips inherited npm dry-run flags so nested staging installs still write node_modules", () => {
+    const execPath = "/tmp/node";
+    const expectedNpmCliPath = path.posix.resolve(
+      path.posix.dirname(execPath),
+      "../lib/node_modules/npm/bin/npm-cli.js",
+    );
+
+    const runner = resolveNpmRunner({
+      execPath,
+      env: {
+        PATH: "/usr/bin:/bin",
+        npm_config_dry_run: "true",
+        NPM_CONFIG_DRY_RUN: "true",
+      },
+      existsSync: (candidate: string) => candidate === expectedNpmCliPath,
+      platform: "linux",
+    });
+
+    expect(runner).toEqual({
+      command: execPath,
+      args: [expectedNpmCliPath],
+      shell: false,
+      env: {
+        PATH: "/usr/bin:/bin",
       },
     });
   });

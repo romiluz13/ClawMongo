@@ -78,6 +78,14 @@ const AUTO_EMBED_ENABLED = Boolean(
   process.env.VOYAGE_API_INDEXING_KEY,
 );
 
+function isSearchIndexNotReadyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("while in state NOT_STARTED") ||
+    message.includes("while in state INITIAL_SYNC")
+  );
+}
+
 async function waitForVectorResults(
   db: Db,
   queryText: string,
@@ -102,13 +110,63 @@ async function waitForVectorResults(
   // atlas-local auto-embedding completes in background after ingest; poll until the
   // vector index starts returning semantic hits or the test timeout expires.
   while (Date.now() < deadline) {
-    lastResults = await vectorSearch(chunks, null, {
-      maxResults,
-      minScore,
-      indexName,
-      queryText,
-      embeddingMode: "automated",
-    });
+    try {
+      lastResults = await vectorSearch(chunks, null, {
+        maxResults,
+        minScore,
+        indexName,
+        queryText,
+        embeddingMode: "automated",
+      });
+    } catch (error) {
+      if (!isSearchIndexNotReadyError(error)) {
+        throw error;
+      }
+      lastResults = [];
+    }
+    if (lastResults.length > 0) {
+      return lastResults;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  return lastResults;
+}
+
+async function waitForKeywordResults(
+  db: Db,
+  queryText: string,
+  {
+    maxResults = 5,
+    minScore = 0,
+    indexName = `${PREFIX}chunks_text`,
+    timeoutMs = 180_000,
+    pollMs = 2_000,
+  }: {
+    maxResults?: number;
+    minScore?: number;
+    indexName?: string;
+    timeoutMs?: number;
+    pollMs?: number;
+  } = {},
+): Promise<MemorySearchResult[]> {
+  const chunks = db.collection(`${PREFIX}chunks`);
+  const deadline = Date.now() + timeoutMs;
+  let lastResults: MemorySearchResult[] = [];
+
+  while (Date.now() < deadline) {
+    try {
+      lastResults = await keywordSearch(chunks, queryText, {
+        maxResults,
+        minScore,
+        indexName,
+      });
+    } catch (error) {
+      if (!isSearchIndexNotReadyError(error)) {
+        throw error;
+      }
+      lastResults = [];
+    }
     if (lastResults.length > 0) {
       return lastResults;
     }
@@ -349,7 +407,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         prefix: PREFIX,
         agentId: AGENT_ID,
         start: new Date("2026-03-01"),
-        end: new Date("2026-03-31"),
+        end: new Date("2026-04-01"),
       });
 
       const totalMessages =
@@ -374,7 +432,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         prefix: PREFIX,
         agentId: AGENT_ID,
         start: new Date("2026-03-01"),
-        end: new Date("2026-03-31"),
+        end: new Date("2026-04-01"),
       });
 
       let totalEntities = 0;
@@ -789,7 +847,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         type: "daily",
         timeRange: {
           start: new Date("2026-03-01"),
-          end: new Date("2026-03-31"),
+          end: new Date("2026-04-01"),
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -816,7 +874,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         type: "topic",
         timeRange: {
           start: new Date("2026-03-01"),
-          end: new Date("2026-03-31"),
+          end: new Date("2026-04-01"),
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -834,7 +892,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         type: "decision",
         timeRange: {
           start: new Date("2026-03-01"),
-          end: new Date("2026-03-31"),
+          end: new Date("2026-04-01"),
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -862,7 +920,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
 
       const timeRange = {
         start: new Date("2026-03-01"),
-        end: new Date("2026-03-31"),
+        end: new Date("2026-04-01"),
       };
       const scopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId });
       const first = await materializeEpisode({
@@ -897,7 +955,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         prefix: PREFIX,
         agentId: AGENT_ID,
         start: new Date("2026-03-01"),
-        end: new Date("2026-03-31"),
+        end: new Date("2026-04-01"),
       });
 
       console.log(`  Found ${episodes.length} episodes in March 2026`);
@@ -1330,7 +1388,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         prefix: PREFIX,
         agentId: AGENT_ID,
         start: new Date("2026-03-01"),
-        end: new Date("2026-03-31"),
+        end: new Date("2026-04-01"),
       });
 
       const leaked = ourEvents.some((e) => e.body.includes("SECRET"));
@@ -1542,11 +1600,10 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
     autoEmbedIt(
       "should return keyword search results with text index",
       async () => {
-        const chunks = db.collection(`${PREFIX}chunks`);
-        const results = await keywordSearch(chunks, "DataVault pipeline", {
+        const results = await waitForKeywordResults(db, "DataVault pipeline", {
           maxResults: 5,
-          minScore: 0.0,
-          indexName: `${PREFIX}chunks_text`,
+          minScore: 0,
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
         });
 
         expect(results.length).toBeGreaterThan(0);
@@ -1592,6 +1649,11 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       "should respect minScore filter on vector results",
       async () => {
         const chunks = db.collection(`${PREFIX}chunks`);
+        await waitForVectorResults(db, "data pipeline architecture and system design", {
+          maxResults: 1,
+          minScore: 0,
+          timeoutMs: VECTOR_SEARCH_TIMEOUT,
+        });
 
         // Use a high minScore threshold — should get fewer or no results
         const highThreshold = await vectorSearch(chunks, null, {

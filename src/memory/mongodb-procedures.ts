@@ -1,6 +1,7 @@
 import type { ClientSession, Collection, Db, Document, MongoClient } from "mongodb";
 import type { MemoryMongoDBEmbeddingMode, MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { invalidateQueryCache } from "./mongodb-query-cache.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { procedureRevisionsCollection, proceduresCollection } from "./mongodb-schema.js";
@@ -326,6 +327,13 @@ export async function writeProcedure(params: {
   log.info(
     `procedure ${outcome.upserted ? "created" : "updated"}: id=${entry.procedureId} revision=${outcome.revision}`,
   );
+  await invalidateQueryCache({
+    db,
+    prefix,
+    agentId: entry.agentId,
+    scope: "agent",
+    scopeRef: resolveScopeRef({ scope: "agent", agentId: entry.agentId }),
+  });
   return { upserted: outcome.upserted, id: outcome.id };
 }
 

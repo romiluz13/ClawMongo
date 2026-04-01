@@ -15,19 +15,12 @@ import {
 import type { MemorySearchResult } from "./types.js";
 
 describe("normalizeMemorySearchRequest", () => {
-  it("applies bounded defaults for mode, passes, and source order", () => {
+  it("applies bounded defaults for mode and passes without forcing source order", () => {
     const normalized = normalizeMemorySearchRequest({ query: " hello " });
     expect(normalized.query).toBe(" hello ");
     expect(normalized.searchMode).toBe("auto");
     expect(normalized.maxPasses).toBe(2);
-    expect(normalized.sourcePreference).toEqual([
-      "conversation",
-      "structured",
-      "procedural",
-      "reference",
-      "episodic",
-      "graph",
-    ]);
+    expect(normalized.sourcePreference).toEqual([]);
   });
 
   it("clamps maxPasses to the supported range", () => {
@@ -226,6 +219,33 @@ describe("executeMongoSearchPlan", () => {
     expect(response.results).toHaveLength(1);
     expect(response.results[0]?.canonicalId).toBe("r1");
     expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not narrow direct auto queries to conversation lanes when no source preference was given", async () => {
+    const mock = vi.fn().mockResolvedValue({
+      results: [makeResult({ canonicalId: "critical", source: "structured" })],
+      metadata: {
+        plan: {
+          paths: ["active-critical", "hybrid"],
+          confidence: "high" as const,
+          reasoning: "test",
+        },
+        pathsExecuted: ["active-critical"],
+        resultsByPath: { "active-critical": 1 },
+        reranked: false,
+        queryRewritten: false,
+      },
+    });
+
+    await executeMongoSearchPlan({
+      request: { query: "what's the situation in Israel right now", searchMode: "auto" },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    const firstCall = mock.mock.calls[0]?.[0];
+    expect(firstCall?.availablePaths.has("active-critical")).toBe(true);
+    expect(firstCall?.availablePaths.has("hybrid")).toBe(true);
   });
 
   it("accumulates results across multiple passes for family queries", async () => {

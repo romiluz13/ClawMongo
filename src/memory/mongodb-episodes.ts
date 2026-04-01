@@ -8,6 +8,7 @@ import {
   markEventsConsolidated,
 } from "./mongodb-events.js";
 import { recordProjectionRun } from "./mongodb-ops.js";
+import { invalidateQueryCache } from "./mongodb-query-cache.js";
 import { episodesCollection } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 
@@ -288,6 +289,13 @@ export async function materializeEpisode(params: {
         durationMs: Date.now() - startMs,
       },
     }).catch((err) => log.warn("Failed to record projection run", { error: String(err) }));
+    await invalidateQueryCache({
+      db,
+      prefix,
+      agentId,
+      scope: "agent",
+      scopeRef: resolveScopeRef({ scope: "agent", agentId }),
+    });
     return episode;
   } catch (err) {
     await recordProjectionRun({

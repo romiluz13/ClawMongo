@@ -830,6 +830,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "projection_runs",
     "query_cache",
     "memory_mutations",
+    "lane_coverage",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -1299,6 +1300,11 @@ export async function ensureStandardIndexes(
     { name: "idx_query_cache_agent_hitcount" },
   );
   applied++;
+  await queryCache.createIndex(
+    { agentId: 1, scope: 1, scopeRef: 1, updatedAt: -1 },
+    { name: "idx_query_cache_agent_scope_scoperef_updated" },
+  );
+  applied++;
 
   // Telemetry indexes (time series collection — meta field compound indexes)
   const telemetry = telemetryCollection(db, prefix);
@@ -1333,6 +1339,12 @@ export async function ensureStandardIndexes(
 
   // Lane coverage: unique agentId for per-agent coverage tracking
   const laneCoverage = laneCoverageCollection(db, prefix);
+  const laneCoverageIndexes = await laneCoverage
+    .indexes()
+    .catch(() => [] as Array<{ name: string }>);
+  if (laneCoverageIndexes.some((index) => index.name === "uq_lanecoverage_agent")) {
+    await laneCoverage.dropIndex("uq_lanecoverage_agent").catch(() => {});
+  }
   await laneCoverage.createIndex(
     { agentId: 1 },
     { name: "uq_lane_coverage_agentid", unique: true },

@@ -340,6 +340,57 @@ describe("searchStructuredMemory", () => {
     expect(results[0].path).toContain("structured:decision:arch");
   });
 
+  it("supplements partial vector hits with text fallback results", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => [
+          {
+            _id: "agent-doc",
+            type: "decision",
+            key: "shared",
+            value: "Agent scoped decision",
+            scope: "agent",
+            scopeRef: "agent:main",
+            score: 0.91,
+          },
+        ]),
+      } as unknown as ReturnType<Collection["aggregate"]>)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => [
+          {
+            _id: "agent-doc",
+            type: "decision",
+            key: "shared",
+            value: "Agent scoped decision",
+            scope: "agent",
+            scopeRef: "agent:main",
+            score: 12,
+          },
+          {
+            _id: "session-doc",
+            type: "decision",
+            key: "shared",
+            value: "Session scoped decision",
+            scope: "session",
+            scopeRef: "session:abc",
+            score: 11,
+          },
+        ]),
+      } as unknown as ReturnType<Collection["aggregate"]>);
+
+    const results = await searchStructuredMemory(col, "scoped decision", null, {
+      maxResults: 5,
+      capabilities: baseCapabilities,
+      vectorIndexName: "test_structured_mem_vector",
+      embeddingMode: "automated",
+    });
+
+    expect(results).toHaveLength(2);
+    expect(results.some((result) => result.path.includes("scope=agent"))).toBe(true);
+    expect(results.some((result) => result.path.includes("scope=session"))).toBe(true);
+  });
+
   it("returns empty results when no matches", async () => {
     const col = createMockStructuredCol();
 

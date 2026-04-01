@@ -120,14 +120,9 @@ export function normalizeMemorySearchRequest(
     ...request,
     searchMode: requestedMode,
     maxPasses,
-    sourcePreference: request.sourcePreference ?? [
-      "conversation",
-      "structured",
-      "procedural",
-      "reference",
-      "episodic",
-      "graph",
-    ],
+    // Only apply source ordering when the caller explicitly requested it.
+    // Otherwise the planner's ranked paths should stay in charge.
+    sourcePreference: request.sourcePreference ?? [],
   };
 }
 

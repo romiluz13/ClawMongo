@@ -110,17 +110,29 @@ function readRuntimeDepsStamp(stampPath) {
   }
 }
 
+function sanitizeNestedNpmEnv(env) {
+  const nextEnv = { ...env };
+  for (const key of Object.keys(nextEnv)) {
+    if (key.toLowerCase() === "npm_config_dry_run") {
+      delete nextEnv[key];
+    }
+  }
+  return nextEnv;
+}
+
 export function resolveNpmRunner(params = {}) {
   const execPath = params.execPath ?? process.execPath;
   const npmArgs = params.npmArgs ?? [];
   const existsSync = params.existsSync ?? fs.existsSync;
   const env = params.env ?? process.env;
+  const sanitizedEnv = sanitizeNestedNpmEnv(env);
   const platform = params.platform ?? process.platform;
-  const comSpec = params.comSpec ?? env.ComSpec ?? "cmd.exe";
+  const comSpec = params.comSpec ?? sanitizedEnv.ComSpec ?? "cmd.exe";
   const pathImpl = platform === "win32" ? path.win32 : path.posix;
   const nodeDir = pathImpl.dirname(execPath);
   const npmToolchain = resolveToolchainNpmRunner({
     comSpec,
+    env: sanitizedEnv,
     existsSync,
     nodeDir,
     npmArgs,
@@ -143,14 +155,14 @@ export function resolveNpmRunner(params = {}) {
         "OpenClaw refuses to shell out to bare npm on Windows; install a Node.js toolchain that bundles npm or run with a matching Node installation.",
     );
   }
-  const pathKey = resolvePathEnvKey(env);
-  const currentPath = env[pathKey];
+  const pathKey = resolvePathEnvKey(sanitizedEnv);
+  const currentPath = sanitizedEnv[pathKey];
   return {
     command: "npm",
     args: npmArgs,
     shell: false,
     env: {
-      ...env,
+      ...sanitizedEnv,
       [pathKey]:
         typeof currentPath === "string" && currentPath.length > 0
           ? `${nodeDir}${path.delimiter}${currentPath}`
@@ -173,6 +185,7 @@ function resolveToolchainNpmRunner(params) {
           : params.pathImpl.join(params.nodeDir, "node"),
       args: [npmCliPath, ...params.npmArgs],
       shell: false,
+      env: params.env,
     };
   }
   if (params.platform !== "win32") {
@@ -184,6 +197,7 @@ function resolveToolchainNpmRunner(params) {
       command: npmExePath,
       args: params.npmArgs,
       shell: false,
+      env: params.env,
     };
   }
   const npmCmdPath = params.pathImpl.resolve(params.nodeDir, "npm.cmd");
@@ -192,6 +206,7 @@ function resolveToolchainNpmRunner(params) {
       command: params.comSpec,
       args: ["/d", "/s", "/c", buildCmdExeCommandLine(npmCmdPath, params.npmArgs)],
       shell: false,
+      env: params.env,
       windowsVerbatimArguments: true,
     };
   }

@@ -3,6 +3,7 @@ import type { MemoryMongoDBEmbeddingMode, MemoryScope } from "../config/types.me
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { EmbeddingStatus } from "./mongodb-embedding-retry.js";
 import { recordMutation } from "./mongodb-mutations.js";
+import { invalidateQueryCache } from "./mongodb-query-cache.js";
 import { summarizeExplain } from "./mongodb-relevance.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 import { structuredMemCollection, structuredMemRevisionsCollection } from "./mongodb-schema.js";
@@ -561,6 +562,14 @@ export async function writeStructuredMemory(params: {
     log.warn(`structured memory audit failed: ${err instanceof Error ? err.message : String(err)}`);
   });
 
+  await invalidateQueryCache({
+    db,
+    prefix,
+    agentId: entry.agentId,
+    scope: "agent",
+    scopeRef: resolveScopeRef({ scope: "agent", agentId: entry.agentId }),
+  });
+
   return { upserted: outcome.upserted, id: outcome.id };
 }
 
@@ -591,6 +600,24 @@ function toStructuredResult(doc: Document): MemorySearchResult {
   };
 }
 
+function mergeStructuredResults(
+  primary: MemorySearchResult[],
+  supplemental: MemorySearchResult[],
+  maxResults: number,
+): MemorySearchResult[] {
+  const merged = new Map<string, MemorySearchResult>();
+  for (const result of [...primary, ...supplemental]) {
+    const identity = result.canonicalId || `${result.path}:${result.startLine}:${result.endLine}`;
+    const existing = merged.get(identity);
+    if (!existing || result.score > existing.score) {
+      merged.set(identity, result);
+    }
+  }
+  return Array.from(merged.values())
+    .toSorted((left, right) => right.score - left.score)
+    .slice(0, maxResults);
+}
+
 export async function searchStructuredMemory(
   collection: Collection,
   query: string,
@@ -617,6 +644,7 @@ export async function searchStructuredMemory(
   },
 ): Promise<MemorySearchResult[]> {
   const minScore = opts.minScore ?? 0.1;
+  let vectorResults: MemorySearchResult[] = [];
   const canVector =
     opts.embeddingMode === "automated"
       ? opts.capabilities.vectorSearch
@@ -718,9 +746,9 @@ export async function searchStructuredMemory(
         }
 
         const docs = await collection.aggregate(pipeline).toArray();
-        const results = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
-        if (results.length > 0) {
-          return results;
+        vectorResults = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
+        if (vectorResults.length >= opts.maxResults) {
+          return vectorResults;
         }
       }
     } catch (err) {
@@ -794,10 +822,14 @@ export async function searchStructuredMemory(
         summary: { source: "structured", method: "$text" },
       });
     }
-    return docs.map(toStructuredResult).filter((r) => r.score >= minScore);
+    const textResults = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
+    if (vectorResults.length > 0) {
+      return mergeStructuredResults(vectorResults, textResults, opts.maxResults);
+    }
+    return textResults;
   } catch {
     log.warn("structured memory $text search fallback failed; returning empty results");
-    return [];
+    return vectorResults;
   }
 }
 

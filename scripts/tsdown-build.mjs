@@ -59,7 +59,18 @@ function findFatalUnresolvedImport(lines) {
 
 const result = spawnSync(
   "pnpm",
-  ["exec", "tsdown", "--config-loader", "unrun", "--logLevel", logLevel, ...extraArgs],
+  [
+    "exec",
+    "tsdown",
+    // Prefer tsdown's auto loader so modern Node can load the repo-local config
+    // natively. Pinning to unrun imports the config from a temp path and breaks
+    // local package resolution for tsdown itself.
+    "--config-loader",
+    "auto",
+    "--logLevel",
+    logLevel,
+    ...extraArgs,
+  ],
   {
     encoding: "utf8",
     stdio: "pipe",

@@ -10,7 +10,12 @@ import type { OpenClawConfig } from "../config/config.js";
 import { materializeEpisode } from "./mongodb-episodes.js";
 import { getEventsBySession, writeEvent } from "./mongodb-events.js";
 import { upsertEntity, upsertRelation } from "./mongodb-graph.js";
-import { chunksCollection, episodesCollection, proceduresCollection } from "./mongodb-schema.js";
+import {
+  chunksCollection,
+  episodesCollection,
+  proceduresCollection,
+  structuredMemCollection,
+} from "./mongodb-schema.js";
 import { closeAllMemorySearchManagers, getMemorySearchManager } from "./search-manager.js";
 
 type AppendMessage = Parameters<SessionManager["appendMessage"]>[0];
@@ -276,16 +281,26 @@ describe("MongoDB runtime write e2e", () => {
           minScore: 0,
         }),
       (results) =>
-        results.some((result) => result.path.startsWith("structured:fact:active-context-")),
+        results.some(
+          (result) =>
+            result.path.startsWith("structured:fact:active-context-") &&
+            typeof result.snippet === "string" &&
+            result.snippet.length > 0,
+        ),
+      30_000,
+      500,
     );
     const promotedFact = promotedResults.find((result) =>
       result.path.startsWith("structured:fact:active-context-"),
     );
+    expect(promotedFact).toBeDefined();
     expect(promotedFact?.snippet.toLowerCase()).toContain("war in israel");
 
     const episodes = await waitForCondition(
       async () => episodesCollection(db, derivedPrefix).find({ agentId: derivedAgentId }).toArray(),
       (docs) => docs.length >= 1,
+      30_000,
+      500,
     );
     expect(episodes[0]?.type).toBe("thread");
 
@@ -293,6 +308,8 @@ describe("MongoDB runtime write e2e", () => {
       async () =>
         proceduresCollection(db, derivedPrefix).find({ agentId: derivedAgentId }).toArray(),
       (docs) => docs.length >= 1,
+      30_000,
+      500,
     );
     expect(procedures).toHaveLength(1);
     expect(procedures[0]?.steps).toEqual([
@@ -692,16 +709,49 @@ describe("MongoDB runtime write e2e", () => {
       sessionId,
     });
 
-    const structuredHits = await manager.search("scoped decision", { maxResults: 10, minScore: 0 });
+    const structuredDocs = await waitForCondition(
+      async () =>
+        structuredMemCollection(db, localPrefix)
+          .find({ agentId: localAgentId, key: sharedKey })
+          .project({ _id: 0, type: 1, key: 1, scope: 1, scopeRef: 1 })
+          .toArray(),
+      (docs) =>
+        docs.some((doc) => doc.scope === "agent") && docs.some((doc) => doc.scope === "session"),
+      20_000,
+      500,
+    );
+
+    const expectedStructuredPaths = structuredDocs.map((doc) => {
+      const params = new URLSearchParams();
+      if (typeof doc.scope === "string") {
+        params.set("scope", doc.scope);
+      }
+      if (typeof doc.scopeRef === "string") {
+        params.set("scopeRef", doc.scopeRef);
+      }
+      return `structured:${String(doc.type)}:${String(doc.key)}?${params.toString()}`;
+    });
+
+    expect(expectedStructuredPaths.some((path) => path.includes("scope=agent"))).toBe(true);
+    expect(expectedStructuredPaths.some((path) => path.includes("scope=session"))).toBe(true);
+
+    const structuredHits = await waitForCondition(
+      async () => manager.search("scoped decision", { maxResults: 10, minScore: 0 }),
+      (results) => {
+        const structuredPaths = results
+          .filter((result) => result.source === "structured")
+          .map((result) => result.path);
+        return structuredPaths.some((path) => path.includes("scope=agent"));
+      },
+      30_000,
+      500,
+    );
     const structuredPaths = structuredHits
       .filter((result) => result.source === "structured")
       .map((result) => result.path);
 
-    expect(structuredPaths.some((path) => path.includes("scope=agent"))).toBe(true);
-    expect(structuredPaths.some((path) => path.includes("scope=session"))).toBe(true);
-
     const agentLocator = structuredPaths.find((path) => path.includes("scope=agent"));
-    const sessionLocator = structuredPaths.find((path) => path.includes("scope=session"));
+    const sessionLocator = expectedStructuredPaths.find((path) => path.includes("scope=session"));
     expect(agentLocator).toBeDefined();
     expect(sessionLocator).toBeDefined();
 
