@@ -55,37 +55,25 @@ function normalizeKBFilter(raw?: {
   };
 }
 
-async function resolveKBChunkFilter(params: {
-  kbDocs?: Collection;
+function resolveKBChunkFilter(params: {
   filter?: { tags?: string[]; category?: string; source?: string };
-}): Promise<Document | undefined> {
+}): Document | undefined {
   const normalized = normalizeKBFilter(params.filter);
   if (!normalized) {
     return undefined;
   }
-  if (!params.kbDocs) {
-    log.warn("KB filter provided but kb document collection is unavailable; ignoring filter");
-    return undefined;
-  }
 
-  const kbDocFilter: Document = {};
+  const chunkFilter: Document = {};
   if (normalized.tags?.length) {
-    kbDocFilter.tags = { $all: normalized.tags };
+    chunkFilter.tags = { $all: normalized.tags };
   }
   if (normalized.category) {
-    kbDocFilter.category = normalized.category;
+    chunkFilter.category = normalized.category;
   }
   if (normalized.source) {
-    kbDocFilter["source.type"] = normalized.source;
+    chunkFilter.sourceType = normalized.source;
   }
-
-  // Keep this bounded to avoid oversized $in filters.
-  const docs = await params.kbDocs
-    .find(kbDocFilter, { projection: { _id: 1 } })
-    .limit(10_000)
-    .toArray();
-  const docIds = docs.map((doc) => String(doc._id));
-  return { docId: { $in: docIds } };
+  return Object.keys(chunkFilter).length > 0 ? chunkFilter : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,14 +103,9 @@ export async function searchKB(
       : queryVector != null && opts.capabilities.vectorSearch;
 
   const canText = opts.capabilities.textSearch;
-  const chunkFilter = await resolveKBChunkFilter({
-    kbDocs: opts.kbDocs,
+  const chunkFilter = resolveKBChunkFilter({
     filter: opts.filter,
   });
-  const filteredDocIds = (chunkFilter as { docId?: { $in?: string[] } } | undefined)?.docId?.$in;
-  if (Array.isArray(filteredDocIds) && filteredDocIds.length === 0) {
-    return [];
-  }
   const numCandidates = Math.min(
     opts.numCandidates ?? Math.max(opts.maxResults * 20, 100),
     MONGODB_MAX_NUM_CANDIDATES,
@@ -131,7 +114,7 @@ export async function searchKB(
   // F12: Try hybrid search (rankFusion) when both vector and text are available
   if (canVector && canText && opts.capabilities.rankFusion) {
     try {
-      const { compoundFilter, postMatch } = splitAtlasSearchFilter(chunkFilter);
+      const { compoundFilter, compoundMustNot, postMatch } = splitAtlasSearchFilter(chunkFilter);
       const vsStage = buildVectorSearchStage({
         queryVector,
         queryText: query,
@@ -156,6 +139,7 @@ export async function searchKB(
                         compound: {
                           must: [{ text: { query, path: "text" } }],
                           ...(compoundFilter ? { filter: compoundFilter } : {}),
+                          ...(compoundMustNot ? { mustNot: compoundMustNot } : {}),
                         },
                       },
                     },
@@ -269,7 +253,7 @@ export async function searchKB(
   // Keyword search fallback using $search
   if (canText) {
     try {
-      const { compoundFilter, postMatch } = splitAtlasSearchFilter(chunkFilter);
+      const { compoundFilter, compoundMustNot, postMatch } = splitAtlasSearchFilter(chunkFilter);
       const pipeline: Document[] = [
         {
           $search: {
@@ -277,6 +261,7 @@ export async function searchKB(
             compound: {
               must: [{ text: { query, path: "text" } }],
               ...(compoundFilter ? { filter: compoundFilter } : {}),
+              ...(compoundMustNot ? { mustNot: compoundMustNot } : {}),
             },
             ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
           },

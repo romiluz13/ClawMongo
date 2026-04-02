@@ -119,35 +119,68 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function buildSearchFilterClause(path: string, value: unknown): Document | null {
+function buildSearchFilterClauses(
+  path: string,
+  value: unknown,
+): { filter?: Document[]; mustNot?: Document[] } | null {
   if (
     typeof value === "string" ||
     typeof value === "number" ||
     typeof value === "boolean" ||
     value instanceof Date
   ) {
-    return { equals: { path, value } };
+    return { filter: [{ equals: { path, value } }] };
   }
   if (Array.isArray(value)) {
-    return value.length > 0 ? { in: { path, value } } : null;
+    return value.length > 0 ? { filter: [{ in: { path, value } }] } : null;
   }
   if (!isPlainObject(value)) {
     return null;
   }
   if ("$in" in value && Array.isArray(value.$in)) {
-    return value.$in.length > 0 ? { in: { path, value: value.$in } } : null;
+    return value.$in.length > 0 ? { filter: [{ in: { path, value: value.$in } }] } : null;
   }
   if ("$all" in value && Array.isArray(value.$all)) {
-    return { compound: { filter: value.$all.map((item) => ({ equals: { path, value: item } })) } };
+    return {
+      filter: value.$all.map((item) => ({ equals: { path, value: item } })),
+    };
   }
   if ("$eq" in value) {
-    return buildSearchFilterClause(path, value.$eq);
+    return buildSearchFilterClauses(path, value.$eq);
+  }
+  if ("$ne" in value) {
+    return {
+      mustNot: [{ equals: { path, value: value.$ne } }],
+    };
+  }
+
+  const range: Document = { path };
+  let hasRangeBounds = false;
+  if ("$gt" in value) {
+    range.gt = value.$gt;
+    hasRangeBounds = true;
+  }
+  if ("$gte" in value) {
+    range.gte = value.$gte;
+    hasRangeBounds = true;
+  }
+  if ("$lt" in value) {
+    range.lt = value.$lt;
+    hasRangeBounds = true;
+  }
+  if ("$lte" in value) {
+    range.lte = value.$lte;
+    hasRangeBounds = true;
+  }
+  if (hasRangeBounds) {
+    return { filter: [{ range }] };
   }
   return null;
 }
 
 export function splitAtlasSearchFilter(filter?: Document): {
   compoundFilter?: Document[];
+  compoundMustNot?: Document[];
   postMatch?: Document;
 } {
   if (!filter || Object.keys(filter).length === 0) {
@@ -155,6 +188,7 @@ export function splitAtlasSearchFilter(filter?: Document): {
   }
 
   const compoundFilter: Document[] = [];
+  const compoundMustNot: Document[] = [];
   const postMatchClauses: Document[] = [];
 
   const visit = (node: Document) => {
@@ -171,9 +205,14 @@ export function splitAtlasSearchFilter(filter?: Document): {
         continue;
       }
 
-      const searchClause = buildSearchFilterClause(key, value);
-      if (searchClause) {
-        compoundFilter.push(searchClause);
+      const searchClauses = buildSearchFilterClauses(key, value);
+      if (searchClauses) {
+        if (searchClauses.filter) {
+          compoundFilter.push(...searchClauses.filter);
+        }
+        if (searchClauses.mustNot) {
+          compoundMustNot.push(...searchClauses.mustNot);
+        }
       } else {
         postMatchClauses.push({ [key]: value });
       }
@@ -184,6 +223,7 @@ export function splitAtlasSearchFilter(filter?: Document): {
 
   return {
     ...(compoundFilter.length > 0 ? { compoundFilter } : {}),
+    ...(compoundMustNot.length > 0 ? { compoundMustNot } : {}),
     ...(postMatchClauses.length > 0
       ? {
           postMatch:
@@ -328,7 +368,7 @@ export async function keywordSearch(
     sourceFilter ? ({ source: sourceFilter } as Document) : undefined,
     opts.filter,
   );
-  const { compoundFilter, postMatch } = splitAtlasSearchFilter(mergedFilter);
+  const { compoundFilter, compoundMustNot, postMatch } = splitAtlasSearchFilter(mergedFilter);
 
   const pipeline: Document[] = [
     {
@@ -337,6 +377,7 @@ export async function keywordSearch(
         compound: {
           must: [{ text: { query, path: "text" } }],
           ...(compoundFilter ? { filter: compoundFilter } : {}),
+          ...(compoundMustNot ? { mustNot: compoundMustNot } : {}),
         },
         ...(opts.explain?.includeScoreDetails ? { scoreDetails: true } : {}),
       },
@@ -416,7 +457,7 @@ export async function hybridSearchScoreFusion(
     Object.keys(sourceFilter).length > 0 ? sourceFilter : undefined,
     opts.filter,
   );
-  const { compoundFilter, postMatch } = splitAtlasSearchFilter(mergedFilter);
+  const { compoundFilter, compoundMustNot, postMatch } = splitAtlasSearchFilter(mergedFilter);
 
   const vsStage = buildVectorSearchStage({
     queryVector,
@@ -445,6 +486,7 @@ export async function hybridSearchScoreFusion(
                   compound: {
                     must: [{ text: { query, path: "text" } }],
                     ...(compoundFilter ? { filter: compoundFilter } : {}),
+                    ...(compoundMustNot ? { mustNot: compoundMustNot } : {}),
                   },
                 },
               },
@@ -524,7 +566,7 @@ export async function hybridSearchRankFusion(
     Object.keys(sourceFilter).length > 0 ? sourceFilter : undefined,
     opts.filter,
   );
-  const { compoundFilter, postMatch } = splitAtlasSearchFilter(mergedFilter);
+  const { compoundFilter, compoundMustNot, postMatch } = splitAtlasSearchFilter(mergedFilter);
 
   const vsStage = buildVectorSearchStage({
     queryVector,
@@ -553,6 +595,7 @@ export async function hybridSearchRankFusion(
                   compound: {
                     must: [{ text: { query, path: "text" } }],
                     ...(compoundFilter ? { filter: compoundFilter } : {}),
+                    ...(compoundMustNot ? { mustNot: compoundMustNot } : {}),
                   },
                 },
               },

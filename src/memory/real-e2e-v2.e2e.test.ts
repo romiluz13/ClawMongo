@@ -77,6 +77,28 @@ const AUTO_EMBED_ENABLED = Boolean(
   process.env.VOYAGE_API_QUERY_KEY ||
   process.env.VOYAGE_API_INDEXING_KEY,
 );
+const ACTIVE_RANGE_START = new Date(
+  Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1),
+);
+const ACTIVE_RANGE_END = new Date(
+  Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 1),
+);
+const ACTIVE_RANGE_LABEL = ACTIVE_RANGE_START.toISOString().slice(0, 7);
+
+async function waitForCondition<T>(
+  producer: () => Promise<T>,
+  predicate: (value: T) => boolean,
+  timeoutMs = 12_000,
+  pollMs = 250,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastValue = await producer();
+  while (!predicate(lastValue) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    lastValue = await producer();
+  }
+  return lastValue;
+}
 
 function isSearchIndexNotReadyError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -406,8 +428,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         db,
         prefix: PREFIX,
         agentId: AGENT_ID,
-        start: new Date("2026-03-01"),
-        end: new Date("2026-04-01"),
+        start: ACTIVE_RANGE_START,
+        end: ACTIVE_RANGE_END,
       });
 
       const totalMessages =
@@ -431,8 +453,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         db,
         prefix: PREFIX,
         agentId: AGENT_ID,
-        start: new Date("2026-03-01"),
-        end: new Date("2026-04-01"),
+        start: ACTIVE_RANGE_START,
+        end: ACTIVE_RANGE_END,
       });
 
       let totalEntities = 0;
@@ -846,8 +868,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         agentId: AGENT_ID,
         type: "daily",
         timeRange: {
-          start: new Date("2026-03-01"),
-          end: new Date("2026-04-01"),
+          start: ACTIVE_RANGE_START,
+          end: ACTIVE_RANGE_END,
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -873,8 +895,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         agentId: AGENT_ID,
         type: "topic",
         timeRange: {
-          start: new Date("2026-03-01"),
-          end: new Date("2026-04-01"),
+          start: ACTIVE_RANGE_START,
+          end: ACTIVE_RANGE_END,
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -891,8 +913,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         agentId: AGENT_ID,
         type: "decision",
         timeRange: {
-          start: new Date("2026-03-01"),
-          end: new Date("2026-04-01"),
+          start: ACTIVE_RANGE_START,
+          end: ACTIVE_RANGE_END,
         },
         scope: "agent",
         summarizer: testSummarizer,
@@ -919,8 +941,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
       });
 
       const timeRange = {
-        start: new Date("2026-03-01"),
-        end: new Date("2026-04-01"),
+        start: ACTIVE_RANGE_START,
+        end: ACTIVE_RANGE_END,
       };
       const scopeRef = resolveScopeRef({ scope: "session", agentId: AGENT_ID, sessionId });
       const first = await materializeEpisode({
@@ -954,11 +976,11 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         db,
         prefix: PREFIX,
         agentId: AGENT_ID,
-        start: new Date("2026-03-01"),
-        end: new Date("2026-04-01"),
+        start: ACTIVE_RANGE_START,
+        end: ACTIVE_RANGE_END,
       });
 
-      console.log(`  Found ${episodes.length} episodes in March 2026`);
+      console.log(`  Found ${episodes.length} episodes in ${ACTIVE_RANGE_LABEL}`);
       expect(episodes.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -1387,8 +1409,8 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         db,
         prefix: PREFIX,
         agentId: AGENT_ID,
-        start: new Date("2026-03-01"),
-        end: new Date("2026-04-01"),
+        start: ACTIVE_RANGE_START,
+        end: ACTIVE_RANGE_END,
       });
 
       const leaked = ourEvents.some((e) => e.body.includes("SECRET"));
@@ -2003,12 +2025,13 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         resultCount: 12,
       });
 
-      // Wait for all fire-and-forget writes to complete
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Verify documents were actually written to the time series collection
       const col = db.collection(`${PREFIX}memory_telemetry`);
-      const count = await col.countDocuments({ "meta.agentId": telemetryAgentId });
+      const count = await waitForCondition(
+        async () => col.countDocuments({ "meta.agentId": telemetryAgentId }),
+        (value) => value === 8,
+        15_000,
+        500,
+      );
       expect(count).toBe(8);
     });
 

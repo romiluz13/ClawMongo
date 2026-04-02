@@ -344,10 +344,22 @@ describe("splitAtlasSearchFilter", () => {
       agentId: "agent-1",
     });
 
-    expect(split.compoundFilter).toEqual([{ equals: { path: "agentId", value: "agent-1" } }]);
-    expect(split.postMatch).toEqual({
-      updatedAt: { $gte: new Date("2026-03-01T00:00:00.000Z") },
+    expect(split.compoundFilter).toEqual([
+      { range: { path: "updatedAt", gte: new Date("2026-03-01T00:00:00.000Z") } },
+      { equals: { path: "agentId", value: "agent-1" } },
+    ]);
+    expect(split.postMatch).toBeUndefined();
+  });
+
+  it("splits $ne filters into mustNot clauses", () => {
+    const split = splitAtlasSearchFilter({
+      status: { $ne: "deleted" },
+      agentId: "agent-1",
     });
+
+    expect(split.compoundFilter).toEqual([{ equals: { path: "agentId", value: "agent-1" } }]);
+    expect(split.compoundMustNot).toEqual([{ equals: { path: "status", value: "deleted" } }]);
+    expect(split.postMatch).toBeUndefined();
   });
 });
 

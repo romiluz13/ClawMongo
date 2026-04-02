@@ -207,4 +207,33 @@ describe("MongoDBChangeStreamWatcher", () => {
 
     await watcher.close();
   });
+
+  it("attempts to resume from the last token after transient stream errors", async () => {
+    const resumedStream = createMockStream();
+    mockCol = {
+      watch: vi.fn().mockReturnValueOnce(mockStream).mockReturnValueOnce(resumedStream),
+    } as unknown as Collection;
+
+    const watcher = new MongoDBChangeStreamWatcher(mockCol, callback, 50);
+    await watcher.start();
+
+    const token = { _data: "825F..." };
+    mockStream.emit("change", {
+      _id: token,
+      operationType: "insert",
+      fullDocument: { path: "memory/resume.md" },
+      documentKey: { _id: "memory/resume.md:1:1" },
+    });
+
+    mockStream.emit("error", new Error("network hiccup"));
+    await vi.runAllTimersAsync();
+
+    expect(mockCol.watch).toHaveBeenCalledTimes(2);
+    expect((mockCol.watch as ReturnType<typeof vi.fn>).mock.calls[1][1]).toMatchObject({
+      fullDocument: "updateLookup",
+      resumeAfter: token,
+    });
+
+    await watcher.close();
+  });
 });

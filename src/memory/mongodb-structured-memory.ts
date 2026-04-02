@@ -685,14 +685,12 @@ export async function searchStructuredMemory(
       if (opts.filter?.temporalScope?.length) {
         filter.temporalScope = { $in: opts.filter.temporalScope };
       }
-      const currentMatch =
-        opts.filter?.currentOnly === true
-          ? {
-              state: "active",
-              validFrom: { $lte: new Date() },
-              $or: [{ validTo: { $exists: false } }, { validTo: { $gte: new Date() } }],
-            }
-          : undefined;
+      if (opts.filter?.currentOnly === true) {
+        const now = new Date();
+        filter.state = "active";
+        filter.validFrom = { $lte: now };
+        filter.$or = [{ validTo: { $exists: false } }, { validTo: { $gte: now } }];
+      }
 
       const vsStage = buildVectorSearchStage({
         queryVector,
@@ -708,7 +706,6 @@ export async function searchStructuredMemory(
       if (vsStage) {
         const pipeline: Document[] = [
           { $vectorSearch: vsStage },
-          ...(currentMatch ? [{ $match: currentMatch }] : []),
           { $limit: opts.maxResults },
           {
             $project: {

@@ -258,7 +258,7 @@ describe("memory index", () => {
         },
         list: [{ id: "main", default: true }],
       },
-    };
+    } as TestCfg;
   }
 
   function requireManager(

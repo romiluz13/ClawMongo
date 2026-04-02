@@ -87,21 +87,20 @@ describe("memory watcher config", () => {
   }
 
   function createWatcherConfig(overrides?: Partial<MemorySearchConfig>): OpenClawConfig {
-    const defaults: NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]> = {
-      workspace: workspaceDir,
-      memorySearch: {
-        provider: "openai",
-        model: "mock-embed",
-        store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
-        sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
-        query: { minScore: 0, hybrid: { enabled: false } },
-        extraPaths: [extraDir],
-        ...overrides,
-      },
-    };
     return {
       agents: {
-        defaults,
+        defaults: {
+          workspace: workspaceDir,
+          memorySearch: {
+            provider: "openai",
+            model: "mock-embed",
+            store: { path: path.join(workspaceDir, "index.sqlite"), vector: { enabled: false } },
+            sync: { watch: true, watchDebounceMs: 25, onSessionStart: false, onSearch: false },
+            query: { minScore: 0, hybrid: { enabled: false } },
+            extraPaths: [extraDir],
+            ...overrides,
+          },
+        } as NonNullable<NonNullable<OpenClawConfig["agents"]>["defaults"]>,
         list: [{ id: "main", default: true }],
       },
     } as OpenClawConfig;

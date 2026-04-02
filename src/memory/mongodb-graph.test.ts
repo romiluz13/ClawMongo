@@ -265,7 +265,7 @@ describe("mongodb-graph", () => {
   });
 
   describe("findEntitiesByName", () => {
-    it("returns matching entities", async () => {
+    it("uses Atlas Search when available", async () => {
       const entityDoc = {
         entityId: "ent-1",
         name: "Alice",
@@ -274,15 +274,10 @@ describe("mongodb-graph", () => {
         scope: "agent",
         updatedAt: new Date("2026-01-01"),
       };
-      const findResult = {
-        sort: vi.fn().mockReturnValue({
-          limit: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([entityDoc]),
-          }),
-        }),
-      };
       const entitiesCol = createMockCollection({
-        find: vi.fn().mockReturnValue(findResult),
+        aggregate: vi.fn(() => ({
+          toArray: vi.fn().mockResolvedValue([entityDoc]),
+        })),
       });
       const db = createMockDb({ [`${PREFIX}entities`]: entitiesCol });
 
@@ -296,10 +291,11 @@ describe("mongodb-graph", () => {
       expect(results).toHaveLength(1);
       expect(results[0].entityId).toBe("ent-1");
       expect(results[0].name).toBe("Alice");
-      // Verify regex search on name/aliases
-      const [filter] = (entitiesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(filter.agentId).toBe("agent-1");
-      expect(filter.$or).toBeDefined();
+      const [pipeline] = (entitiesCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(pipeline[0].$search.index).toBe(`${PREFIX}entities_text`);
+      expect(pipeline[0].$search.compound.filter).toEqual([
+        { equals: { path: "agentId", value: "agent-1" } },
+      ]);
     });
   });
 

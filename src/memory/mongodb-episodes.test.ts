@@ -40,6 +40,9 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
       }),
       toArray: vi.fn().mockResolvedValue([]),
     }),
+    aggregate: vi.fn().mockReturnValue({
+      toArray: vi.fn().mockResolvedValue([]),
+    }),
     ...overrides,
   } as unknown as Collection;
 }
@@ -396,17 +399,12 @@ describe("mongodb-episodes", () => {
   });
 
   describe("searchEpisodes", () => {
-    it("uses regex search on summary/title", async () => {
+    it("uses Atlas Search when available", async () => {
       const episodeDoc = makeEpisodeDoc();
-      const findResult = {
-        sort: vi.fn().mockReturnValue({
-          limit: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([episodeDoc]),
-          }),
-        }),
-      };
       const episodesCol = createMockCollection({
-        find: vi.fn().mockReturnValue(findResult),
+        aggregate: vi.fn(() => ({
+          toArray: vi.fn().mockResolvedValue([episodeDoc]),
+        })),
       });
       const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
 
@@ -420,11 +418,14 @@ describe("mongodb-episodes", () => {
       expect(results).toHaveLength(1);
       expect(results[0].title).toBe("Daily Standup Notes");
 
-      // Verify $regex search on title/summary with $or
-      const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(filter.agentId).toBe(AGENT_ID);
-      expect(filter.$or).toBeDefined();
-      expect(filter.$or).toHaveLength(2);
+      const [pipeline] = (episodesCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(pipeline[0].$search.index).toBe(`${PREFIX}episodes_text`);
+      expect(pipeline[0].$search.compound.filter).toEqual([
+        { equals: { path: "agentId", value: AGENT_ID } },
+      ]);
+      expect(pipeline[0].$search.compound.mustNot).toEqual([
+        { equals: { path: "status", value: "deleted" } },
+      ]);
     });
   });
 
@@ -550,8 +551,7 @@ describe("mongodb-episodes", () => {
       });
 
       expect(results).toEqual([]);
-      // find() should NOT be called - early return
-      expect(episodesCol.find).not.toHaveBeenCalled();
+      expect(episodesCol.aggregate).not.toHaveBeenCalled();
     });
 
     it("returns empty array for whitespace-only query", async () => {
@@ -566,7 +566,7 @@ describe("mongodb-episodes", () => {
       });
 
       expect(results).toEqual([]);
-      expect(episodesCol.find).not.toHaveBeenCalled();
+      expect(episodesCol.aggregate).not.toHaveBeenCalled();
     });
   });
 
@@ -633,7 +633,7 @@ describe("mongodb-episodes", () => {
 
     it("searchEpisodes wraps and re-throws errors", async () => {
       const episodesCol = createMockCollection({
-        find: vi.fn().mockImplementation(() => {
+        aggregate: vi.fn().mockImplementation(() => {
           throw new Error("db read failed");
         }),
       });
@@ -740,15 +740,10 @@ describe("mongodb-episodes", () => {
     });
 
     it("searchEpisodes excludes deleted episodes", async () => {
-      const findResult = {
-        sort: vi.fn().mockReturnValue({
-          limit: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([]),
-          }),
-        }),
-      };
       const episodesCol = createMockCollection({
-        find: vi.fn().mockReturnValue(findResult),
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([]),
+        }),
       });
       const db = createMockDb({ [`${PREFIX}episodes`]: episodesCol });
 
@@ -759,8 +754,10 @@ describe("mongodb-episodes", () => {
         agentId: AGENT_ID,
       });
 
-      const [filter] = (episodesCol.find as ReturnType<typeof vi.fn>).mock.calls[0];
-      expect(filter.status).toEqual({ $ne: "deleted" });
+      const [pipeline] = (episodesCol.aggregate as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(pipeline[0].$search.compound.mustNot).toEqual([
+        { equals: { path: "status", value: "deleted" } },
+      ]);
     });
 
     it("getEpisodesByIds excludes deleted episodes", async () => {

@@ -16,16 +16,6 @@ function mockKBChunksCol(results: Document[] = []): Collection {
   } as unknown as Collection;
 }
 
-function mockKBDocsCol(ids: Array<string | number> = []): Collection {
-  return {
-    find: vi.fn(() => ({
-      limit: vi.fn(() => ({
-        toArray: vi.fn(async () => ids.map((_id) => ({ _id }))),
-      })),
-    })),
-  } as unknown as Collection;
-}
-
 const baseCapabilities: DetectedCapabilities = {
   vectorSearch: true,
   textSearch: true,
@@ -203,38 +193,38 @@ describe("searchKB", () => {
     expect(aggregateCalls.length).toBeGreaterThan(0);
   });
 
-  it("short-circuits when KB metadata filter resolves to no matching documents", async () => {
+  it("passes KB metadata filters directly into the search path without parent-doc lookups", async () => {
     const col = mockKBChunksCol([
       { path: "never.md", startLine: 1, endLine: 1, text: "nope", score: 0.9 },
     ]);
-    const kbDocs = mockKBDocsCol([]);
 
-    const results = await searchKB(col, "vector", [0.1], {
+    await searchKB(col, "vector", [0.1], {
       maxResults: 5,
       minScore: 0.1,
       filter: { tags: ["missing"], category: "none", source: "file" },
-      kbDocs,
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
       embeddingMode: "automated",
     });
 
-    expect(results).toHaveLength(0);
-    expect(col.aggregate).not.toHaveBeenCalled();
+    const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(pipeline[0].$vectorSearch.filter).toEqual({
+      tags: { $all: ["missing"] },
+      category: "none",
+      sourceType: "file",
+    });
   });
 
   it("applies KB metadata filter to vector search stage", async () => {
     const col = mockKBChunksCol([
       { path: "filtered.md", startLine: 1, endLine: 3, text: "filtered", score: 0.8 },
     ]);
-    const kbDocs = mockKBDocsCol(["doc-a", "doc-b"]);
 
     await searchKB(col, "filtered", [0.2], {
       maxResults: 5,
       minScore: 0.1,
       filter: { tags: ["docs"], category: "architecture", source: "file" },
-      kbDocs,
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: baseCapabilities,
@@ -243,10 +233,14 @@ describe("searchKB", () => {
 
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const vsStage = pipeline[0].$vectorSearch;
-    expect(vsStage.filter).toEqual({ docId: { $in: ["doc-a", "doc-b"] } });
+    expect(vsStage.filter).toEqual({
+      tags: { $all: ["docs"] },
+      category: "architecture",
+      sourceType: "file",
+    });
   });
 
-  it("pushes KB docId filters into the text-side compound.filter", async () => {
+  it("pushes KB metadata filters into the text-side compound.filter", async () => {
     const hybridCaps: DetectedCapabilities = {
       ...baseCapabilities,
       rankFusion: true,
@@ -254,13 +248,11 @@ describe("searchKB", () => {
     const col = mockKBChunksCol([
       { path: "filtered.md", startLine: 1, endLine: 3, text: "filtered", score: 0.8 },
     ]);
-    const kbDocs = mockKBDocsCol(["doc-a", "doc-b"]);
 
     await searchKB(col, "filtered", [0.2], {
       maxResults: 5,
       minScore: 0.1,
       filter: { tags: ["docs"], category: "architecture", source: "file" },
-      kbDocs,
       vectorIndexName: "test_kb_chunks_vector",
       textIndexName: "test_kb_chunks_text",
       capabilities: hybridCaps,
@@ -270,7 +262,9 @@ describe("searchKB", () => {
     const pipeline = (col.aggregate as ReturnType<typeof vi.fn>).mock.calls[0][0];
     const textPipeline = pipeline[0].$rankFusion.input.pipelines.text;
     expect(textPipeline[0].$search.compound.filter).toEqual([
-      { in: { path: "docId", value: ["doc-a", "doc-b"] } },
+      { equals: { path: "tags", value: "docs" } },
+      { equals: { path: "category", value: "architecture" } },
+      { equals: { path: "sourceType", value: "file" } },
     ]);
     expect(textPipeline[1]?.$match).toBeUndefined();
   });

@@ -477,7 +477,40 @@ export async function findEntitiesByName(params: {
   try {
     const collection = entitiesCollection(db, prefix);
 
-    // Case-insensitive regex search on name and aliases
+    try {
+      const docs = await collection
+        .aggregate([
+          {
+            $search: {
+              index: `${prefix}entities_text`,
+              compound: {
+                should: [{ text: { query, path: "name" } }, { text: { query, path: "aliases" } }],
+                minimumShouldMatch: 1,
+                filter: [
+                  { equals: { path: "agentId", value: agentId } },
+                  ...(scope ? [{ equals: { path: "scope", value: scope } }] : []),
+                  ...(scopeRef ? [{ equals: { path: "scopeRef", value: scopeRef } }] : []),
+                ],
+              },
+            },
+          },
+          // Atlas Search handles ranking; we keep a stable recency tie-breaker.
+          { $sort: { updatedAt: -1 } },
+          { $limit: limit ?? 50 },
+        ])
+        .toArray();
+
+      if (docs.length > 0) {
+        return docs as unknown as Entity[];
+      }
+
+      log.debug("entities Atlas Search returned no matches, falling back to regex lookup");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.debug(`entities Atlas Search unavailable, falling back to regex lookup: ${msg}`);
+    }
+
+    // Fallback for deployments without Atlas Search support.
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(escapedQuery, "i");
 

@@ -421,9 +421,50 @@ export async function searchEpisodes(params: {
   try {
     const col = episodesCollection(db, prefix);
 
-    // Case-insensitive regex search on title and summary
-    // Using $regex (same pattern as findEntitiesByName in mongodb-graph.ts)
-    // Text index not assumed yet
+    try {
+      const docs = await col
+        .aggregate([
+          {
+            $search: {
+              index: `${prefix}episodes_text`,
+              compound: {
+                should: [{ text: { query, path: "title" } }, { text: { query, path: "summary" } }],
+                minimumShouldMatch: 1,
+                filter: [
+                  { equals: { path: "agentId", value: agentId } },
+                  ...(scope ? [{ equals: { path: "scope", value: scope } }] : []),
+                  ...(scopeRef ? [{ equals: { path: "scopeRef", value: scopeRef } }] : []),
+                ],
+                mustNot: [{ equals: { path: "status", value: "deleted" } }],
+              },
+            },
+          },
+          ...(timeRange
+            ? [
+                {
+                  $match: {
+                    "timeRange.start": { $lte: timeRange.end },
+                    "timeRange.end": { $gte: timeRange.start },
+                  },
+                },
+              ]
+            : []),
+          { $sort: { updatedAt: -1 } },
+          { $limit: limit ?? 50 },
+        ])
+        .toArray();
+
+      if (docs.length > 0) {
+        return docs as unknown as Episode[];
+      }
+
+      log.debug("episodes Atlas Search returned no matches, falling back to regex lookup");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.debug(`episodes Atlas Search unavailable, falling back to regex lookup: ${msg}`);
+    }
+
+    // Fallback for deployments without Atlas Search support.
     const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(escapedQuery, "i");
 

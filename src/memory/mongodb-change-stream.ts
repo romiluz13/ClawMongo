@@ -85,7 +85,8 @@ export class MongoDBChangeStreamWatcher {
           log.info("change streams not supported (standalone topology), closing watcher");
           void this.close();
         } else {
-          log.warn(`change stream error: ${msg}`);
+          log.warn(`change stream error: ${msg}; attempting resume from last token`);
+          void this.reopenFromLastToken();
         }
       });
 
@@ -99,6 +100,29 @@ export class MongoDBChangeStreamWatcher {
       }
       log.warn(`failed to start change stream: ${msg}`);
       return false;
+    }
+  }
+
+  private async reopenFromLastToken(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+
+    const resumeAfter = this._lastResumeToken ?? undefined;
+
+    if (this.stream) {
+      try {
+        await this.stream.close();
+      } catch {
+        // Best effort close before recreating the stream.
+      }
+      this.stream = null;
+    }
+
+    const resumed = await this.start(resumeAfter);
+    if (!resumed && resumeAfter !== undefined) {
+      log.warn("change stream resume from last token failed; retrying from latest position");
+      await this.start();
     }
   }
 

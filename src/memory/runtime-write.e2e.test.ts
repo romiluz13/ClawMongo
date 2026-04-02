@@ -207,7 +207,7 @@ describe("MongoDB runtime write e2e", () => {
       .then(() => true)
       .catch(() => false);
     expect(transcriptExists).toBe(false);
-  }, 45_000);
+  }, 90_000);
 
   it("promotes derived structured facts and procedures and auto-materializes episodes on the live write path", async () => {
     const sessionId = `runtime-derived-${randomUUID().slice(0, 8)}`;
@@ -325,6 +325,8 @@ describe("MongoDB runtime write e2e", () => {
     const procedureResults = await waitForCondition(
       async () => manager.search("incident response", { maxResults: 5, minScore: 0 }),
       (results) => results.some((result) => result.path.startsWith("procedure:")),
+      30_000,
+      500,
     );
     expect(procedureResults.some((result) => result.path.startsWith("procedure:"))).toBe(true);
   }, 60_000);

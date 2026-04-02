@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.3.39",
+  "version": "2026.4.2",
   "description": "MongoDB-native multi-channel AI gateway — ClawMongo fork of OpenClaw",
   "keywords": [],
   "homepage": "https://github.com/romiluz/ClawMongo#readme",
@@ -28,6 +28,7 @@
     "README.md",
     "assets/",
     "dist/",
+    "!dist/**/*.map",
     "docs/",
     "!docs/.generated/**",
     "!docs/.i18n/zh-CN.tm.jsonl",

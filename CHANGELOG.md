@@ -4,6 +4,18 @@ Docs: https://docs.openclaw.ai
 
 ## Unreleased
 
+## 2026.4.2
+
+### Changes
+
+- Memory/MongoDB: strengthen Atlas Search and Vector Search filtering so conversation, KB, and structured-memory retrieval stay aligned with live MongoDB indexes.
+
+### Fixes
+
+- Memory/KB: denormalize KB metadata onto chunk documents so metadata-filtered KB retrieval no longer truncates after a capped parent-document prefilter.
+- Memory/search: use Atlas Search first for entity and episode lookups, reducing regex-driven scans while preserving compatibility when search is unavailable.
+- Memory/change streams: resume from the last seen token after transient stream errors instead of silently losing cross-instance sync until restart.
+
 ## 2026.3.34
 
 ### Changes

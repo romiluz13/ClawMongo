@@ -39,6 +39,7 @@ function mockCollection(name: string): Collection {
     createSearchIndex: vi.fn(async () => name),
     updateSearchIndex: vi.fn(async () => undefined),
     dropIndex: vi.fn(async () => ({ ok: 1 })),
+    indexes: vi.fn(async () => []),
     listSearchIndexes: vi.fn(() => ({ toArray: async () => [] })),
     aggregate: vi.fn(() => ({ toArray: async () => [] })),
   } as unknown as Collection;
@@ -204,6 +205,18 @@ describe("schema constants", () => {
     expect(validator.$jsonSchema.properties.source.bsonType).toBe("string");
   });
 
+  it("kb_chunks schema mirrors KB filter metadata onto chunk documents", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const kbChunksCall = createCalls.find((c: unknown[]) => c[0] === "test_kb_chunks");
+    expect(kbChunksCall).toBeDefined();
+    const validator = kbChunksCall![1]?.validator;
+    expect(validator.$jsonSchema.properties.sourceType.bsonType).toBe("string");
+    expect(validator.$jsonSchema.properties.category.bsonType).toBe("string");
+    expect(validator.$jsonSchema.properties.tags.bsonType).toBe("array");
+  });
+
   it("KB source.type enum uses 'manual' not 'text' (F16)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
@@ -273,10 +286,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 23 collections when none exist (22 regular + 1 time series)", async () => {
+  it("creates all 24 collections when none exist (23 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(23);
+    expect(db.createCollection).toHaveBeenCalledTimes(24);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -315,7 +328,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(21);
+    expect(db.createCollection).toHaveBeenCalledTimes(22);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -365,6 +378,7 @@ describe("ensureCollections", () => {
       "oc_projection_runs",
       "oc_query_cache",
       "oc_memory_mutations",
+      "oc_lane_coverage",
       "oc_memory_telemetry",
     ]);
     await ensureCollections(db, "oc_");
@@ -413,13 +427,11 @@ describe("ensureStandardIndexes", () => {
     // 1 structured revisions + 3 relevance_runs + 2 relevance_artifacts +
     // 2 relevance_regressions + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
     // 3 episodes + 1 ingest_runs + 1 projection_runs + 4 procedures +
-    // 1 procedure_revisions + 3 query_cache + 2 telemetry
-    // + 3 memory_mutations (compound + TTL + per-document) = 63
-    expect(count).toBe(63);
+    expect(count).toBe(67);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
-    expect(kbChunks.createIndex).toHaveBeenCalledTimes(3);
+    expect(kbChunks.createIndex).toHaveBeenCalledTimes(5);
     expect(structured.createIndex).toHaveBeenCalledTimes(7);
     expect(structuredRevisions.createIndex).toHaveBeenCalledTimes(1);
     expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
@@ -473,7 +485,7 @@ describe("ensureStandardIndexes", () => {
     const telemetry = db.collection("test_memory_telemetry") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
-    expect(queryCache.createIndex).toHaveBeenCalledTimes(3);
+    expect(queryCache.createIndex).toHaveBeenCalledTimes(4);
     expect(telemetry.createIndex).toHaveBeenCalledTimes(2);
   });
 
@@ -615,9 +627,7 @@ describe("ensureStandardIndexes", () => {
     const count = await ensureStandardIndexes(db, "test_");
     // 27 (v1 base) + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links + 3 episodes +
     // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions +
-    // 4 procedures + 1 procedure_revisions + 3 query_cache + 2 telemetry
-    // + 3 memory_mutations (compound + TTL + per-document) = 63
-    expect(count).toBe(63);
+    expect(count).toBe(67);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -748,8 +758,75 @@ describe("ensureSearchIndexes", () => {
     expect(filterPaths).toContain("path");
     expect(filterPaths).toContain("source");
     expect(filterPaths).toContain("sessionId");
+    expect(filterPaths).toContain("status");
     expect(filterPaths).toContain("timestamp");
     expect(filterPaths).toContain("updatedAt");
+  });
+
+  it("creates Atlas Search indexes for entity and episode lookups", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    const entities = db.collection("test_entities") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const episodes = db.collection("test_episodes") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+
+    expect(entities.createSearchIndex).toHaveBeenCalledTimes(1);
+    expect((entities.createSearchIndex.mock.calls[0][0] as Document).name).toBe(
+      "test_entities_text",
+    );
+
+    expect(episodes.createSearchIndex).toHaveBeenCalledTimes(1);
+    expect((episodes.createSearchIndex.mock.calls[0][0] as Document).name).toBe(
+      "test_episodes_text",
+    );
+  });
+
+  it("includes KB chunk metadata filters in search indexes", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    const kbChunks = db.collection("test_kb_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const textCall = kbChunks.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "search",
+    );
+    const vectorCall = kbChunks.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+    );
+
+    expect((textCall![0] as Document).definition.mappings.fields.sourceType).toBeDefined();
+    expect((textCall![0] as Document).definition.mappings.fields.category).toBeDefined();
+    expect((textCall![0] as Document).definition.mappings.fields.tags).toBeDefined();
+
+    const filterPaths = ((vectorCall![0] as Document).definition.fields as Document[])
+      .filter((field) => field.type === "filter")
+      .map((field) => field.path);
+    expect(filterPaths).toContain("sourceType");
+    expect(filterPaths).toContain("category");
+    expect(filterPaths).toContain("tags");
+  });
+
+  it("includes currentOnly filter fields in structured memory vector indexes", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    const structured = db.collection("test_structured_mem") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const vectorCall = structured.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "vectorSearch",
+    );
+    const filterPaths = ((vectorCall![0] as Document).definition.fields as Document[])
+      .filter((field) => field.type === "filter")
+      .map((field) => field.path);
+    expect(filterPaths).toContain("temporalScope");
+    expect(filterPaths).toContain("validFrom");
+    expect(filterPaths).toContain("validTo");
   });
 
   it("updates existing search indexes when definitions drift", async () => {
@@ -1255,12 +1332,11 @@ describe("query_cache vector search index", () => {
     expect(filterPaths).toContain("scopeRef");
   });
 
-  it("assertIndexBudget uses 9 for total search index count", async () => {
+  it("assertIndexBudget uses 11 for total search index count", async () => {
     const db = mockDb();
     // This should NOT fail for self-managed profile
     await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
-    // The budget check is internal, but we verify that the total search index call count
-    // includes the new query_cache vector index: 8 existing + 1 new = 9
+    // The budget check is internal, but this confirms the revised index set still fits.
     const qc = db.collection("test_query_cache") as unknown as {
       createSearchIndex: ReturnType<typeof vi.fn>;
     };
@@ -1329,11 +1405,10 @@ describe("telemetry standard indexes", () => {
 });
 
 describe("ensureCollections total count with query_cache and telemetry", () => {
-  it("creates 22 collections total when none exist (21 regular + 1 time series)", async () => {
+  it("creates 24 collections total when none exist (23 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    // 22 from needed array + 1 time series (memory_telemetry) = 23
-    expect(db.createCollection).toHaveBeenCalledTimes(23);
+    expect(db.createCollection).toHaveBeenCalledTimes(24);
   });
 });
 
@@ -1341,10 +1416,6 @@ describe("ensureStandardIndexes total count with query_cache and telemetry", () 
   it("returns updated total index count including query_cache and telemetry indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // Previous: 53 standard indexes + 1 toEntityId index
-    // + 3 query_cache (unique + TTL + hitCount) + 2 telemetry (agent_ts + op_ts)
-    // + 3 memory_mutations (compound + TTL + per-document)
-    // + 1 idx_events_agent_session_ts (Phase 0: context expansion) = 63
-    expect(count).toBe(63);
+    expect(count).toBe(67);
   });
 });

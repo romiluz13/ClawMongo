@@ -7,7 +7,7 @@ export type SearchDetailedImpl = () => Promise<{
 }>;
 export type MemoryReadParams = { relPath: string; from?: number; lines?: number };
 export type MemoryReadResult = { text: string; path: string; locator?: string; disabled?: boolean };
-type MemoryBackend = "builtin" | "mongodb";
+type MemoryBackend = "builtin" | "mongodb" | "qmd";
 
 let backend: MemoryBackend = "mongodb";
 let searchImpl: SearchImpl = async () => [];

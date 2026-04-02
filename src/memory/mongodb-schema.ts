@@ -178,6 +178,9 @@ const KB_CHUNKS_SCHEMA: Document = {
       startLine: { bsonType: "number" },
       endLine: { bsonType: "number" },
       source: { bsonType: "string", description: "Source identifier (e.g., 'kb')" },
+      sourceType: { bsonType: "string", description: "Knowledge base source type mirror" },
+      category: { bsonType: "string", description: "Knowledge base category mirror" },
+      tags: { bsonType: "array", items: { bsonType: "string" } },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
     },
@@ -1015,6 +1018,13 @@ export async function ensureStandardIndexes(
     { name: "uq_kbchunks_path_lines", unique: true },
   );
   applied++;
+  await kbChunks.createIndex(
+    { sourceType: 1, category: 1 },
+    { name: "idx_kbchunks_source_type_category" },
+  );
+  applied++;
+  await kbChunks.createIndex({ tags: 1 }, { name: "idx_kbchunks_tags" });
+  applied++;
   // $text index on kb_chunks text field for text search fallback
   await kbChunks.createIndex({ text: "text" }, { name: "idx_kbchunks_text" });
   applied++;
@@ -1462,11 +1472,11 @@ export async function ensureSearchIndexes(
   void quantization;
   void numDimensions;
 
-  // 9 search indexes total: chunks, kb_chunks, structured_mem, and procedures
-  // each get text + vector indexes, plus query_cache gets 1 vector index.
+  // 11 search indexes total: chunks, kb_chunks, structured_mem, procedures,
+  // entities, episodes, and query_cache.
   // ClawMongo ships one self-managed profile, but we keep the budget helper
   // for explicit reporting.
-  const budget = assertIndexBudget(profile, 9);
+  const budget = assertIndexBudget(profile, 11);
   const reducedBudget =
     !budget.withinBudget && typeof budget.budget === "number" && budget.budget >= 2;
   if (!budget.withinBudget && !reducedBudget) {
@@ -1477,7 +1487,7 @@ export async function ensureSearchIndexes(
   }
   if (reducedBudget) {
     log.warn(
-      `search index budget tight (${budget.budget}/${budget.plannedSearchIndexes}): creating core chunks indexes only, skipping KB, structured memory, and procedure search indexes`,
+      `search index budget tight (${budget.budget}/${budget.plannedSearchIndexes}): creating core chunks indexes only, skipping KB, structured memory, entities, episodes, and procedure search indexes`,
     );
   }
 
@@ -1497,6 +1507,7 @@ export async function ensureSearchIndexes(
           agentId: { type: "token" },
           scope: { type: "token" },
           scopeRef: { type: "token" },
+          status: { type: "token" },
           timestamp: { type: "date" },
           updatedAt: { type: "date" },
         },
@@ -1530,6 +1541,7 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "scope" },
       { type: "filter", path: "scopeRef" },
       { type: "filter", path: "sessionId" },
+      { type: "filter", path: "status" },
       { type: "filter", path: "timestamp" },
       { type: "filter", path: "updatedAt" },
     ];
@@ -1579,6 +1591,9 @@ export async function ensureSearchIndexes(
           path: { type: "token" },
           docId: { type: "token" },
           source: { type: "token" },
+          sourceType: { type: "token" },
+          category: { type: "token" },
+          tags: { type: "token" },
           updatedAt: { type: "date" },
         },
       },
@@ -1606,6 +1621,9 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "docId" },
       { type: "filter", path: "path" },
       { type: "filter", path: "source" },
+      { type: "filter", path: "sourceType" },
+      { type: "filter", path: "category" },
+      { type: "filter", path: "tags" },
     ];
 
     const kbVectorDef: Document = {
@@ -1681,6 +1699,9 @@ export async function ensureSearchIndexes(
       { type: "filter", path: "scopeRef" },
       { type: "filter", path: "state" },
       { type: "filter", path: "salience" },
+      { type: "filter", path: "temporalScope" },
+      { type: "filter", path: "validFrom" },
+      { type: "filter", path: "validTo" },
     ];
 
     const structVectorDef: Document = {
@@ -1705,6 +1726,73 @@ export async function ensureSearchIndexes(
     }
     if (!msg.includes("already exists") && !msg.includes("duplicate")) {
       log.warn(`structured_mem vector search index creation failed: ${msg}`);
+    }
+  }
+
+  const entities = entitiesCollection(db, prefix);
+  try {
+    const entityTextDef: Document = {
+      mappings: {
+        dynamic: false,
+        fields: {
+          name: { type: "string", analyzer: "lucene.standard" },
+          aliases: { type: "string", analyzer: "lucene.standard" },
+          agentId: { type: "token" },
+          scope: { type: "token" },
+          scopeRef: { type: "token" },
+          updatedAt: { type: "date" },
+        },
+      },
+    };
+    await ensureNamedSearchIndex({
+      collection: entities,
+      name: `${prefix}entities_text`,
+      type: "search",
+      definition: entityTextDef,
+      label: "entities text",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
+    if (!msg.includes("already exists") && !msg.includes("duplicate")) {
+      log.warn(`entities text search index creation failed: ${msg}`);
+    }
+  }
+
+  const episodes = episodesCollection(db, prefix);
+  try {
+    const episodeTextDef: Document = {
+      mappings: {
+        dynamic: false,
+        fields: {
+          title: { type: "string", analyzer: "lucene.standard" },
+          summary: { type: "string", analyzer: "lucene.standard" },
+          agentId: { type: "token" },
+          scope: { type: "token" },
+          scopeRef: { type: "token" },
+          status: { type: "token" },
+          updatedAt: { type: "date" },
+        },
+      },
+    };
+    await ensureNamedSearchIndex({
+      collection: episodes,
+      name: `${prefix}episodes_text`,
+      type: "search",
+      definition: episodeTextDef,
+      label: "episodes text",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isSearchIndexManagementUnavailable(msg)) {
+      log.warn(`search index management unavailable: ${msg}`);
+      return { text: textCreated, vector: vectorCreated };
+    }
+    if (!msg.includes("already exists") && !msg.includes("duplicate")) {
+      log.warn(`episodes text search index creation failed: ${msg}`);
     }
   }
 
