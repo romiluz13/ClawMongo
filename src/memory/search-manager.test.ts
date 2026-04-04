@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedMongoDBConfig } from "./backend-config.js";
 import { buildMongoDBCacheKey } from "./search-manager.js";
 
@@ -74,6 +74,11 @@ function makeConfig(overrides?: Partial<ResolvedMongoDBConfig>): ResolvedMongoDB
     ...overrides,
   };
 }
+
+afterEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
+});
 
 describe("buildMongoDBCacheKey", () => {
   it("different source policies produce different cache keys", () => {
@@ -202,5 +207,46 @@ describe("buildMongoDBCacheKey", () => {
     });
 
     expect(key1).not.toBe(key2);
+  });
+
+  it("deduplicates concurrent MongoDB manager initialization for the same cache key", async () => {
+    const createMock = vi.fn(async () => ({
+      close: vi.fn(),
+    }));
+
+    vi.doMock("../agents/agent-scope.js", () => ({
+      resolveAgentWorkspaceDir: () => "/tmp/workspace-a",
+    }));
+    vi.doMock("../agents/memory-search.js", () => ({
+      resolveMemorySearchConfig: () => undefined,
+    }));
+    vi.doMock("./backend-config.js", () => ({
+      resolveMemoryBackendConfig: () => ({
+        mongodb: makeConfig(),
+      }),
+    }));
+    vi.doMock("./internal.js", () => ({
+      normalizeExtraMemoryPaths: () => [],
+    }));
+    vi.doMock("./mongodb-manager.js", () => ({
+      MongoDBMemoryManager: {
+        create: createMock,
+      },
+    }));
+
+    const { closeAllMemorySearchManagers, getMemorySearchManager } =
+      await import("./search-manager.js");
+    const cfg = {} as never;
+
+    const [first, second] = await Promise.all([
+      getMemorySearchManager({ cfg, agentId: "main" }),
+      getMemorySearchManager({ cfg, agentId: "main" }),
+    ]);
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(first.manager).toBeTruthy();
+    expect(first.manager).toBe(second.manager);
+
+    await closeAllMemorySearchManagers();
   });
 });

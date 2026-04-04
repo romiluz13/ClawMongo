@@ -9,6 +9,7 @@ import type { MemorySearchManager } from "./types.js";
 
 const log = createSubsystemLogger("memory");
 const MONGODB_MANAGER_CACHE = new Map<string, MemorySearchManager>();
+const MONGODB_MANAGER_INFLIGHT = new Map<string, Promise<MemorySearchManagerResult>>();
 
 export type MemorySearchManagerResult = {
   manager: MemorySearchManager | null;
@@ -46,33 +47,44 @@ export async function getMemorySearchManager(params: {
   if (cached) {
     return { manager: cached };
   }
+  const inflight = MONGODB_MANAGER_INFLIGHT.get(cacheKey);
+  if (inflight) {
+    return await inflight;
+  }
 
-  try {
-    const { MongoDBMemoryManager } = await import("./mongodb-manager.js");
-    const manager = await MongoDBMemoryManager.create({
-      cfg: params.cfg,
-      agentId: params.agentId,
-      resolved,
-      extraPaths: extraMemoryPaths,
-    });
-    if (!manager) {
-      const error = "mongodb memory manager initialization returned null";
+  const initPromise = (async (): Promise<MemorySearchManagerResult> => {
+    try {
+      const { MongoDBMemoryManager } = await import("./mongodb-manager.js");
+      const manager = await MongoDBMemoryManager.create({
+        cfg: params.cfg,
+        agentId: params.agentId,
+        resolved,
+        extraPaths: extraMemoryPaths,
+      });
+      if (!manager) {
+        const error = "mongodb memory manager initialization returned null";
+        log.warn(error);
+        return { manager: null, error };
+      }
+      MONGODB_MANAGER_CACHE.set(cacheKey, manager);
+      return { manager };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const error = `mongodb memory unavailable: ${message}`;
       log.warn(error);
       return { manager: null, error };
+    } finally {
+      MONGODB_MANAGER_INFLIGHT.delete(cacheKey);
     }
-    MONGODB_MANAGER_CACHE.set(cacheKey, manager);
-    return { manager };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error = `mongodb memory unavailable: ${message}`;
-    log.warn(error);
-    return { manager: null, error };
-  }
+  })();
+  MONGODB_MANAGER_INFLIGHT.set(cacheKey, initPromise);
+  return await initPromise;
 }
 
 export async function closeAllMemorySearchManagers(): Promise<void> {
   const managers = Array.from(MONGODB_MANAGER_CACHE.values());
   MONGODB_MANAGER_CACHE.clear();
+  MONGODB_MANAGER_INFLIGHT.clear();
   for (const manager of managers) {
     try {
       await manager.close?.();
