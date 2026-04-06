@@ -188,3 +188,4 @@ export {
   buildAssistantExtractionPrompt,
   parseExtractionResponse,
 } from "./mongodb-entity-extractor.js";
+export { traceReasoningChain } from "./mongodb-reasoning-chain.js";

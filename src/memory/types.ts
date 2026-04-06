@@ -439,6 +439,36 @@ export type MemoryProviderStatus = {
   custom?: Record<string, unknown>;
 };
 
+// ---------------------------------------------------------------------------
+// Reasoning Chain types (Phase 1 — Honcho steal)
+// ---------------------------------------------------------------------------
+
+export type ReasoningChainNodeType = "event" | "fact" | "gap";
+
+export type ReasoningChainNode = {
+  type: ReasoningChainNodeType;
+  id: string;
+  collection: string;
+  body?: string;
+  role?: string;
+  timestamp?: Date;
+  depth: number;
+  reason?: string; // for gap nodes: "deleted" | "missing_sourceEventIds"
+};
+
+export type ReasoningChain = {
+  factId: string;
+  collection: string;
+  nodes: ReasoningChainNode[];
+  chainComplete: boolean;
+  maxDepthReached: boolean;
+  agentId: string;
+};
+
+export type ReasoningChainOptions = {
+  maxDepth?: number; // default 10, clamped >= 0
+};
+
 export interface MemorySearchManager {
   search(
     query: string,
