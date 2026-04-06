@@ -507,6 +507,41 @@ export type AccessTrackerConfig = {
   flushIntervalMs?: number;
 };
 
+// ---------------------------------------------------------------------------
+// Consolidation Agent (Dreamer) types (Phase 6 — Honcho steal)
+// ---------------------------------------------------------------------------
+
+export type ConsolidationCandidate = {
+  eventId: string;
+  body: string;
+  timestamp: Date;
+  noveltyScore: number;
+  importanceDecay: number;
+  accessCount: number;
+  combinedScore: number;
+};
+
+export type ConsolidationResult = {
+  runId: string;
+  agentId: string;
+  eventsProcessed: number;
+  factsPromoted: number;
+  factsPruned: number;
+  conflictsResolved: number;
+  durationMs: number;
+  candidates: ConsolidationCandidate[];
+};
+
+export type ConsolidationOptions = {
+  maxEvents?: number; // default 100
+  minCombinedScore?: number; // default 0.3
+  minIntervalMs?: number; // default 3_600_000 (1 hour)
+  noveltyWeight?: number; // default 0.4
+  importanceWeight?: number; // default 0.3
+  accessWeight?: number; // default 0.3
+  scope?: MemoryScope;
+};
+
 export interface MemorySearchManager {
   search(
     query: string,

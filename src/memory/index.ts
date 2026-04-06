@@ -37,6 +37,9 @@ export type {
   MemorySource,
   RejectedResultSummary,
   AccessTrackerConfig,
+  ConsolidationCandidate,
+  ConsolidationResult,
+  ConsolidationOptions,
 } from "./types.js";
 export {
   closeAllMemorySearchManagers,
@@ -200,3 +203,4 @@ export { traceReasoningChain } from "./mongodb-reasoning-chain.js";
 export { scanNovelty } from "./mongodb-novelty.js";
 export { AccessTracker } from "./mongodb-access-tracker.js";
 export { consolidationRunsCollection } from "./mongodb-schema.js";
+export { consolidateMemory, markEventsDreamerProcessed } from "./mongodb-consolidator.js";
