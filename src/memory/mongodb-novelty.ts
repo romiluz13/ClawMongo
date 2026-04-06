@@ -100,7 +100,8 @@ export async function scanNovelty(params: {
   const eventsCol = db.collection(`${prefix}events`);
   const recentEvents = await eventsCol
     .find(filter)
-    .toSorted({ timestamp: -1 })
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
+    .sort({ timestamp: -1 })
     .limit(MAX_RECENT_EVENTS)
     .toArray();
 
