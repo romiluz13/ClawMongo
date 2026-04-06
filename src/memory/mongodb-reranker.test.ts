@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";

@@ -1,3 +1,5 @@
+import type { MemoryScope } from "../config/types.memory.js";
+
 // "memory" | "sessions" are legacy upstream source values preserved for
 // extensions/memory-core dead-code compilation. Runtime code uses
 // "reference" | "conversation" | "structured".
@@ -52,6 +54,19 @@ export type MemorySearchTrust = {
   recency: number;
 };
 
+export type MemorySearchTrustBand = "high" | "medium" | "low";
+
+export type MemorySearchTrustSummary = {
+  topScore: number | null;
+  averageScore: number | null;
+  topBand: MemorySearchTrustBand | null;
+  distribution: Record<MemorySearchTrustBand, number>;
+  contradictionCount: number;
+  staleCount: number;
+  exactCount: number;
+  sourceDiversity: "single" | "multi" | "none";
+};
+
 export type MemorySearchContradictionStatus = "clear" | "detected" | "unresolved";
 
 export type MemorySearchContradictionSummary = {
@@ -76,6 +91,17 @@ export type MemorySearchResult = {
   canonicalId?: string;
   sessionId?: string; // session the chunk belongs to (for contiguous merge / context expansion)
   timestamp?: Date; // event timestamp (for ordering in merge/expansion)
+  scope?: MemoryScope;
+  scopeRef?: string;
+  state?: string;
+  provenance?: Record<string, unknown>;
+  sourceEventIds?: string[];
+  sourceReliability?: number;
+  reinforcementCount?: number;
+  validFrom?: Date;
+  validTo?: Date;
+  reviewAt?: Date;
+  lastConfirmedAt?: Date;
   signals?: MemorySearchResultSignals;
   trust?: MemorySearchTrust;
 };
@@ -155,6 +181,7 @@ export type MemorySearchMetadata = {
   queryRewritten: boolean;
   reranked: boolean;
   trustApplied?: boolean;
+  trustSummary?: MemorySearchTrustSummary;
   contradictionSummary?: MemorySearchContradictionSummary;
   abstained?: boolean;
   abstainReason?: string;
@@ -172,6 +199,180 @@ export type MemorySearchMetadata = {
 export type MemorySearchResponse = {
   results: MemorySearchResult[];
   metadata: MemorySearchMetadata;
+};
+
+export type MemoryDiscoveryProjectionKind =
+  | "entity-brief"
+  | "topic-brief"
+  | "what-changed"
+  | "contradiction-report";
+
+export type MemoryDiscoveryProjectionSource =
+  | "graph"
+  | "structured"
+  | "procedural"
+  | "episodic"
+  | "conversation";
+
+export type MemoryDiscoveryProjectionEvidence = {
+  title: string;
+  summary: string;
+  path: string;
+  source: MemoryDiscoveryProjectionSource;
+  canonicalId?: string;
+  timestamp?: Date;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  sourceEventIds?: string[];
+};
+
+export type MemoryDiscoveryProjectionSection = {
+  title: string;
+  summary: string;
+  evidence: MemoryDiscoveryProjectionEvidence[];
+};
+
+export type MemoryDiscoveryProjectionMetadata = {
+  partial: boolean;
+  evidenceCount: number;
+  sourceCounts: Record<string, number>;
+  timeRange?: {
+    label: string;
+    start: Date;
+    end: Date;
+  };
+};
+
+export type MemoryDiscoveryProjection = {
+  kind: MemoryDiscoveryProjectionKind;
+  query?: string;
+  title: string;
+  summary: string;
+  scope: MemoryScope;
+  scopeRef: string;
+  sections: MemoryDiscoveryProjectionSection[];
+  metadata: MemoryDiscoveryProjectionMetadata;
+  builtAt: Date;
+};
+
+export type MemoryDiscoveryProjectionRequest = {
+  kind: MemoryDiscoveryProjectionKind;
+  query?: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  maxItems?: number;
+  timeRange?: MemorySearchTimeRange;
+};
+
+export type MemoryActiveSlateKind =
+  | "active-critical"
+  | "procedure"
+  | "decision"
+  | "current-state"
+  | "recent-anchor";
+
+export type MemoryActiveSlateSource = "structured" | "procedural" | "conversation";
+
+export type MemoryActiveSlateItem = {
+  kind: MemoryActiveSlateKind;
+  source: MemoryActiveSlateSource;
+  title: string;
+  summary: string;
+  path: string;
+  canonicalId?: string;
+  timestamp?: Date;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  state?: string;
+  salience?: string;
+  provenance?: Record<string, unknown>;
+  sourceEventIds?: string[];
+};
+
+export type MemoryActiveSlateMetadata = {
+  maxItems: number;
+  truncated: boolean;
+  partial: boolean;
+  countsByKind: Record<string, number>;
+  sourceCounts: Record<string, number>;
+};
+
+export type MemoryActiveSlate = {
+  agentId: string;
+  scope: MemoryScope;
+  scopeRef: string;
+  items: MemoryActiveSlateItem[];
+  metadata: MemoryActiveSlateMetadata;
+  hydratedAt: Date;
+};
+
+export type MemoryContextBundleSectionKind =
+  | "active-slate"
+  | "query-evidence"
+  | "summary"
+  | "recent-events"
+  | "discovery-projection"
+  | "profile";
+
+export type MemoryContextBundleSectionItem = {
+  title: string;
+  summary: string;
+  path?: string;
+  source?: string;
+  canonicalId?: string;
+  timestamp?: Date;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  sourceEventIds?: string[];
+  trust?: MemorySearchTrust;
+  metadata?: Record<string, unknown>;
+};
+
+export type MemoryContextBundleSection = {
+  kind: MemoryContextBundleSectionKind;
+  title: string;
+  summary?: string;
+  items: MemoryContextBundleSectionItem[];
+  estimatedTokens: number;
+  truncated: boolean;
+  partial: boolean;
+};
+
+export type MemoryContextBundleMetadata = {
+  tokenBudget: number;
+  estimatedTokensUsed: number;
+  partial: boolean;
+  truncated: boolean;
+  pathsExecuted: string[];
+  trustSummary?: MemorySearchTrustSummary;
+  sectionsIncluded: MemoryContextBundleSectionKind[];
+};
+
+export type MemoryContextBundle = {
+  agentId: string;
+  query?: string;
+  scope: MemoryScope;
+  scopeRef: string;
+  sessionId?: string;
+  rendered: string;
+  sections: MemoryContextBundleSection[];
+  metadata: MemoryContextBundleMetadata;
+  builtAt: Date;
+};
+
+export type MemoryContextBundleRequest = {
+  query?: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  sessionId?: string;
+  tokenBudget?: number;
+  maxActiveItems?: number;
+  maxEvidenceItems?: number;
+  maxRecentEvents?: number;
+  includeDiscoveryProjection?: boolean;
+  discoveryKind?: MemoryDiscoveryProjectionKind;
+  includeProfile?: boolean;
+  timeRange?: MemorySearchTimeRange;
 };
 
 export type MemoryReadResult = {
@@ -244,6 +445,15 @@ export interface MemorySearchManager {
     opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
   ): Promise<MemorySearchResult[]>;
   searchDetailed?(request: MemorySearchRequest): Promise<MemorySearchResponse>;
+  buildDiscoveryProjection?(
+    request: MemoryDiscoveryProjectionRequest,
+  ): Promise<MemoryDiscoveryProjection>;
+  hydrateActiveSlate?(params?: {
+    scope?: MemoryScope;
+    scopeRef?: string;
+    maxItems?: number;
+  }): Promise<MemoryActiveSlate>;
+  buildContextBundle?(request?: MemoryContextBundleRequest): Promise<MemoryContextBundle>;
   /** Direct KB search — optional, only available on MongoDB backend. */
   searchKB?(
     query: string,

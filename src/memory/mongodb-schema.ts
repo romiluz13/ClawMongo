@@ -1518,6 +1518,7 @@ export async function ensureSearchIndexes(
           agentId: { type: "token" },
           scope: { type: "token" },
           scopeRef: { type: "token" },
+          sessionId: { type: "token" },
           status: { type: "token" },
           timestamp: { type: "date" },
           updatedAt: { type: "date" },

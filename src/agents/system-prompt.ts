@@ -43,12 +43,21 @@ function buildMongoDBBridgeSection(params: {
     return [];
   }
   if (params.isMinimal) {
-    // Condensed bridge for sub-agents: just memory_search routing guidance
-    return [
+    const lines = [
       "## MongoDB Memory",
-      "MongoDB memory is active. Use memory_search for prior context before answering.",
-      "",
+      "MongoDB memory is active. Use runtime memory tools before answering from background knowledge.",
     ];
+    if (!params.availableTools || params.availableTools.has("memory_active_slate")) {
+      lines.push("- Current state, blockers, active constraints -> memory_active_slate");
+    }
+    if (!params.availableTools || params.availableTools.has("memory_discovery_projection")) {
+      lines.push("- Changes, contradictions, compact briefs -> memory_discovery_projection");
+    }
+    if (!params.availableTools || params.availableTools.has("memory_context_bundle")) {
+      lines.push("- Handoffs or prompt-ready compact context -> memory_context_bundle");
+    }
+    lines.push("- General prior recall -> memory_search", "");
+    return lines;
   }
   const tools = params.availableTools;
   const lines: string[] = [
@@ -57,6 +66,17 @@ function buildMongoDBBridgeSection(params: {
     "- To recall: always call memory_search FIRST (not file reads)",
     "- For current situation, active constraints, crises, blockers, or major ongoing context: treat active runtime memory as first-class recall, not optional background context",
   ];
+  if (!tools || tools.has("memory_active_slate")) {
+    lines.push("- For current state, blockers, or what matters now: use memory_active_slate");
+  }
+  if (!tools || tools.has("memory_discovery_projection")) {
+    lines.push(
+      "- For changes, contradictions, topic briefs, or entity briefs: use memory_discovery_projection",
+    );
+  }
+  if (!tools || tools.has("memory_context_bundle")) {
+    lines.push("- For handoff briefs or prompt-ready packed context: use memory_context_bundle");
+  }
   if (!tools || tools.has("memory_write")) {
     lines.push("- To store structured data: use memory_write (not file writes)");
   }
@@ -194,6 +214,21 @@ function buildMemorySection(params: {
     lines.push(
       "- **memory_search** — Your primary runtime recall tool. Searches across all populated MongoDB-backed retrieval lanes (conversation history, structured facts, entities/graph, episodes, procedures, knowledge base). Coverage varies by agent -- the planner automatically skips empty lanes.",
     );
+    if (params.availableTools.has("memory_active_slate")) {
+      lines.push(
+        "- **memory_active_slate** — Use when the question is about current state, blockers, active work, urgent constraints, or what matters now.",
+      );
+    }
+    if (params.availableTools.has("memory_discovery_projection")) {
+      lines.push(
+        "- **memory_discovery_projection** — Use for what changed, contradiction checks, and compact topic/entity briefs built from runtime evidence.",
+      );
+    }
+    if (params.availableTools.has("memory_context_bundle")) {
+      lines.push(
+        "- **memory_context_bundle** — Use for handoffs, prompt-ready compact memory packets, or when you need an evidence-backed brief under a token budget.",
+      );
+    }
     if (params.availableTools.has("kb_search")) {
       lines.push(
         "- **kb_search** — Dedicated knowledge base search. Use when looking for imported reference material, documentation, FAQs, or architecture specs.",
@@ -230,9 +265,23 @@ function buildMemorySection(params: {
     }
     lines.push("- Conversation/history recall -> memory_search");
     lines.push('- Broad "what do I know about X?" -> memory_search');
-    lines.push(
-      "- Current-state or situational questions -> memory_search first, with extra attention to active high-priority runtime memory",
-    );
+    if (params.availableTools.has("memory_active_slate")) {
+      lines.push("- Current-state, blockers, or situational urgency -> memory_active_slate");
+    } else {
+      lines.push(
+        "- Current-state or situational questions -> memory_search first, with extra attention to active high-priority runtime memory",
+      );
+    }
+    if (params.availableTools.has("memory_discovery_projection")) {
+      lines.push(
+        "- Changes, contradictions, trend shifts, topic/entity brief -> memory_discovery_projection",
+      );
+    }
+    if (params.availableTools.has("memory_context_bundle")) {
+      lines.push(
+        "- Handoff brief, prompt-ready compact context, or token-bounded summary -> memory_context_bundle",
+      );
+    }
   } else {
     lines.push(
       "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search against the configured runtime memory backend; then use memory_get only for the specific Mongo-backed locator you need. If low confidence after search, say you checked.",

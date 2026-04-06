@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
-
 import type { Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import type { DetectedCapabilities } from "./mongodb-schema.js";

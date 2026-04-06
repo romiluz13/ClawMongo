@@ -172,9 +172,9 @@ The retrieval planner (`planRetrieval`) scores paths based on query analysis:
 
 After retrieval, `crossEncoderRerank` (Voyage rerank-2.5, on by default) applies cross-encoder precision scoring with a 2-second timeout and graceful fallback, followed by `rerankResults` for source diversity, episode boost, deduplication, and backstop execution.
 
-### Selective Agentic Internal Search
+### MongoDB Memory Tooling
 
-ClawMongo now keeps `memory_search` as one stable public tool while adding a richer MongoDB-first internal contract under the hood:
+ClawMongo now exposes a richer MongoDB-first memory tool surface instead of forcing every recall question through generic search:
 
 - `searchMode`: `auto`, `direct`, or `agentic`
 - ordered `sourcePreference`
@@ -182,6 +182,9 @@ ClawMongo now keeps `memory_search` as one stable public tool while adding a ric
 - `needExactEvidence`
 - bounded `maxPasses`
 - planner-visible metadata: classification, passes, queries tried, constraints, rejected evidence, and executed paths
+- `memory_active_slate`: current-state, blockers, and what matters now
+- `memory_discovery_projection`: change reports, contradiction checks, topic briefs, and entity briefs
+- `memory_context_bundle`: prompt-ready, token-bounded handoff and briefing context
 
 The important behavior change is selective, not universal:
 
@@ -189,8 +192,9 @@ The important behavior change is selective, not universal:
 - family, comparison, scoped, and temporal lookups can expand across bounded extra passes
 - hard constraints stay enforced near MongoDB instead of being treated like prompt suggestions
 - exact evidence remains first-class for auditability and answer discipline
+- handoff-style questions no longer need the agent to manually stitch together search hits and recent transcript context
 
-This is validated in the real production-readiness suite against the public `memory_search` tool on `mongodb/mongodb-atlas-local:preview` with a live Voyage key, including direct-vs-agentic behavior, cache-hit metadata, scoped rejection, temporal rejection, and bounded-pass evaluation signals.
+This is validated in the real production-readiness and runtime-write suites against `mongodb/mongodb-atlas-local:preview`, including direct-vs-agentic `memory_search`, exact procedural backstops, prompt-ready context bundle assembly, and current-state recall via active slate.
 
 ### Test Coverage
 

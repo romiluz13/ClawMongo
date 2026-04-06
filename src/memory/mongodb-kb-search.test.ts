@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import { searchKB } from "./mongodb-kb-search.js";

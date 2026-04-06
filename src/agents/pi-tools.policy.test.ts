@@ -105,13 +105,22 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
       tools: {
         subagents: {
           tools: {
-            deny: ["memory_search", "memory_get"],
+            deny: [
+              "memory_search",
+              "memory_active_slate",
+              "memory_discovery_projection",
+              "memory_context_bundle",
+              "memory_get",
+            ],
           },
         },
       },
     } as unknown as OpenClawConfig;
     const policy = resolveSubagentToolPolicy(cfg, 1);
     expect(isToolAllowedByPolicyName("memory_search", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("memory_active_slate", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("memory_discovery_projection", policy)).toBe(false);
+    expect(isToolAllowedByPolicyName("memory_context_bundle", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("memory_get", policy)).toBe(false);
   });
 
@@ -150,6 +159,9 @@ describe("resolveSubagentToolPolicy depth awareness", () => {
     expect(isToolAllowedByPolicyName("gateway", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("cron", policy)).toBe(false);
     expect(isToolAllowedByPolicyName("memory_search", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("memory_active_slate", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("memory_discovery_projection", policy)).toBe(true);
+    expect(isToolAllowedByPolicyName("memory_context_bundle", policy)).toBe(true);
     expect(isToolAllowedByPolicyName("memory_get", policy)).toBe(true);
   });
 

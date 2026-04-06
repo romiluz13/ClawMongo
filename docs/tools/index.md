@@ -142,20 +142,20 @@ Per-agent override: `agents.list[].tools.profile`.
 
 Use `group:*` shorthands in allow/deny lists:
 
-| Group              | Tools                                                                                                     |
-| ------------------ | --------------------------------------------------------------------------------------------------------- |
-| `group:runtime`    | exec, process, code_execution (`bash` is accepted as an alias for `exec`)                                 |
-| `group:fs`         | read, write, edit, apply_patch                                                                            |
-| `group:sessions`   | sessions_list, sessions_history, sessions_send, sessions_spawn, sessions_yield, subagents, session_status |
-| `group:memory`     | memory_search, memory_get                                                                                 |
-| `group:web`        | web_search, x_search, web_fetch                                                                           |
-| `group:ui`         | browser, canvas                                                                                           |
-| `group:automation` | cron, gateway                                                                                             |
-| `group:messaging`  | message                                                                                                   |
-| `group:nodes`      | nodes                                                                                                     |
-| `group:agents`     | agents_list                                                                                               |
-| `group:media`      | image, image_generate, music_generate, video_generate, tts                                                |
-| `group:openclaw`   | All built-in OpenClaw tools (excludes plugin tools)                                                       |
+| Group              | Tools                                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `group:runtime`    | exec, process, code_execution (`bash` is accepted as an alias for `exec`)                                                   |
+| `group:fs`         | read, write, edit, apply_patch                                                                                              |
+| `group:sessions`   | sessions_list, sessions_history, sessions_send, sessions_spawn, sessions_yield, subagents, session_status                   |
+| `group:memory`     | memory_search, memory_active_slate, memory_discovery_projection, memory_context_bundle, memory_get, kb_search, memory_write |
+| `group:web`        | web_search, x_search, web_fetch                                                                                             |
+| `group:ui`         | browser, canvas                                                                                                             |
+| `group:automation` | cron, gateway                                                                                                               |
+| `group:messaging`  | message                                                                                                                     |
+| `group:nodes`      | nodes                                                                                                                       |
+| `group:agents`     | agents_list                                                                                                                 |
+| `group:media`      | image, image_generate, music_generate, video_generate, tts                                                                  |
+| `group:openclaw`   | All built-in OpenClaw tools (excludes plugin tools)                                                                         |
 
 `sessions_history` returns a bounded, safety-filtered recall view. It strips
 thinking tags, `<relevant-memories>` scaffolding, plain-text tool-call XML

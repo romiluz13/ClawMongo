@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock assertions */
 import type { Db } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
 import type { ResolvedMongoDBConfig } from "./backend-config.js";

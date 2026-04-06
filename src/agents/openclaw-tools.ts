@@ -22,6 +22,9 @@ import { createImageGenerateTool } from "./tools/image-generate-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
 import {
   createKBSearchTool,
+  createMemoryActiveSlateTool,
+  createMemoryContextBundleTool,
+  createMemoryDiscoveryProjectionTool,
   createMemoryGetTool,
   createMemorySearchTool,
   createMemoryWriteTool,
@@ -209,6 +212,18 @@ export function createOpenClawTools(
     config: options?.config,
     agentSessionKey: options?.agentSessionKey,
   });
+  const memoryActiveSlateTool = createMemoryActiveSlateTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
+  const memoryDiscoveryProjectionTool = createMemoryDiscoveryProjectionTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
+  const memoryContextBundleTool = createMemoryContextBundleTool({
+    config: options?.config,
+    agentSessionKey: options?.agentSessionKey,
+  });
   const memoryGetTool = createMemoryGetTool({
     config: options?.config,
     agentSessionKey: options?.agentSessionKey,
@@ -321,6 +336,9 @@ export function createOpenClawTools(
     ...(imageTool ? [imageTool] : []),
     ...(pdfTool ? [pdfTool] : []),
     ...(memorySearchTool ? [memorySearchTool] : []),
+    ...(memoryActiveSlateTool ? [memoryActiveSlateTool] : []),
+    ...(memoryDiscoveryProjectionTool ? [memoryDiscoveryProjectionTool] : []),
+    ...(memoryContextBundleTool ? [memoryContextBundleTool] : []),
     ...(memoryGetTool ? [memoryGetTool] : []),
     ...(kbSearchTool ? [kbSearchTool] : []),
     ...(memoryWriteTool ? [memoryWriteTool] : []),

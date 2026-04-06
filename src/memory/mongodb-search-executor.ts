@@ -42,14 +42,25 @@ export type MemorySearchExecutorPlanPass = {
   variant: "original" | "rewrite" | "family-expansion" | "decomposition";
 };
 
-function sourcePreferencePaths(source: MemorySearchSourcePreference): RetrievalPath[] {
+function hasSpecificStructuredAnchor(query: string): boolean {
+  return normalizeFollowUpQuery(query)
+    .split(/\s+/)
+    .some((token) => /[-\d]/.test(token) || token.length >= 12);
+}
+
+function sourcePreferencePaths(
+  source: MemorySearchSourcePreference,
+  query?: string,
+): RetrievalPath[] {
   switch (source) {
     case "conversation":
       return ["hybrid", "raw-window"];
     case "reference":
       return ["kb"];
     case "structured":
-      return ["active-critical", "structured"];
+      return query && hasSpecificStructuredAnchor(query)
+        ? ["structured"]
+        : ["active-critical", "structured"];
     case "procedural":
       return ["procedural"];
     case "episodic":
@@ -66,6 +77,7 @@ function selectPassPaths(params: {
   availablePaths: Set<RetrievalPath>;
   sourcePreference: MemorySearchSourcePreference[];
   pass: number;
+  query: string;
   timeRange?: MemorySearchExecutorTimeRange;
 }): Set<RetrievalPath> {
   const allowed = new Set(params.availablePaths);
@@ -80,12 +92,12 @@ function selectPassPaths(params: {
     return allowed;
   }
   const preferredAllowed = new Set(
-    params.sourcePreference.flatMap((source) => sourcePreferencePaths(source)),
+    params.sourcePreference.flatMap((source) => sourcePreferencePaths(source, params.query)),
   );
   const scopedAllowed = new Set(Array.from(allowed).filter((path) => preferredAllowed.has(path)));
   const preferredSource =
     params.sourcePreference[Math.min(params.pass - 1, params.sourcePreference.length - 1)];
-  const preferredPaths = sourcePreferencePaths(preferredSource).filter((path) =>
+  const preferredPaths = sourcePreferencePaths(preferredSource, params.query).filter((path) =>
     scopedAllowed.has(path),
   );
   if (preferredPaths.length === 0 || params.pass > params.sourcePreference.length) {
@@ -1040,6 +1052,7 @@ export async function executeMongoSearchPlan(params: {
       availablePaths: params.availablePaths,
       sourcePreference: normalized.sourcePreference,
       pass: passPlan.pass,
+      query: passPlan.query,
       ...(timeRange ? { timeRange } : {}),
     });
     const executed = await params.executePass({
@@ -1162,13 +1175,7 @@ export async function executeMongoSearchPlan(params: {
             ? (() => {
                 const focused = new Set(
                   (
-                    [
-                      "active-critical",
-                      "structured",
-                      "raw-window",
-                      "hybrid",
-                      "graph",
-                    ] as RetrievalPath[]
+                    ["active-critical", "structured", "raw-window", "graph"] as RetrievalPath[]
                   ).filter((path) => params.availablePaths.has(path)),
                 );
                 return focused.size > 0 ? focused : params.availablePaths;

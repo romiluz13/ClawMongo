@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { MongoDBChangeStreamWatcher, type ChangeStreamCallback } from "./mongodb-change-stream.js";

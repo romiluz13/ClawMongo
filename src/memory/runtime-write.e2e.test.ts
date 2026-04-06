@@ -211,6 +211,86 @@ describe("MongoDB runtime write e2e", () => {
     expect(transcriptExists).toBe(false);
   }, 90_000);
 
+  it("builds a prompt-ready context bundle from active runtime state and recent session events", async () => {
+    const sessionId = `runtime-context-${randomUUID().slice(0, 8)}`;
+    const marker = `phoenix-handoff-${randomUUID().slice(0, 8)}`;
+    const scopeRef = `session:${sessionId}`;
+
+    const { manager, error } = await getMemorySearchManager({ cfg, agentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+    if (typeof manager.buildContextBundle !== "function") {
+      throw new Error("expected buildContextBundle() on MongoDB memory manager");
+    }
+
+    await writeStructuredMemory({
+      db,
+      prefix,
+      entry: {
+        type: "project",
+        key: `${marker}-blocker`,
+        value: `${marker} is blocked on Atlas Local validation before rollout.`,
+        confidence: 0.98,
+        agentId,
+        scope: "session",
+        scopeRef,
+        salience: "critical",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-${marker}`],
+      },
+      embeddingMode: cfg.memory?.mongodb?.embeddingMode ?? "automated",
+    });
+
+    await writeEventAndProject(db, prefix, {
+      agentId,
+      role: "user",
+      body: `Please prepare a compact handoff for ${marker}. The blocker is Atlas Local validation and the release window is Friday afternoon.`,
+      scope: "session",
+      sessionId,
+      metadata: { runtimeE2E: "context-bundle", marker },
+    });
+    await writeEventAndProject(db, prefix, {
+      agentId,
+      role: "assistant",
+      body: `Understood. ${marker} remains blocked on Atlas Local validation, and the next release window is Friday afternoon.`,
+      scope: "session",
+      sessionId,
+      metadata: { runtimeE2E: "context-bundle", marker },
+    });
+
+    const bundle = await waitForCondition(
+      async () =>
+        await manager.buildContextBundle?.({
+          query: marker,
+          scope: "session",
+          sessionId,
+          tokenBudget: 320,
+          maxRecentEvents: 4,
+          maxEvidenceItems: 4,
+        }),
+      (value) =>
+        Boolean(
+          value &&
+          value.sections.some((section) => section.kind === "active-slate") &&
+          value.sections.some((section) => section.kind === "query-evidence") &&
+          value.sections.some((section) => section.kind === "recent-events"),
+        ),
+      30_000,
+      500,
+    );
+
+    expect(bundle).toBeTruthy();
+    expect(bundle?.metadata.tokenBudget).toBe(320);
+    expect(bundle?.sections.map((section) => section.kind)).toEqual(
+      expect.arrayContaining(["active-slate", "query-evidence", "recent-events"]),
+    );
+    expect(bundle?.rendered).toContain(marker);
+    expect(bundle?.rendered).toContain("Atlas Local validation");
+  }, 60_000);
+
   it("promotes derived structured facts and procedures and auto-materializes episodes on the live write path", async () => {
     const sessionId = `runtime-derived-${randomUUID().slice(0, 8)}`;
     const derivedAgentId = `runtime-derived-${randomUUID().slice(0, 6)}`;

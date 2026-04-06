@@ -27,7 +27,6 @@ const mockMongoClientDbFn = vi.hoisted(() =>
 );
 
 vi.mock("mongodb", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test mock requires constructor pattern
   const MockMongoClient: any = function (this: Record<string, unknown>, uri: string) {
     this.connect = () => mockMongoClientConnectFn(uri);
     this.close = mockMongoClientCloseFn;

@@ -91,7 +91,6 @@ describe("projectConversationWindows", () => {
     const limitFn = vi.fn().mockReturnValue({ toArray: toArrayFn });
     const sortFn = vi.fn().mockReturnValue({ limit: limitFn });
     const findFn = vi.fn().mockReturnValue({
-      // oxlint-disable-next-line unicorn/no-array-sort
       sort: sortFn,
     });
     const updateOneFn = vi.fn().mockResolvedValue({ upsertedCount: 1 });

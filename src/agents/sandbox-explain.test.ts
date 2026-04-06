@@ -54,7 +54,12 @@ describe("sandbox explain helpers", () => {
     const policy = resolveSandboxToolPolicyForAgent(cfg, "work");
     expect(policy.allow).toEqual([
       "memory_search",
+      "memory_active_slate",
+      "memory_discovery_projection",
+      "memory_context_bundle",
       "memory_get",
+      "kb_search",
+      "memory_write",
       "read",
       "write",
       "edit",
@@ -82,6 +87,9 @@ describe("sandbox explain helpers", () => {
 
     const policy = resolveSandboxToolPolicyForAgent(cfg, "main");
     expect(policy.allow).toContain("memory_search");
+    expect(policy.allow).toContain("memory_active_slate");
+    expect(policy.allow).toContain("memory_discovery_projection");
+    expect(policy.allow).toContain("memory_context_bundle");
     expect(policy.allow).toContain("memory_get");
     expect(policy.deny).toContain("memory_get");
   });

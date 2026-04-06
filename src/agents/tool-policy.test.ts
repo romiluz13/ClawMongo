@@ -69,6 +69,17 @@ describe("tool-policy", () => {
     expect(group).toContain("tts");
   });
 
+  it("keeps group:memory aligned with the MongoDB runtime tool surface", () => {
+    const group = TOOL_GROUPS["group:memory"];
+    expect(group).toContain("memory_search");
+    expect(group).toContain("memory_active_slate");
+    expect(group).toContain("memory_discovery_projection");
+    expect(group).toContain("memory_context_bundle");
+    expect(group).toContain("memory_get");
+    expect(group).toContain("kb_search");
+    expect(group).toContain("memory_write");
+  });
+
   it("normalizes tool names and aliases", () => {
     expect(normalizeToolName(" BASH ")).toBe("exec");
     expect(normalizeToolName("apply-patch")).toBe("apply_patch");

@@ -18,7 +18,11 @@ export type ProjectionType =
   | "relations"
   | "episodes"
   | "structured-promotion"
-  | "procedures";
+  | "procedures"
+  | "entity-brief"
+  | "topic-brief"
+  | "what-changed"
+  | "contradiction-report";
 
 export type IngestRun = {
   runId: string;

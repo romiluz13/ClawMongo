@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 

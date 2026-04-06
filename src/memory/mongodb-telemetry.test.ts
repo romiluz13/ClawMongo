@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {

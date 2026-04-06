@@ -1,4 +1,9 @@
-import type { MemorySearchResult, MemorySearchTrust } from "./types.js";
+import type {
+  MemorySearchResult,
+  MemorySearchTrust,
+  MemorySearchTrustBand,
+  MemorySearchTrustSummary,
+} from "./types.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EXACT_LOCATOR_PREFIXES = ["events/", "structured:", "procedure:", "episode:", "relation:"];
@@ -216,4 +221,83 @@ export function applyTrustAwareReranking(
     score: adjustedScore,
     trust,
   }));
+}
+
+function classifyTrustBand(score: number): MemorySearchTrustBand {
+  if (score >= 0.8) {
+    return "high";
+  }
+  if (score >= 0.55) {
+    return "medium";
+  }
+  return "low";
+}
+
+export function summarizeResultTrust(results: MemorySearchResult[]): MemorySearchTrustSummary {
+  if (results.length === 0) {
+    return {
+      topScore: null,
+      averageScore: null,
+      topBand: null,
+      distribution: { high: 0, medium: 0, low: 0 },
+      contradictionCount: 0,
+      staleCount: 0,
+      exactCount: 0,
+      sourceDiversity: "none",
+    };
+  }
+
+  const trusts = results
+    .map((result) => result.trust ?? computeResultTrust(result))
+    .filter((trust): trust is MemorySearchTrust => Boolean(trust));
+  if (trusts.length === 0) {
+    return {
+      topScore: null,
+      averageScore: null,
+      topBand: null,
+      distribution: { high: 0, medium: 0, low: 0 },
+      contradictionCount: 0,
+      staleCount: 0,
+      exactCount: 0,
+      sourceDiversity: "none",
+    };
+  }
+
+  const distribution: Record<MemorySearchTrustBand, number> = {
+    high: 0,
+    medium: 0,
+    low: 0,
+  };
+  let topScore = 0;
+  let totalScore = 0;
+  let contradictionCount = 0;
+  let staleCount = 0;
+  let exactCount = 0;
+
+  for (const trust of trusts) {
+    totalScore += trust.score;
+    topScore = Math.max(topScore, trust.score);
+    distribution[classifyTrustBand(trust.score)] += 1;
+    if (trust.contradiction < 0.5) {
+      contradictionCount += 1;
+    }
+    if (trust.freshness < 0.4) {
+      staleCount += 1;
+    }
+    if (trust.exactness >= 0.9) {
+      exactCount += 1;
+    }
+  }
+
+  const sourceKinds = new Set(results.map((result) => result.source));
+  return {
+    topScore: clamp01(topScore),
+    averageScore: clamp01(totalScore / trusts.length),
+    topBand: classifyTrustBand(topScore),
+    distribution,
+    contradictionCount,
+    staleCount,
+    exactCount,
+    sourceDiversity: sourceKinds.size === 0 ? "none" : sourceKinds.size === 1 ? "single" : "multi",
+  };
 }

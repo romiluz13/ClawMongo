@@ -3,6 +3,9 @@ import type { OpenClawConfig } from "../../config/config.js";
 import type { MemorySearchResult } from "../../memory/types.js";
 import {
   createMemorySearchTool,
+  createMemoryActiveSlateTool,
+  createMemoryContextBundleTool,
+  createMemoryDiscoveryProjectionTool,
   createKBSearchTool,
   createMemoryWriteTool,
   computeFeedbackHint,
@@ -47,6 +50,24 @@ describe("memory tool descriptions with MongoDB backend", () => {
     const tool = createMemoryWriteTool({ config: cfg });
     expect(tool).not.toBeNull();
     expect(tool!.description).toContain("Example:");
+  });
+
+  it("mongodb specialty memory tools expose focused descriptions", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp" } },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+    } as OpenClawConfig;
+
+    const activeSlateTool = createMemoryActiveSlateTool({ config: cfg });
+    const discoveryTool = createMemoryDiscoveryProjectionTool({ config: cfg });
+    const contextBundleTool = createMemoryContextBundleTool({ config: cfg });
+
+    expect(activeSlateTool).not.toBeNull();
+    expect(activeSlateTool!.description).toContain("current situation");
+    expect(discoveryTool).not.toBeNull();
+    expect(discoveryTool!.description).toContain("what changed");
+    expect(contextBundleTool).not.toBeNull();
+    expect(contextBundleTool!.description).toContain("handoffs");
   });
 });
 

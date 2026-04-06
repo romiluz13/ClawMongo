@@ -5,7 +5,15 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
   it("includes decision tree when memoryBackend is mongodb and memory tools available", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      toolNames: [
+        "memory_search",
+        "memory_active_slate",
+        "memory_discovery_projection",
+        "memory_context_bundle",
+        "memory_get",
+        "kb_search",
+        "memory_write",
+      ],
       memoryBackend: "mongodb",
     });
 
@@ -18,10 +26,15 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     expect(prompt).toContain("When searching:");
     expect(prompt).toContain("kb_search");
     expect(prompt).toContain("memory_search");
+    expect(prompt).toContain("memory_active_slate");
+    expect(prompt).toContain("memory_discovery_projection");
+    expect(prompt).toContain("memory_context_bundle");
     expect(prompt).toContain("primary runtime recall tool");
     expect(prompt).toContain("imported documentation or explicit reference material");
     expect(prompt).toContain("current situation");
-    expect(prompt).toContain("active high-priority runtime memory");
+    expect(prompt).toContain(
+      "Current-state, blockers, or situational urgency -> memory_active_slate",
+    );
   });
 
   it("includes decision tree header section", () => {
@@ -77,7 +90,15 @@ describe("buildAgentSystemPrompt MongoDB decision tree", () => {
     // pi-embedded-runner/system-prompt.ts) use the same function, so this validates them all
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      toolNames: [
+        "memory_search",
+        "memory_active_slate",
+        "memory_discovery_projection",
+        "memory_context_bundle",
+        "memory_get",
+        "kb_search",
+        "memory_write",
+      ],
       memoryBackend: "mongodb",
     });
 
@@ -93,7 +114,15 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
   it("renders bridge section AFTER Project Context when memoryBackend=mongodb and isMinimal=false", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      toolNames: [
+        "memory_search",
+        "memory_active_slate",
+        "memory_discovery_projection",
+        "memory_context_bundle",
+        "memory_get",
+        "kb_search",
+        "memory_write",
+      ],
       memoryBackend: "mongodb",
       contextFiles: [
         { path: "AGENTS.md", content: "Write it down to a file." },
@@ -107,6 +136,9 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     expect(prompt).toContain("memory_search FIRST");
     expect(prompt).toContain("memory_write");
     expect(prompt).toContain("kb_search");
+    expect(prompt).toContain("memory_active_slate");
+    expect(prompt).toContain("memory_discovery_projection");
+    expect(prompt).toContain("memory_context_bundle");
     expect(prompt).not.toContain("MEMORY.md");
     expect(prompt).toContain("current situation");
     expect(prompt).toContain("active constraints");
@@ -126,7 +158,15 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
   it("renders condensed bridge section when isMinimal=true and memoryBackend=mongodb (subagent mode)", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
-      toolNames: ["memory_search", "memory_get", "kb_search", "memory_write"],
+      toolNames: [
+        "memory_search",
+        "memory_active_slate",
+        "memory_discovery_projection",
+        "memory_context_bundle",
+        "memory_get",
+        "kb_search",
+        "memory_write",
+      ],
       memoryBackend: "mongodb",
       promptMode: "minimal",
     });
@@ -134,6 +174,9 @@ describe("buildAgentSystemPrompt MongoDB bridge section", () => {
     // Condensed bridge for sub-agents: essential guidance only
     expect(prompt).toContain("## MongoDB Memory");
     expect(prompt).toContain("memory_search");
+    expect(prompt).toContain("memory_active_slate");
+    expect(prompt).toContain("memory_discovery_projection");
+    expect(prompt).toContain("memory_context_bundle");
     // Full bridge sections should NOT appear in minimal mode
     expect(prompt).not.toContain("## MongoDB Memory Integration");
     expect(prompt).not.toContain("memory_search FIRST (not file reads)");

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method -- Vitest mock method assertions */
 import type { Db, Collection, Document } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -763,6 +762,20 @@ describe("ensureSearchIndexes", () => {
     expect(filterPaths).toContain("updatedAt");
   });
 
+  it("includes session-aware token mappings in the chunks text index", async () => {
+    const db = mockDb();
+    await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
+
+    const chunks = db.collection("test_chunks") as unknown as {
+      createSearchIndex: ReturnType<typeof vi.fn>;
+    };
+    const textCall = chunks.createSearchIndex.mock.calls.find(
+      (c: unknown[]) => (c[0] as Document).type === "search",
+    );
+    const textFields = (textCall![0] as Document).definition.mappings.fields;
+    expect(textFields.sessionId).toEqual({ type: "token" });
+  });
+
   it("creates Atlas Search indexes for entity and episode lookups", async () => {
     const db = mockDb();
     await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
@@ -848,11 +861,44 @@ describe("ensureSearchIndexes", () => {
                 },
               },
             ]
-          : [],
+          : name === "test_chunks_text"
+            ? [
+                {
+                  name,
+                  type: "search",
+                  definition: {
+                    mappings: {
+                      dynamic: false,
+                      fields: {
+                        text: { type: "string", analyzer: "lucene.standard" },
+                        source: { type: "token" },
+                        path: { type: "token" },
+                        agentId: { type: "token" },
+                        scope: { type: "token" },
+                        scopeRef: { type: "token" },
+                        status: { type: "token" },
+                        timestamp: { type: "date" },
+                        updatedAt: { type: "date" },
+                      },
+                    },
+                  },
+                },
+              ]
+            : [],
     }));
 
     await ensureSearchIndexes(db, "test_", "community-mongot", "automated");
 
+    expect(chunks.updateSearchIndex).toHaveBeenCalledWith(
+      "test_chunks_text",
+      expect.objectContaining({
+        mappings: expect.objectContaining({
+          fields: expect.objectContaining({
+            sessionId: { type: "token" },
+          }),
+        }),
+      }),
+    );
     expect(chunks.updateSearchIndex).toHaveBeenCalledWith(
       "test_chunks_vector",
       expect.objectContaining({

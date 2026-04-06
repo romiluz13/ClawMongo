@@ -4,12 +4,21 @@ import { MongoClient } from "mongodb";
 import { resolveDefaultAgentId } from "../src/agents/agent-scope.js";
 import type { OpenClawConfig } from "../src/config/config.js";
 import { readBestEffortConfig } from "../src/config/config.js";
-import { getMemorySearchManager } from "../src/memory/index.js";
+import { closeAllMemorySearchManagers, getMemorySearchManager } from "../src/memory/index.js";
 import { upsertEntity, upsertRelation } from "../src/memory/mongodb-graph.js";
 import { writeEventAndProject } from "../src/memory/mongodb-manager.js";
 import { ensureCollections, ensureStandardIndexes } from "../src/memory/mongodb-schema.js";
 import { writeStructuredMemory } from "../src/memory/mongodb-structured-memory.js";
-import type { MemorySearchRequest, MemorySearchResponse } from "../src/memory/types.js";
+import type {
+  MemoryActiveSlate,
+  MemoryContextBundle,
+  MemoryContextBundleRequest,
+  MemoryDiscoveryProjection,
+  MemoryDiscoveryProjectionRequest,
+  MemorySearchManager,
+  MemorySearchRequest,
+  MemorySearchResponse,
+} from "../src/memory/types.js";
 
 type EvalQuery =
   | string
@@ -34,6 +43,37 @@ type EvalRow = {
 type SeededLifecycleDemo = {
   defaultQueries: EvalQuery[];
   notes: string[];
+  specializedChecks: SpecializedEvalCheck[];
+};
+
+type SpecializedEvalCheck =
+  | {
+      kind: "active-slate";
+      label: string;
+      params?: Parameters<NonNullable<MemorySearchManager["hydrateActiveSlate"]>>[0];
+      expectContains: string[];
+    }
+  | {
+      kind: "discovery-projection";
+      label: string;
+      request: MemoryDiscoveryProjectionRequest;
+      expectContains: string[];
+    }
+  | {
+      kind: "context-bundle";
+      label: string;
+      request: MemoryContextBundleRequest;
+      expectContains: string[];
+      expectSections?: string[];
+    };
+
+type SpecializedEvalRow = {
+  kind: SpecializedEvalCheck["kind"];
+  label: string;
+  summary: string;
+  partial: boolean;
+  highlights: string[];
+  sections?: string[];
 };
 
 type Summary = {
@@ -169,6 +209,10 @@ async function seedLifecycleDemo(
     const currentGraphTarget = `PhoenixOwner${suffix}`;
     const rescueSubject = `phoenix-rescue-${rescueSuffix}`;
     const contradictionSubject = `phoenix-conflict-${contradictionSuffix}`;
+    const activeSlateMarker = `phoenix-active-${suffix}`;
+    const handoffMarker = `phoenix-handoff-${suffix}`;
+    const handoffSessionId = `eval-handoff-${suffix}`;
+    const handoffScopeRef = `session:${handoffSessionId}`;
 
     await upsertEntity({
       db,
@@ -233,6 +277,26 @@ async function seedLifecycleDemo(
       },
     });
 
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "project",
+        key: `active-slate-current-${suffix}`,
+        value: `${activeSlateMarker} is blocked on Atlas Local validation and currently owned by Sarah.`,
+        confidence: 0.97,
+        agentId,
+        scope: "agent",
+        state: "active",
+        salience: "critical",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-active-slate-${suffix}`],
+        sourceReliability: 0.96,
+        reinforcementCount: 3,
+        lastConfirmedAt: now,
+      },
+      embeddingMode: target.embeddingMode,
+    });
     await writeStructuredMemory({
       db,
       prefix: target.prefix,
@@ -329,6 +393,40 @@ async function seedLifecycleDemo(
       sessionId: `eval-contradiction-resolution-${suffix}`,
       metadata: { evalDemo: "contradiction-correction", contradictionSubject },
     });
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "project",
+        key: `handoff-blocker-${suffix}`,
+        value: `${handoffMarker} is blocked on Atlas Local validation before rollout.`,
+        confidence: 0.99,
+        agentId,
+        scope: "session",
+        scopeRef: handoffScopeRef,
+        state: "active",
+        salience: "critical",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-handoff-${suffix}`],
+      },
+      embeddingMode: target.embeddingMode,
+    });
+    await writeEventAndProject(db, target.prefix, {
+      agentId,
+      role: "user",
+      body: `Prepare a compact handoff for ${handoffMarker}. The blocker is Atlas Local validation and the release window is Friday afternoon.`,
+      scope: "session",
+      sessionId: handoffSessionId,
+      metadata: { evalDemo: "context-bundle", handoffMarker },
+    });
+    await writeEventAndProject(db, target.prefix, {
+      agentId,
+      role: "assistant",
+      body: `Current handoff for ${handoffMarker}: still blocked on Atlas Local validation, with the next release window on Friday afternoon.`,
+      scope: "session",
+      sessionId: handoffSessionId,
+      metadata: { evalDemo: "context-bundle", handoffMarker },
+    });
 
     return {
       defaultQueries: [
@@ -366,6 +464,44 @@ async function seedLifecycleDemo(
         `Seeded structured current-state demo: lifecycle authority marker ${suffix} should prefer Sarah over stale Mike.`,
         `Seeded freshness-rescue demo: ${rescueSubject} should be rescued from stale Mike structured memory to fresh Sarah event evidence.`,
         `Seeded contradiction demo: ${contradictionSubject} should require a conflict-evidence correction pass and resolve to Sarah.`,
+        `Seeded active-slate demo: ${activeSlateMarker} should surface as active current state owned by Sarah.`,
+        `Seeded context-bundle demo: ${handoffMarker} should assemble a handoff with active state, evidence, and recent events under budget.`,
+      ],
+      specializedChecks: [
+        {
+          kind: "active-slate",
+          label: "current-state and blocker slate",
+          params: { scope: "agent", maxItems: 5 },
+          expectContains: [activeSlateMarker, "Sarah"],
+        },
+        {
+          kind: "discovery-projection",
+          label: "what changed projection",
+          request: {
+            kind: "what-changed",
+            query: contradictionSubject,
+            scope: "agent",
+            maxItems: 5,
+          },
+          expectContains: [contradictionSubject, "Sarah"],
+        },
+        {
+          kind: "context-bundle",
+          label: "prompt-ready handoff bundle",
+          request: {
+            query: handoffMarker,
+            scope: "session",
+            sessionId: handoffSessionId,
+            tokenBudget: 320,
+            maxActiveItems: 4,
+            maxRecentEvents: 4,
+            maxEvidenceItems: 4,
+            includeDiscoveryProjection: true,
+            discoveryKind: "what-changed",
+          },
+          expectContains: [handoffMarker, "Atlas Local validation", "Friday afternoon"],
+          expectSections: ["active-slate", "query-evidence", "recent-events"],
+        },
       ],
     };
   } finally {
@@ -420,7 +556,134 @@ function compareResults(
   };
 }
 
-function renderMarkdown(rows: EvalRow[], notes: string[] = []): string {
+function collectActiveSlateText(slate: MemoryActiveSlate): string {
+  return [
+    ...slate.items.flatMap((item) => [item.title, item.summary, item.path]),
+    ...Object.keys(slate.metadata.countsByKind),
+  ].join("\n");
+}
+
+function collectProjectionText(projection: MemoryDiscoveryProjection): string {
+  return [
+    projection.title,
+    projection.summary,
+    ...projection.sections.flatMap((section) => [
+      section.title,
+      section.summary,
+      ...section.evidence.flatMap((evidence) => [evidence.title, evidence.summary, evidence.path]),
+    ]),
+  ].join("\n");
+}
+
+function collectContextBundleText(bundle: MemoryContextBundle): string {
+  return [
+    bundle.rendered,
+    ...bundle.sections.flatMap((section) => [
+      section.title,
+      section.summary ?? "",
+      ...section.items.flatMap((item) => [item.title, item.summary, item.path ?? ""]),
+    ]),
+  ].join("\n");
+}
+
+function assertContainsAll(params: { label: string; haystack: string; expected: string[] }): void {
+  const haystack = params.haystack.toLowerCase();
+  for (const expected of params.expected) {
+    if (!haystack.includes(expected.toLowerCase())) {
+      throw new Error(`${params.label} missing expected content: ${expected}`);
+    }
+  }
+}
+
+async function runSpecializedChecks(
+  manager: MemorySearchManager,
+  checks: SpecializedEvalCheck[],
+): Promise<SpecializedEvalRow[]> {
+  const rows: SpecializedEvalRow[] = [];
+  for (const check of checks) {
+    switch (check.kind) {
+      case "active-slate": {
+        if (typeof manager.hydrateActiveSlate !== "function") {
+          throw new Error("hydrateActiveSlate() is unavailable on the active memory manager");
+        }
+        const slate = await manager.hydrateActiveSlate(check.params);
+        assertContainsAll({
+          label: check.label,
+          haystack: collectActiveSlateText(slate),
+          expected: check.expectContains,
+        });
+        rows.push({
+          kind: check.kind,
+          label: check.label,
+          summary: `Hydrated ${slate.items.length} active-slate items for ${slate.scope}:${slate.scopeRef}.`,
+          partial: slate.metadata.partial,
+          highlights: slate.items
+            .slice(0, 4)
+            .map((item) => `${item.kind}: ${item.title} — ${item.summary}`),
+        });
+        break;
+      }
+      case "discovery-projection": {
+        if (typeof manager.buildDiscoveryProjection !== "function") {
+          throw new Error("buildDiscoveryProjection() is unavailable on the active memory manager");
+        }
+        const projection = await manager.buildDiscoveryProjection(check.request);
+        assertContainsAll({
+          label: check.label,
+          haystack: collectProjectionText(projection),
+          expected: check.expectContains,
+        });
+        rows.push({
+          kind: check.kind,
+          label: check.label,
+          summary: projection.summary,
+          partial: projection.metadata.partial,
+          sections: projection.sections.map((section) => section.title),
+          highlights: projection.sections.flatMap((section) =>
+            section.evidence
+              .slice(0, 2)
+              .map((evidence) => `${section.title}: ${evidence.title} — ${evidence.summary}`),
+          ),
+        });
+        break;
+      }
+      case "context-bundle": {
+        if (typeof manager.buildContextBundle !== "function") {
+          throw new Error("buildContextBundle() is unavailable on the active memory manager");
+        }
+        const bundle = await manager.buildContextBundle(check.request);
+        assertContainsAll({
+          label: check.label,
+          haystack: collectContextBundleText(bundle),
+          expected: check.expectContains,
+        });
+        for (const expectedSection of check.expectSections ?? []) {
+          if (!bundle.metadata.sectionsIncluded.includes(expectedSection as never)) {
+            throw new Error(`${check.label} missing expected section: ${expectedSection}`);
+          }
+        }
+        rows.push({
+          kind: check.kind,
+          label: check.label,
+          summary: `Built ${bundle.sections.length} sections using ${bundle.metadata.estimatedTokensUsed}/${bundle.metadata.tokenBudget} estimated tokens.`,
+          partial: bundle.metadata.partial,
+          sections: bundle.metadata.sectionsIncluded,
+          highlights: bundle.sections
+            .slice(0, 4)
+            .map((section) => `${section.kind}: ${section.title} (${section.items.length} items)`),
+        });
+        break;
+      }
+    }
+  }
+  return rows;
+}
+
+function renderMarkdown(
+  rows: EvalRow[],
+  notes: string[] = [],
+  specializedRows: SpecializedEvalRow[] = [],
+): string {
   const lines: string[] = ["# ClawMongo Agentic Internal Search Eval", ""];
   if (notes.length > 0) {
     for (const note of notes) {
@@ -477,6 +740,29 @@ function renderMarkdown(rows: EvalRow[], notes: string[] = []): string {
     }
     lines.push("");
   }
+  if (specializedRows.length > 0) {
+    lines.push("# Specialized MongoDB Memory Capabilities", "");
+    for (const row of specializedRows) {
+      lines.push(`## ${row.label}`);
+      lines.push("");
+      lines.push(`- Capability: ${row.kind}`);
+      lines.push(`- Summary: ${row.summary}`);
+      lines.push(`- Partial: ${row.partial ? "yes" : "no"}`);
+      if (row.sections && row.sections.length > 0) {
+        lines.push(`- Sections: ${row.sections.join(", ")}`);
+      }
+      lines.push("");
+      lines.push("Highlights:");
+      if (row.highlights.length === 0) {
+        lines.push("- none");
+      } else {
+        for (const highlight of row.highlights) {
+          lines.push(`- ${highlight}`);
+        }
+      }
+      lines.push("");
+    }
+  }
   return lines.join("\n");
 }
 
@@ -496,6 +782,10 @@ async function main() {
   }
 
   const rows: EvalRow[] = [];
+  const specializedRows =
+    seededDemo?.specializedChecks && seededDemo.specializedChecks.length > 0
+      ? await runSpecializedChecks(manager, seededDemo.specializedChecks)
+      : [];
   for (const entry of queries) {
     const query = typeof entry === "string" ? entry : entry.query;
     const direct = await manager.searchDetailed({
@@ -519,14 +809,34 @@ async function main() {
   }
 
   if (hasFlag("--json")) {
-    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        specializedRows.length > 0 ? { searchRows: rows, specializedRows } : rows,
+        null,
+        2,
+      )}\n`,
+    );
     return;
   }
-  process.stdout.write(`${renderMarkdown(rows, seededDemo?.notes ?? [])}\n`);
+  process.stdout.write(`${renderMarkdown(rows, seededDemo?.notes ?? [], specializedRows)}\n`);
 }
 
-main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
-});
+async function run(): Promise<void> {
+  try {
+    await main();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  } finally {
+    try {
+      await closeAllMemorySearchManagers();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`closeAllMemorySearchManagers failed: ${message}\n`);
+      process.exitCode = 1;
+    }
+  }
+}
+
+void run();

@@ -27,7 +27,15 @@ import { authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import { resolveGatewayScopedTools } from "./tool-resolution.js";
 
 const DEFAULT_BODY_BYTES = 2 * 1024 * 1024;
-const MEMORY_TOOL_NAMES = new Set(["memory_search", "memory_get", "kb_search", "memory_write"]);
+const MEMORY_TOOL_NAMES = new Set([
+  "memory_search",
+  "memory_active_slate",
+  "memory_discovery_projection",
+  "memory_context_bundle",
+  "memory_get",
+  "kb_search",
+  "memory_write",
+]);
 
 type ToolsInvokeBody = {
   tool?: unknown;

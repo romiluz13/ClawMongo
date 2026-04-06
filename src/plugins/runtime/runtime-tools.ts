@@ -1,5 +1,8 @@
 import {
   createKBSearchTool,
+  createMemoryActiveSlateTool,
+  createMemoryContextBundleTool,
+  createMemoryDiscoveryProjectionTool,
   createMemoryGetTool,
   createMemorySearchTool,
   createMemoryWriteTool,
@@ -8,6 +11,9 @@ import { registerMemoryCli } from "../../cli/memory-cli.js";
 export function createRuntimeTools() {
   return {
     createKBSearchTool,
+    createMemoryActiveSlateTool,
+    createMemoryContextBundleTool,
+    createMemoryDiscoveryProjectionTool,
     createMemoryGetTool,
     createMemorySearchTool,
     createMemoryWriteTool,

@@ -9,8 +9,10 @@ import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
 import { normalizeExtraMemoryPaths } from "./internal.js";
+import { hydrateActiveSlate } from "./mongodb-active-slate.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
+import { buildContextBundle as composeContextBundle } from "./mongodb-context-bundle.js";
 import { expandSearchContext } from "./mongodb-context-expansion.js";
 import { mergeContiguousChunks } from "./mongodb-contiguous-merge.js";
 import { projectConversationWindows } from "./mongodb-conversation-windows.js";
@@ -20,6 +22,7 @@ import {
   extractStructuredCandidatesFromEvent,
   extractProcedureCandidatesFromEvent,
 } from "./mongodb-derived-memory.js";
+import { buildDiscoveryProjection } from "./mongodb-discovery-projections.js";
 import type { EntityExtractor } from "./mongodb-entity-extractor.js";
 import { LLMEntityExtractor } from "./mongodb-entity-extractor.js";
 import { searchEpisodes } from "./mongodb-episodes.js";
@@ -33,7 +36,7 @@ import { updateLaneCoverage, getLaneCoverage } from "./mongodb-lane-coverage.js"
 import * as mongodbOps from "./mongodb-ops.js";
 import type { IngestRun, ProjectionRun } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
-import { searchProcedures } from "./mongodb-procedures.js";
+import { findExactProcedureMatches, searchProcedures } from "./mongodb-procedures.js";
 import type { ProcedureState } from "./mongodb-procedures.js";
 import { synthesizeProfile, type ProfileSynthesis } from "./mongodb-profile.js";
 import {
@@ -44,6 +47,7 @@ import {
   type QueryCacheSourceScope,
 } from "./mongodb-query-cache.js";
 import { rewriteQuery, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
+import { rankRawWindowEvents } from "./mongodb-raw-window-ranking.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -54,9 +58,8 @@ import {
   type RelevanceSourceScope,
 } from "./mongodb-relevance.js";
 import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";
-import { applyTrustAwareReranking } from "./mongodb-result-trust.js";
+import { applyTrustAwareReranking, summarizeResultTrust } from "./mongodb-result-trust.js";
 import {
-  hasProceduralSignal,
   planRetrieval,
   type RetrievalPath,
   type RetrievalPlan,
@@ -108,6 +111,11 @@ import type {
 import { syncToMongoDB } from "./mongodb-sync.js";
 import * as mongodbTelemetry from "./mongodb-telemetry.js";
 import type {
+  MemoryActiveSlate,
+  MemoryContextBundle,
+  MemoryContextBundleRequest,
+  MemoryDiscoveryProjection,
+  MemoryDiscoveryProjectionRequest,
   MemoryEmbeddingProbeResult,
   MemoryProviderStatus,
   MemorySearchMetadata,
@@ -2328,6 +2336,95 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     return getV2Status(this.db, this.prefix, this.agentId);
   }
 
+  async hydrateActiveSlate(params?: {
+    scope?: MemoryScope;
+    scopeRef?: string;
+    maxItems?: number;
+  }): Promise<MemoryActiveSlate> {
+    const scope = params?.scope ?? "agent";
+    return hydrateActiveSlate({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      scope,
+      scopeRef: params?.scopeRef ?? resolveScopeRef({ scope, agentId: this.agentId }),
+      maxItems: params?.maxItems,
+    });
+  }
+
+  async buildDiscoveryProjection(
+    request: MemoryDiscoveryProjectionRequest,
+  ): Promise<MemoryDiscoveryProjection> {
+    const scope = request.scope ?? "agent";
+    return buildDiscoveryProjection({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      kind: request.kind,
+      query: request.query,
+      scope,
+      scopeRef: request.scopeRef ?? resolveScopeRef({ scope, agentId: this.agentId }),
+      maxItems: request.maxItems,
+      timeRange: request.timeRange,
+    });
+  }
+
+  async buildContextBundle(request: MemoryContextBundleRequest = {}): Promise<MemoryContextBundle> {
+    const scope = request.scope ?? "agent";
+    const scopeRef =
+      request.scopeRef ??
+      resolveScopeRef({
+        scope,
+        agentId: this.agentId,
+        sessionId: request.sessionId,
+        workspaceDir: this.workspaceDir,
+      });
+    const mongoCfg = this.config.mongodb!;
+    const activeSources = getActiveSources(mongoCfg.sources, mongoCfg.kb.enabled);
+    const availablePaths = this.buildV2AvailablePaths(activeSources);
+
+    return composeContextBundle({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      scope,
+      scopeRef,
+      request,
+      search: async (params) => {
+        const result = await searchV2(this.db, this.prefix, params.query, this.agentId, {
+          availablePaths,
+          hasEpisodes: mongoCfg.episodes.enabled,
+          hasGraphData: mongoCfg.graph.enabled,
+          maxResults: params.maxResults,
+          searchOptions: {
+            minScore: 0.1,
+            sessionKey: params.scope === "session" ? params.sessionId : undefined,
+            numCandidates: mongoCfg.numCandidates,
+            capabilities: this.capabilities,
+            fusionMethod: mongoCfg.fusionMethod,
+            embeddingMode: mongoCfg.embeddingMode,
+            conversationFilter: this.buildConversationChunkFilter(
+              params.scope === "session" && params.sessionId
+                ? { sessionKey: params.sessionId }
+                : undefined,
+            ),
+            bridgeFilter: activeSources.conversation ? this.buildBridgeChunkFilter() : undefined,
+            bridgeMaxResults: this.getBridgeChunkBudget(params.maxResults),
+            scope: params.scope,
+            scopeRef: params.scopeRef,
+            rerankConfig: mongoCfg.reranking,
+            queryRewriteConfig: mongoCfg.queryRewriting,
+          },
+        });
+        return {
+          results: result.results,
+          pathsExecuted: result.metadata.pathsExecuted,
+          trustSummary: summarizeResultTrust(result.results),
+        };
+      },
+    });
+  }
+
   // C2-manager audit fix: synthesizeProfile delegation to standalone function
   async synthesizeProfile(
     params: {
@@ -3014,6 +3111,26 @@ function buildGraphQueryCandidates(query: string): string[] {
   return Array.from(candidates).slice(0, 6);
 }
 
+function isTrustedPlannerEntityCandidate(candidate: string, query: string): boolean {
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/\s/.test(trimmed) || /[./_-]/.test(trimmed)) {
+    return true;
+  }
+  if (/^\p{Lu}/u.test(trimmed)) {
+    return true;
+  }
+  const lowerQuery = query.toLowerCase();
+  const lowerCandidate = trimmed.toLowerCase();
+  return (
+    lowerQuery.includes(`"${lowerCandidate}"`) ||
+    lowerQuery.includes(`@${lowerCandidate}`) ||
+    lowerQuery.includes(`#${lowerCandidate}`)
+  );
+}
+
 /**
  * Execute a v2 retrieval plan: call planRetrieval, execute top 3 paths, deduplicate results.
  * Each path has its own try/catch so one failure doesn't kill the whole search.
@@ -3104,7 +3221,12 @@ export async function searchV2(
 
     const rawPlan = planRetrieval(query, {
       availablePaths: context.availablePaths,
-      knownEntityNames: graphQueryCandidates,
+      knownEntityNames:
+        context.knownEntityNames && context.knownEntityNames.length > 0
+          ? context.knownEntityNames
+          : graphQueryCandidates.filter((candidate) =>
+              isTrustedPlannerEntityCandidate(candidate, query),
+            ),
       hasEpisodes: context.hasEpisodes,
       hasGraphData: context.hasGraphData,
       laneCoverage,
@@ -3276,22 +3398,11 @@ export async function searchV2(
                   scopeRef: agentScopeRef,
                   limit: rawWindowLimit,
                 });
-            const recentFirst = [...events].toSorted(
-              (a, b) => b.timestamp.getTime() - a.timestamp.getTime(),
+            pathResults = rankRawWindowEvents(
+              events,
+              searchQuery,
+              Math.min(rawWindowLimit, maxResults),
             );
-            pathResults = recentFirst.map((e, i) => ({
-              canonicalId: e.eventId,
-              path: `events/${e.eventId}`,
-              filePath: `events/${e.eventId}`,
-              startLine: 0,
-              endLine: 0,
-              snippet: e.body,
-              score: 1 - i * 0.01,
-              source: "conversation" as MemorySource,
-              sourceType: "conversation" as MemorySource,
-              sessionId: e.sessionId,
-              timestamp: e.timestamp,
-            }));
             break;
           }
           case "graph": {
@@ -3499,12 +3610,34 @@ export async function searchV2(
 
     // Deduplicate, rerank, and limit
     let deduped = deduplicateSearchResults(results);
-    const hasProcedureHit = deduped.some((result) => result.path.startsWith("procedure:"));
+    const needsExactProceduralBackstop =
+      context.availablePaths.has("procedural") &&
+      !deduped.some((result) => result.path.startsWith("procedure:"));
+    if (needsExactProceduralBackstop) {
+      try {
+        const exactProcedureMatches = await findExactProcedureMatches(
+          proceduresCollection(db, prefix),
+          query,
+          {
+            maxResults: context.maxResults ?? 10,
+            filter: proceduralFilter,
+          },
+        );
+        if (exactProcedureMatches.length > 0) {
+          pathsExecuted.push("procedural");
+          resultsByPath.procedural = exactProcedureMatches.length;
+          perPathResults.procedural = exactProcedureMatches;
+          deduped = deduplicateSearchResults([...deduped, ...exactProcedureMatches]);
+        }
+      } catch (err) {
+        log.warn(`searchV2 exact procedural backstop failed: ${String(err)}`);
+      }
+    }
     const needsProceduralBackstop =
       context.availablePaths.has("procedural") &&
-      ((!pathsToExecute.includes("procedural") &&
-        deduped.length < Math.max(2, Math.ceil(maxResults / 3))) ||
-        (hasProceduralSignal(query) && !hasProcedureHit));
+      !pathsToExecute.includes("procedural") &&
+      !pathsExecuted.includes("procedural") &&
+      deduped.length < Math.max(2, Math.ceil(maxResults / 3));
     if (needsProceduralBackstop) {
       try {
         const procedureFallback = await searchProcedures(

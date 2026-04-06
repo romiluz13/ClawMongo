@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
-import type { MemoryCitationsMode } from "../../config/types.memory.js";
+import type { MemoryCitationsMode, MemoryScope } from "../../config/types.memory.js";
 import type {
+  MemoryDiscoveryProjectionKind,
   MemorySearchMode,
   MemorySearchRequest,
   MemorySearchResponse,
@@ -100,6 +101,78 @@ function readValidatedEnumArray<T extends string>(
   return values as T[];
 }
 
+function readTimeRangeParam(
+  params: Record<string, unknown>,
+  key: string,
+): MemorySearchRequest["timeRange"] | undefined {
+  const timeRangeRaw = readObjectParam(params, key);
+  if (!timeRangeRaw) {
+    return undefined;
+  }
+  const preset = readValidatedEnum<MemorySearchTimeRangePreset>(
+    timeRangeRaw,
+    "preset",
+    new Set(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
+  );
+  const start = readStringParam(timeRangeRaw, "start");
+  const end = readStringParam(timeRangeRaw, "end");
+  if (!preset && !start && !end) {
+    return undefined;
+  }
+  return {
+    ...(preset ? { preset } : {}),
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
+  };
+}
+
+function readMemoryScopeParam(
+  params: Record<string, unknown>,
+  key: string,
+): MemoryScope | undefined {
+  return readValidatedEnum<MemoryScope>(params, key, new Set(MEMORY_SCOPE_VALUES));
+}
+
+function readMemoryDiscoveryRequest(params: Record<string, unknown>) {
+  const kind = readValidatedEnum<MemoryDiscoveryProjectionKind>(
+    params,
+    "kind",
+    new Set(MEMORY_DISCOVERY_KIND_VALUES),
+  );
+  return {
+    kind: kind ?? "topic-brief",
+    query: readStringParam(params, "query"),
+    scope: readMemoryScopeParam(params, "scope"),
+    scopeRef: readStringParam(params, "scopeRef"),
+    maxItems: readNumberParam(params, "maxItems", { integer: true }),
+    timeRange: readTimeRangeParam(params, "timeRange"),
+  };
+}
+
+function readMemoryContextBundleRequest(params: Record<string, unknown>) {
+  const includeDiscoveryProjection =
+    readBooleanParam(params, "includeDiscoveryProjection") ??
+    readBooleanParam(params, "includeDiscovery");
+  return {
+    query: readStringParam(params, "query"),
+    scope: readMemoryScopeParam(params, "scope"),
+    scopeRef: readStringParam(params, "scopeRef"),
+    sessionId: readStringParam(params, "sessionId"),
+    tokenBudget: readNumberParam(params, "tokenBudget", { integer: true }),
+    maxActiveItems: readNumberParam(params, "maxActiveItems", { integer: true }),
+    maxRecentEvents: readNumberParam(params, "maxRecentEvents", { integer: true }),
+    maxEvidenceItems: readNumberParam(params, "maxEvidenceItems", { integer: true }),
+    ...(includeDiscoveryProjection !== undefined ? { includeDiscoveryProjection } : {}),
+    includeProfile: readBooleanParam(params, "includeProfile"),
+    discoveryKind: readValidatedEnum<MemoryDiscoveryProjectionKind>(
+      params,
+      "discoveryKind",
+      new Set(MEMORY_DISCOVERY_KIND_VALUES),
+    ),
+    timeRange: readTimeRangeParam(params, "timeRange"),
+  };
+}
+
 function readMemorySearchRequest(
   params: Record<string, unknown>,
   sessionKey?: string,
@@ -117,16 +190,7 @@ function readMemorySearchRequest(
     "sourcePreference",
     new Set(MEMORY_SEARCH_SOURCE_VALUES),
   );
-  const timeRangeRaw = readObjectParam(params, "timeRange");
-  const timeRangePreset = timeRangeRaw
-    ? readValidatedEnum<MemorySearchTimeRangePreset>(
-        timeRangeRaw,
-        "preset",
-        new Set(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
-      )
-    : undefined;
-  const timeRangeStart = timeRangeRaw ? readStringParam(timeRangeRaw, "start") : undefined;
-  const timeRangeEnd = timeRangeRaw ? readStringParam(timeRangeRaw, "end") : undefined;
+  const timeRange = readTimeRangeParam(params, "timeRange");
   const conversationScopeRaw = readObjectParam(params, "conversationScope");
   const structuredScopeRaw = readObjectParam(params, "structuredScope");
   const referenceScopeRaw = readObjectParam(params, "referenceScope");
@@ -144,15 +208,7 @@ function readMemorySearchRequest(
     ...(minScore !== undefined ? { minScore } : {}),
     ...(searchMode ? { searchMode } : {}),
     ...(sourcePreference ? { sourcePreference } : {}),
-    ...(timeRangePreset || timeRangeStart || timeRangeEnd
-      ? {
-          timeRange: {
-            ...(timeRangePreset ? { preset: timeRangePreset } : {}),
-            ...(timeRangeStart ? { start: timeRangeStart } : {}),
-            ...(timeRangeEnd ? { end: timeRangeEnd } : {}),
-          },
-        }
-      : {}),
+    ...(timeRange ? { timeRange } : {}),
     ...(needExactEvidence !== undefined ? { needExactEvidence } : {}),
     ...(maxPasses !== undefined ? { maxPasses } : {}),
     ...(returnPlan !== undefined ? { returnPlan } : {}),
@@ -250,6 +306,7 @@ function buildFallbackDetailedResponse(
 }
 
 const MEMORY_SEARCH_MODE_VALUES = ["auto", "direct", "agentic"] as const;
+const MEMORY_SCOPE_VALUES = ["session", "user", "agent", "workspace", "tenant", "global"] as const;
 const MEMORY_SEARCH_SOURCE_VALUES = [
   "conversation",
   "reference",
@@ -257,6 +314,12 @@ const MEMORY_SEARCH_SOURCE_VALUES = [
   "procedural",
   "episodic",
   "graph",
+] as const;
+const MEMORY_DISCOVERY_KIND_VALUES = [
+  "entity-brief",
+  "topic-brief",
+  "what-changed",
+  "contradiction-report",
 ] as const;
 const MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES = [
   "today",
@@ -315,6 +378,49 @@ const MemoryGetSchema = Type.Object({
   path: Type.String(),
   from: Type.Optional(Type.Number()),
   lines: Type.Optional(Type.Number()),
+});
+
+const MemoryActiveSlateSchema = Type.Object({
+  scope: Type.Optional(stringEnum(MEMORY_SCOPE_VALUES)),
+  scopeRef: Type.Optional(Type.String()),
+  maxItems: Type.Optional(Type.Number()),
+});
+
+const MemoryDiscoveryProjectionSchema = Type.Object({
+  kind: Type.Optional(stringEnum(MEMORY_DISCOVERY_KIND_VALUES)),
+  query: Type.Optional(Type.String()),
+  scope: Type.Optional(stringEnum(MEMORY_SCOPE_VALUES)),
+  scopeRef: Type.Optional(Type.String()),
+  maxItems: Type.Optional(Type.Number()),
+  timeRange: Type.Optional(
+    Type.Object({
+      preset: optionalStringEnum(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
+      start: Type.Optional(Type.String()),
+      end: Type.Optional(Type.String()),
+    }),
+  ),
+});
+
+const MemoryContextBundleSchema = Type.Object({
+  query: Type.Optional(Type.String()),
+  scope: Type.Optional(stringEnum(MEMORY_SCOPE_VALUES)),
+  scopeRef: Type.Optional(Type.String()),
+  sessionId: Type.Optional(Type.String()),
+  tokenBudget: Type.Optional(Type.Number()),
+  maxActiveItems: Type.Optional(Type.Number()),
+  maxRecentEvents: Type.Optional(Type.Number()),
+  maxEvidenceItems: Type.Optional(Type.Number()),
+  includeDiscoveryProjection: Type.Optional(Type.Boolean()),
+  includeDiscovery: Type.Optional(Type.Boolean()),
+  includeProfile: Type.Optional(Type.Boolean()),
+  discoveryKind: Type.Optional(stringEnum(MEMORY_DISCOVERY_KIND_VALUES)),
+  timeRange: Type.Optional(
+    Type.Object({
+      preset: optionalStringEnum(MEMORY_SEARCH_TIME_RANGE_PRESET_VALUES),
+      start: Type.Optional(Type.String()),
+      end: Type.Optional(Type.String()),
+    }),
+  ),
 });
 
 const KBSearchSchema = Type.Object({
@@ -537,6 +643,118 @@ export function createMemoryGetTool(options: {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return jsonResult(buildMemoryReadUnavailableResult(relPath, message));
+        }
+      },
+  });
+}
+
+export function createMemoryActiveSlateTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemoryTool({
+    options,
+    label: "Memory Active Slate",
+    name: "memory_active_slate",
+    description:
+      "Return the highest-signal active runtime memory for the current situation, blockers, constraints, and ongoing work. Use this before answering questions about what matters now.",
+    parameters: MemoryActiveSlateSchema,
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const request = {
+          scope: readMemoryScopeParam(params, "scope"),
+          scopeRef: readStringParam(params, "scopeRef"),
+          maxItems: readNumberParam(params, "maxItems", { integer: true }),
+        };
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult({ items: [], disabled: true, error: memory.error });
+        }
+        if (!memory.manager.hydrateActiveSlate) {
+          return jsonResult({
+            items: [],
+            disabled: true,
+            error: "active slate is not supported on this memory backend",
+          });
+        }
+        try {
+          return jsonResult(await memory.manager.hydrateActiveSlate(request));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ items: [], disabled: true, error: message });
+        }
+      },
+  });
+}
+
+export function createMemoryDiscoveryProjectionTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemoryTool({
+    options,
+    label: "Memory Discovery Projection",
+    name: "memory_discovery_projection",
+    description:
+      "Project changes, contradictions, entity briefs, or topic briefs from MongoDB runtime memory. Use this when the user asks what changed, what conflicts, or for a compact brief on a topic or entity.",
+    parameters: MemoryDiscoveryProjectionSchema,
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const request = readMemoryDiscoveryRequest(params);
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult({ sections: [], disabled: true, error: memory.error });
+        }
+        if (!memory.manager.buildDiscoveryProjection) {
+          return jsonResult({
+            sections: [],
+            disabled: true,
+            error: "discovery projection is not supported on this memory backend",
+          });
+        }
+        try {
+          return jsonResult(await memory.manager.buildDiscoveryProjection(request));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ sections: [], disabled: true, error: message });
+        }
+      },
+  });
+}
+
+export function createMemoryContextBundleTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemoryTool({
+    options,
+    label: "Memory Context Bundle",
+    name: "memory_context_bundle",
+    description:
+      "Assemble a prompt-ready, token-bounded context bundle from active slate, evidence, summaries, and recent events. Use this for handoffs, compact briefs, or context packing before answering.",
+    parameters: MemoryContextBundleSchema,
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const request = readMemoryContextBundleRequest(params);
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult({ sections: [], disabled: true, error: memory.error });
+        }
+        if (!memory.manager.buildContextBundle) {
+          return jsonResult({
+            sections: [],
+            disabled: true,
+            error: "context bundle is not supported on this memory backend",
+          });
+        }
+        try {
+          return jsonResult(await memory.manager.buildContextBundle(request));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ sections: [], disabled: true, error: message });
         }
       },
   });

@@ -466,6 +466,21 @@ export const TOOL_DISPLAY_CONFIG: ToolDisplayConfig = {
       title: "Memory Search",
       detailKeys: ["query"],
     },
+    memory_active_slate: {
+      emoji: "🧭",
+      title: "Active Slate",
+      detailKeys: ["scope", "scopeRef", "maxItems"],
+    },
+    memory_discovery_projection: {
+      emoji: "🧩",
+      title: "Discovery Projection",
+      detailKeys: ["kind", "query", "scope", "scopeRef"],
+    },
+    memory_context_bundle: {
+      emoji: "📦",
+      title: "Context Bundle",
+      detailKeys: ["query", "scope", "scopeRef", "tokenBudget"],
+    },
     memory_get: {
       emoji: "📓",
       title: "Memory Get",

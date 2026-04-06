@@ -475,6 +475,77 @@ function toProcedureResult(doc: Document): MemorySearchResult {
   };
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function findExactProcedureMatches(
+  collection: Collection,
+  query: string,
+  opts: {
+    maxResults: number;
+    filter?: {
+      agentId?: string;
+      scope?: MemoryScope;
+      scopeRef?: string;
+      state?: ProcedureState;
+      intentTags?: string[];
+    };
+  },
+): Promise<MemorySearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const filter: Document = {};
+  if (opts.filter?.agentId) {
+    filter.agentId = opts.filter.agentId;
+  }
+  if (opts.filter?.scope) {
+    filter.scope = opts.filter.scope;
+  }
+  if (opts.filter?.scopeRef) {
+    filter.scopeRef = opts.filter.scopeRef;
+  }
+  if (opts.filter?.state) {
+    filter.state = opts.filter.state;
+  }
+  if (opts.filter?.intentTags?.length) {
+    filter.intentTags = { $in: opts.filter.intentTags };
+  }
+
+  const exactAlias = new RegExp(`^${escapeRegex(trimmed)}$`, "i");
+  const docs = await collection
+    .find(
+      {
+        ...filter,
+        $or: [{ name: exactAlias }, { triggerQueries: exactAlias }],
+      },
+      {
+        projection: {
+          _id: 0,
+          procedureId: 1,
+          searchText: 1,
+          confidence: 1,
+          sourceEventIds: 1,
+          state: 1,
+          updatedAt: 1,
+        },
+        sort: { updatedAt: -1 },
+        limit: opts.maxResults,
+      },
+    )
+    .toArray();
+
+  return docs.map((doc) =>
+    toProcedureResult({
+      ...doc,
+      score: typeof doc.score === "number" ? doc.score : 1,
+    }),
+  );
+}
+
 export async function searchProcedures(
   collection: Collection,
   query: string,

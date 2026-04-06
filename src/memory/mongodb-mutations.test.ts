@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
 import type { Db, Collection } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import { recordMutation, getMutationHistory, type MutationRecord } from "./mongodb-mutations.js";
@@ -11,7 +10,6 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
   return {
     insertOne: vi.fn().mockResolvedValue({ insertedId: "mock-id" }),
     find: vi.fn().mockReturnValue({
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       sort: vi.fn().mockReturnValue({
         limit: vi.fn().mockReturnValue({
           toArray: vi.fn().mockResolvedValue([]),
@@ -129,7 +127,6 @@ describe("mongodb-mutations", () => {
       ];
 
       const findResult = {
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         sort: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue(docs),
@@ -155,7 +152,6 @@ describe("mongodb-mutations", () => {
 
     it("filters by collectionName when provided", async () => {
       const findResult = {
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         sort: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue([]),
@@ -181,7 +177,6 @@ describe("mongodb-mutations", () => {
 
     it("filters by documentId when provided", async () => {
       const findResult = {
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         sort: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue([]),
@@ -207,7 +202,6 @@ describe("mongodb-mutations", () => {
 
     it("respects limit parameter", async () => {
       const findResult = {
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         sort: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue([]),
@@ -234,7 +228,6 @@ describe("mongodb-mutations", () => {
     it("respects since date filter", async () => {
       const sinceDate = new Date("2026-01-01T00:00:00Z");
       const findResult = {
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         sort: vi.fn().mockReturnValue({
           limit: vi.fn().mockReturnValue({
             toArray: vi.fn().mockResolvedValue([]),

@@ -646,6 +646,150 @@ function mergeStructuredResults(
     .slice(0, maxResults);
 }
 
+const STRUCTURED_QUERY_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "now",
+  "of",
+  "on",
+  "or",
+  "right",
+  "the",
+  "to",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "with",
+]);
+
+function tokenizeStructuredQuery(query: string): string[] {
+  return query
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => token.length > 1 && !STRUCTURED_QUERY_STOPWORDS.has(token));
+}
+
+function buildStructuredAnchorTokens(query: string): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const token of tokenizeStructuredQuery(query)) {
+    if (!(/[-\d]/.test(token) || token.length >= 12) || seen.has(token)) {
+      continue;
+    }
+    seen.add(token);
+    ordered.push(token);
+  }
+  return ordered;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function findStructuredAnchorMatches(
+  collection: Collection,
+  query: string,
+  opts: {
+    maxResults: number;
+    filter?: {
+      type?: string;
+      tags?: string[];
+      agentId?: string;
+      scope?: MemoryScope;
+      scopeRef?: string;
+      state?: StructuredMemoryState | StructuredMemoryState[];
+      salience?: StructuredMemorySalience[];
+      temporalScope?: StructuredMemoryTemporalScope[];
+      currentOnly?: boolean;
+    };
+  },
+): Promise<MemorySearchResult[]> {
+  const anchorTokens = buildStructuredAnchorTokens(query);
+  if (anchorTokens.length === 0) {
+    return [];
+  }
+
+  const matchFilter: Document = {};
+  if (opts.filter?.type) {
+    matchFilter.type = opts.filter.type;
+  }
+  if (opts.filter?.tags?.length) {
+    matchFilter.tags = { $in: opts.filter.tags };
+  }
+  if (opts.filter?.agentId) {
+    matchFilter.agentId = opts.filter.agentId;
+  }
+  if (opts.filter?.scope) {
+    matchFilter.scope = opts.filter.scope;
+  }
+  if (opts.filter?.scopeRef) {
+    matchFilter.scopeRef = opts.filter.scopeRef;
+  }
+  if (opts.filter?.state) {
+    matchFilter.state = Array.isArray(opts.filter.state)
+      ? { $in: opts.filter.state }
+      : opts.filter.state;
+  }
+  if (opts.filter?.salience?.length) {
+    matchFilter.salience = { $in: opts.filter.salience };
+  }
+  if (opts.filter?.temporalScope?.length) {
+    matchFilter.temporalScope = { $in: opts.filter.temporalScope };
+  }
+  if (opts.filter?.currentOnly) {
+    matchFilter.state = "active";
+    matchFilter.validFrom = { $lte: new Date() };
+    matchFilter.$or = [{ validTo: { $exists: false } }, { validTo: { $gte: new Date() } }];
+  }
+
+  const anchorClauses = anchorTokens.map((token) => {
+    const regex = new RegExp(escapeRegex(token), "i");
+    return {
+      $or: [{ value: regex }, { context: regex }, { key: regex }],
+    };
+  });
+
+  const docs = await collection
+    .find(
+      {
+        ...matchFilter,
+        $and: anchorClauses,
+      },
+      {
+        sort: { updatedAt: -1, _id: 1 },
+        limit: opts.maxResults,
+      },
+    )
+    .toArray();
+
+  return docs.map((doc) =>
+    toStructuredResult({
+      ...doc,
+      score: 1,
+    }),
+  );
+}
+
 export async function searchStructuredMemory(
   collection: Collection,
   query: string,
@@ -781,9 +925,6 @@ export async function searchStructuredMemory(
 
         const docs = await collection.aggregate(pipeline).toArray();
         vectorResults = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
-        if (vectorResults.length >= opts.maxResults) {
-          return vectorResults;
-        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -866,12 +1007,23 @@ export async function searchStructuredMemory(
       });
     }
     const textResults = docs.map(toStructuredResult).filter((r) => r.score >= minScore);
-    if (vectorResults.length > 0) {
-      return mergeStructuredResults(vectorResults, textResults, opts.maxResults);
+    const lexicalResults =
+      vectorResults.length > 0
+        ? mergeStructuredResults(vectorResults, textResults, opts.maxResults)
+        : textResults;
+    const anchorMatches = await findStructuredAnchorMatches(collection, query, opts);
+    if (anchorMatches.length > 0) {
+      return mergeStructuredResults(anchorMatches, lexicalResults, opts.maxResults);
     }
-    return textResults;
+    return lexicalResults;
   } catch {
     log.warn("structured memory $text search fallback failed; returning empty results");
+    const anchorMatches = await findStructuredAnchorMatches(collection, query, opts).catch(
+      () => [],
+    );
+    if (anchorMatches.length > 0) {
+      return mergeStructuredResults(anchorMatches, vectorResults, opts.maxResults);
+    }
     return vectorResults;
   }
 }

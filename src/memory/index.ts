@@ -1,5 +1,23 @@
 export type {
   EvidenceCoverage,
+  MemoryActiveSlate,
+  MemoryActiveSlateItem,
+  MemoryActiveSlateKind,
+  MemoryActiveSlateMetadata,
+  MemoryActiveSlateSource,
+  MemoryContextBundle,
+  MemoryContextBundleMetadata,
+  MemoryContextBundleRequest,
+  MemoryContextBundleSection,
+  MemoryContextBundleSectionItem,
+  MemoryContextBundleSectionKind,
+  MemoryDiscoveryProjection,
+  MemoryDiscoveryProjectionEvidence,
+  MemoryDiscoveryProjectionKind,
+  MemoryDiscoveryProjectionMetadata,
+  MemoryDiscoveryProjectionRequest,
+  MemoryDiscoveryProjectionSection,
+  MemoryDiscoveryProjectionSource,
   MemoryEmbeddingProbeResult,
   MemoryReadResult,
   MemorySearchClassification,
@@ -11,6 +29,9 @@ export type {
   MemorySearchResponse,
   MemorySearchResult,
   MemorySearchSourcePreference,
+  MemorySearchTrust,
+  MemorySearchTrustBand,
+  MemorySearchTrustSummary,
   MemorySearchTimeRange,
   MemorySearchTimeRangePreset,
   MemorySource,
@@ -147,6 +168,9 @@ export {
   projectConversationWindows,
   type ConversationWindow,
 } from "./mongodb-conversation-windows.js";
+export { hydrateActiveSlate } from "./mongodb-active-slate.js";
+export { buildDiscoveryProjection } from "./mongodb-discovery-projections.js";
+export { buildContextBundle } from "./mongodb-context-bundle.js";
 export {
   buildTieredSummaryPrompt,
   parseTieredSummaryResponse,

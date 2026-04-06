@@ -395,6 +395,10 @@ This workspace uses the MongoDB memory backend. The agent should prefer MongoDB 
 
 The MongoDB backend provides persistent, searchable, multi-instance memory with vector search,
 knowledge base ingestion, and structured agent memory.
+
+- **Current state**: Use \`memory_active_slate\` for blockers, crises, and what matters now
+- **Changes / contradictions**: Use \`memory_discovery_projection\`
+- **Handoffs / compact briefs**: Use \`memory_context_bundle\`
 `;
 
 /**

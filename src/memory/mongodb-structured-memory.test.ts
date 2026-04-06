@@ -1,5 +1,3 @@
-/* eslint-disable @typescript-eslint/unbound-method */
-
 import type { Collection, Db } from "mongodb";
 import { describe, it, expect, vi } from "vitest";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
@@ -389,6 +387,99 @@ describe("searchStructuredMemory", () => {
     expect(results).toHaveLength(2);
     expect(results.some((result) => result.path.includes("scope=agent"))).toBe(true);
     expect(results.some((result) => result.path.includes("scope=session"))).toBe(true);
+  });
+
+  it("still consults lexical fallback when vector search fills the requested budget", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => [
+          {
+            _id: "generic-vector-1",
+            type: "decision",
+            key: "db-choice",
+            value: "MongoDB Atlas over self-hosted for reduced ops burden",
+            score: 0.95,
+          },
+          {
+            _id: "generic-vector-2",
+            type: "fact",
+            key: "owner",
+            value: "Current production database owner for the platform rollout is Mike.",
+            score: 0.93,
+          },
+        ]),
+      } as unknown as ReturnType<Collection["aggregate"]>)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => [
+          {
+            _id: "exact-text-match",
+            type: "fact",
+            key: "owner",
+            value: "Current production database owner for the platform rollout is Sarah.",
+            score: 12,
+          },
+        ]),
+      } as unknown as ReturnType<Collection["aggregate"]>);
+
+    const results = await searchStructuredMemory(
+      col,
+      "current production database owner platform rollout",
+      null,
+      {
+        maxResults: 2,
+        capabilities: baseCapabilities,
+        vectorIndexName: "test_structured_mem_vector",
+        embeddingMode: "automated",
+      },
+    );
+
+    expect(results).toHaveLength(2);
+    expect(results[0]?.snippet.toLowerCase()).toContain("sarah");
+  });
+
+  it("adds exact anchor matches for high-entropy subject tokens", async () => {
+    const col = createMockStructuredCol();
+    vi.mocked(col.aggregate)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => [
+          {
+            _id: "generic-vector",
+            type: "fact",
+            key: "owner",
+            value: "Current production database owner for the platform rollout is Sarah.",
+            score: 0.96,
+          },
+        ]),
+      } as unknown as ReturnType<Collection["aggregate"]>)
+      .mockReturnValueOnce({
+        toArray: vi.fn(async () => []),
+      } as unknown as ReturnType<Collection["aggregate"]>);
+    vi.mocked(col.find).mockReturnValueOnce({
+      toArray: vi.fn(async () => [
+        {
+          _id: "exact-anchor",
+          type: "fact",
+          key: "owner",
+          value: "Current owner of contradiction-owner-abc123 production database is Mike.",
+          updatedAt: new Date("2026-04-06T12:00:00.000Z"),
+        },
+      ]),
+    } as unknown as ReturnType<Collection["find"]>);
+
+    const results = await searchStructuredMemory(
+      col,
+      "who owns the contradiction-owner-abc123 production database right now",
+      null,
+      {
+        maxResults: 5,
+        capabilities: baseCapabilities,
+        vectorIndexName: "test_structured_mem_vector",
+        embeddingMode: "automated",
+      },
+    );
+
+    expect(results[0]?.snippet).toContain("contradiction-owner-abc123");
   });
 
   it("returns empty results when no matches", async () => {

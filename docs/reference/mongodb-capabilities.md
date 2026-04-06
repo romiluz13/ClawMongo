@@ -21,6 +21,19 @@ ClawMongo uses 26 MongoDB capabilities that together make MongoDB the best agent
 
 ---
 
+## Public MongoDB Memory Tools
+
+The MongoDB memory backend now exposes specialized runtime tools instead of routing every question through generic search alone:
+
+- `memory_search` -- broad runtime recall with direct/agentic planning metadata
+- `memory_active_slate` -- current state, blockers, active constraints, and what matters now
+- `memory_discovery_projection` -- topic briefs, entity briefs, change reports, and contradiction checks
+- `memory_context_bundle` -- prompt-ready, token-bounded handoff context assembled from active state, evidence, summaries, and recent events
+- `memory_write` -- durable structured writes for decisions, facts, preferences, todos, projects, and architecture notes
+- `kb_search` -- imported reference material and documentation
+
+---
+
 ## 1. Automated Embeddings (Voyage AI via mongot)
 
 ### Why This Matters

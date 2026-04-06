@@ -1,13 +1,19 @@
-/* eslint-disable @typescript-eslint/unbound-method */
-
 import type { Collection, Db } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
-import { searchProcedures, writeProcedure, type ProcedureEntry } from "./mongodb-procedures.js";
+import {
+  findExactProcedureMatches,
+  searchProcedures,
+  writeProcedure,
+  type ProcedureEntry,
+} from "./mongodb-procedures.js";
 import type { DetectedCapabilities } from "./mongodb-schema.js";
 
 function createMockProcedureCol(): Collection {
   return {
     findOne: vi.fn(async () => null),
+    find: vi.fn(() => ({
+      toArray: vi.fn(async () => []),
+    })),
     updateOne: vi.fn(async () => ({
       upsertedCount: 1,
       upsertedId: "proc-1",
@@ -88,6 +94,45 @@ describe("mongodb-procedures", () => {
       expect.objectContaining({
         path: "procedure:rotate-auth",
         source: "structured",
+      }),
+    ]);
+  });
+
+  it("finds exact procedure aliases before broad search", async () => {
+    const col = createMockProcedureCol();
+    vi.mocked(col.find).mockReturnValue({
+      toArray: vi.fn(async () => [
+        {
+          procedureId: "incident-response",
+          searchText: "incident response\nCheck status page",
+          updatedAt: new Date("2026-04-06T14:00:00Z"),
+          state: "active",
+          scope: "agent",
+          scopeRef: "agent:main",
+        },
+      ]),
+    } as unknown as ReturnType<typeof col.find>);
+
+    const results = await findExactProcedureMatches(col, "incident response", {
+      maxResults: 3,
+      filter: { agentId: "main", state: "active" },
+    });
+
+    expect(col.find).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "main",
+        state: "active",
+        $or: [{ name: /^incident response$/i }, { triggerQueries: /^incident response$/i }],
+      }),
+      expect.objectContaining({
+        limit: 3,
+        sort: { updatedAt: -1 },
+      }),
+    );
+    expect(results).toEqual([
+      expect.objectContaining({
+        path: "procedure:incident-response",
+        score: 1,
       }),
     ]);
   });

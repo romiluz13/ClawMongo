@@ -741,7 +741,37 @@ describe("executeMongoSearchPlan", () => {
     expect(secondCall?.availablePaths.has("raw-window")).toBe(true);
     expect(secondCall?.availablePaths.has("structured")).toBe(true);
     expect(secondCall?.availablePaths.has("graph")).toBe(true);
+    expect(secondCall?.availablePaths.has("hybrid")).toBe(false);
     expect(secondCall?.sourcePreference).toEqual(["conversation", "graph", "structured"]);
+  });
+
+  it("skips active-critical on anchored structured queries so current-state facts do not drown exact subject matches", async () => {
+    const mock = vi.fn().mockResolvedValue({
+      results: [],
+      metadata: {
+        plan: { paths: ["structured"], confidence: "high" as const, reasoning: "anchored" },
+        pathsExecuted: ["structured"],
+        resultsByPath: { structured: 0 },
+        reranked: false,
+        queryRewritten: false,
+        trustApplied: true,
+      },
+    });
+
+    await executeMongoSearchPlan({
+      request: {
+        query: "who owns the contradiction-owner-abc123 production database right now",
+        searchMode: "direct",
+        sourcePreference: ["structured"],
+        maxPasses: 1,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    const firstCall = mock.mock.calls[0]?.[0];
+    expect(firstCall?.availablePaths.has("structured")).toBe(true);
+    expect(firstCall?.availablePaths.has("active-critical")).toBe(false);
   });
 
   it("does not treat stale exact structured memory as conflict resolution support", async () => {
