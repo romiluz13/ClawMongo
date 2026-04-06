@@ -189,3 +189,4 @@ export {
   parseExtractionResponse,
 } from "./mongodb-entity-extractor.js";
 export { traceReasoningChain } from "./mongodb-reasoning-chain.js";
+export { scanNovelty } from "./mongodb-novelty.js";

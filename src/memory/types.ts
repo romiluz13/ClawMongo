@@ -469,6 +469,33 @@ export type ReasoningChainOptions = {
   maxDepth?: number; // default 10, clamped >= 0
 };
 
+// ---------------------------------------------------------------------------
+// Novelty Detection types (Phase 2 — Honcho steal)
+// ---------------------------------------------------------------------------
+
+export type NoveltyEvent = {
+  eventId: string;
+  body: string;
+  noveltyScore: number; // 0-1, higher = more novel
+  timestamp: Date;
+  role: string;
+  nearestNeighborDistance: number;
+};
+
+export type NoveltyReport = {
+  events: NoveltyEvent[];
+  scannedCount: number;
+  error?: string; // "mongot_unavailable" when vector search fails
+  agentId: string;
+};
+
+export type NoveltyOptions = {
+  limit?: number; // default 10 (top-N most novel)
+  kNeighbors?: number; // default 5 (K nearest neighbors for scoring)
+  scope?: MemoryScope;
+  timeRange?: { start: Date; end: Date };
+};
+
 export interface MemorySearchManager {
   search(
     query: string,
