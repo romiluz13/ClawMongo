@@ -10,19 +10,21 @@ import type { OpenClawConfig } from "../config/config.js";
 import { materializeEpisode } from "./mongodb-episodes.js";
 import { getEventsBySession, writeEvent } from "./mongodb-events.js";
 import { upsertEntity, upsertRelation } from "./mongodb-graph.js";
+import { writeEventAndProject } from "./mongodb-manager.js";
 import {
   chunksCollection,
   episodesCollection,
   proceduresCollection,
   structuredMemCollection,
 } from "./mongodb-schema.js";
+import { writeStructuredMemory } from "./mongodb-structured-memory.js";
 import { closeAllMemorySearchManagers, getMemorySearchManager } from "./search-manager.js";
 
 type AppendMessage = Parameters<SessionManager["appendMessage"]>[0];
 
 const TEST_URI =
   process.env.MONGODB_TEST_URI ||
-  "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
+  "mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const TEST_DB = "clawmongo_runtime_e2e";
 
 const asAppendMessage = (message: unknown) => message as AppendMessage;
@@ -816,5 +818,146 @@ describe("MongoDB runtime write e2e", () => {
     expect(result.text).toContain("type: works_on");
     expect(result.text).toContain("fromEntityId: ent-alice");
     expect(result.text).toContain("toEntityId: ent-phoenix");
+    expect(result.text).toContain("state: active");
   });
+
+  it("reopens scoped relation locators outside agent scope", async () => {
+    const { manager, error } = await getMemorySearchManager({ cfg, agentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    const sessionId = `relation-session-${randomUUID().slice(0, 8)}`;
+    const scopeRef = `session:${sessionId}`;
+
+    await upsertEntity({
+      db,
+      prefix,
+      entity: {
+        entityId: "ent-session-alice",
+        name: "Session Alice",
+        type: "person",
+        agentId,
+        scope: "session",
+        scopeRef,
+        updatedAt: new Date(),
+      },
+    });
+    await upsertEntity({
+      db,
+      prefix,
+      entity: {
+        entityId: "ent-session-phoenix",
+        name: "Session Phoenix",
+        type: "project",
+        agentId,
+        scope: "session",
+        scopeRef,
+        updatedAt: new Date(),
+      },
+    });
+    await upsertRelation({
+      db,
+      prefix,
+      relation: {
+        fromEntityId: "ent-session-alice",
+        toEntityId: "ent-session-phoenix",
+        type: "works_on",
+        agentId,
+        scope: "session",
+        scopeRef,
+        updatedAt: new Date(),
+        weight: 0.88,
+      },
+    });
+
+    const locator = `relation:ent-session-alice-ent-session-phoenix?scope=session&scopeRef=${encodeURIComponent(scopeRef)}`;
+    const result = await manager.readFile({ relPath: locator });
+    expect(result.path).toBe(locator);
+    expect(result.text).toContain("type: works_on");
+    expect(result.text).toContain("fromEntityId: ent-session-alice");
+    expect(result.text).toContain("toEntityId: ent-session-phoenix");
+    expect(result.text).toContain("state: active");
+  });
+
+  it("resolves conflicted current-state memory with exact event evidence on the live search path", async () => {
+    const conflictAgentId = `runtime-conflict-${randomUUID().slice(0, 8)}`;
+    const subject = `runtime-conflict-owner-${randomUUID().slice(0, 8)}`;
+    const now = new Date();
+
+    const { manager, error } = await getMemorySearchManager({ cfg, agentId: conflictAgentId });
+    expect(error).toBeUndefined();
+    expect(manager).toBeTruthy();
+    if (!manager) {
+      throw new Error("expected MongoDB memory manager");
+    }
+
+    await writeStructuredMemory({
+      db,
+      prefix,
+      entry: {
+        type: "fact",
+        key: `runtime-conflicted-owner-${subject}`,
+        value: `Current owner of ${subject} production database is Mike.`,
+        confidence: 0.58,
+        agentId: conflictAgentId,
+        scope: "agent",
+        salience: "high",
+        temporalScope: "ongoing",
+        state: "conflicted",
+        sourceEventIds: [`evt-runtime-conflicted-${subject}`],
+        sourceReliability: 0.45,
+        reinforcementCount: 1,
+        lastConfirmedAt: now,
+      },
+      embeddingMode: "automated",
+    });
+
+    await writeEventAndProject(db, prefix, {
+      agentId: conflictAgentId,
+      role: "assistant",
+      body: `Ownership clarification for ${subject}: Sarah owns the production database right now after Mike handed it off.`,
+      scope: "agent",
+      sessionId: `runtime-conflict-session-${randomUUID().slice(0, 8)}`,
+      metadata: { phase: "runtime-conflict-correction", subject },
+    });
+
+    const searchDetailed = manager.searchDetailed?.bind(manager);
+    expect(searchDetailed).toBeDefined();
+    if (!searchDetailed) {
+      throw new Error("expected searchDetailed to be available on the memory manager");
+    }
+
+    const response = await waitForCondition(
+      () =>
+        searchDetailed({
+          query: `who owns the ${subject} production database right now`,
+          searchMode: "direct",
+          sourcePreference: ["structured"],
+          maxPasses: 2,
+          maxResults: 5,
+          returnPlan: true,
+        }),
+      (value) =>
+        value.metadata.passes.some(
+          (pass) => pass.correctionApplied === "conflict-evidence-required",
+        ) && value.results.some((result) => result.path.startsWith("events/")),
+      10_000,
+      250,
+    );
+
+    expect(
+      response.metadata.passes.some(
+        (pass) => pass.correctionApplied === "conflict-evidence-required",
+      ),
+    ).toBe(true);
+    expect(response.metadata.contradictionSummary?.status).toBe("detected");
+    expect(response.metadata.contradictionSummary?.exactResolutionAvailable).toBe(true);
+    expect(response.results.some((result) => result.path.startsWith("events/"))).toBe(true);
+    expect(response.results.some((result) => result.snippet.toLowerCase().includes("sarah"))).toBe(
+      true,
+    );
+  }, 45_000);
 });

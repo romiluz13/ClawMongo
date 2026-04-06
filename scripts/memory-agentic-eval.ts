@@ -1,9 +1,23 @@
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
+import { MongoClient } from "mongodb";
 import { resolveDefaultAgentId } from "../src/agents/agent-scope.js";
 import type { OpenClawConfig } from "../src/config/config.js";
-import { loadConfig } from "../src/config/config.js";
+import { readBestEffortConfig } from "../src/config/config.js";
 import { getMemorySearchManager } from "../src/memory/index.js";
-import type { MemorySearchResponse } from "../src/memory/types.js";
+import { upsertEntity, upsertRelation } from "../src/memory/mongodb-graph.js";
+import { writeEventAndProject } from "../src/memory/mongodb-manager.js";
+import { ensureCollections, ensureStandardIndexes } from "../src/memory/mongodb-schema.js";
+import { writeStructuredMemory } from "../src/memory/mongodb-structured-memory.js";
+import type { MemorySearchRequest, MemorySearchResponse } from "../src/memory/types.js";
+
+type EvalQuery =
+  | string
+  | {
+      query: string;
+      directRequest?: Omit<MemorySearchRequest, "query" | "searchMode" | "returnPlan">;
+      agenticRequest?: Omit<MemorySearchRequest, "query" | "searchMode" | "returnPlan">;
+    };
 
 type EvalRow = {
   query: string;
@@ -17,14 +31,27 @@ type EvalRow = {
   };
 };
 
+type SeededLifecycleDemo = {
+  defaultQueries: EvalQuery[];
+  notes: string[];
+};
+
 type Summary = {
   classification?: string;
   passes: number;
   sourceOrder: string[];
   evidenceCoverage?: string;
+  trustApplied?: boolean;
+  corrections?: string[];
   pathsExecuted: string[];
   queriesTried: string[];
-  topResults: Array<{ path: string; score: number; source: string }>;
+  topResults: Array<{
+    path: string;
+    score: number;
+    source: string;
+    trust?: number;
+    state?: string;
+  }>;
   noDirectEvidenceReason?: string;
 };
 
@@ -37,12 +64,23 @@ function hasFlag(name: string): boolean {
   return process.argv.includes(name);
 }
 
-function resolveEvalConfig(): OpenClawConfig {
-  const cfg = loadConfig();
+function extractDatabaseFromMongoUri(uri: string): string | undefined {
+  try {
+    const parsed = new URL(uri);
+    const dbName = parsed.pathname.replace(/^\/+/, "").trim();
+    return dbName || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveEvalConfig(): Promise<OpenClawConfig> {
+  const cfg = await readBestEffortConfig();
   const mongodbUriOverride = readFlag("--mongodb-uri");
   if (!mongodbUriOverride) {
     return cfg;
   }
+  const databaseOverride = extractDatabaseFromMongoUri(mongodbUriOverride);
   return {
     ...cfg,
     memory: {
@@ -50,13 +88,14 @@ function resolveEvalConfig(): OpenClawConfig {
       backend: "mongodb",
       mongodb: {
         ...cfg.memory?.mongodb,
+        ...(databaseOverride ? { database: databaseOverride } : {}),
         uri: mongodbUriOverride,
       },
     },
   };
 }
 
-async function loadQueries(): Promise<string[]> {
+async function loadQueries(defaultQueries?: EvalQuery[]): Promise<EvalQuery[]> {
   const file = readFlag("--queries");
   if (file) {
     const raw = await fs.readFile(file, "utf8");
@@ -77,12 +116,261 @@ async function loadQueries(): Promise<string[]> {
     return [query];
   }
 
-  return [
-    "what happened today with the deployment?",
-    "what are the open source eval tools family?",
-    "compare the memory routing approaches",
-    "which procedure do we use for incident rollback?",
-  ];
+  return (
+    defaultQueries ?? [
+      "what happened today with the deployment?",
+      "what are the open source eval tools family?",
+      "compare the memory routing approaches",
+      "which procedure do we use for incident rollback?",
+    ]
+  );
+}
+
+function requireMongoEvalTarget(cfg: OpenClawConfig): {
+  uri: string;
+  database?: string;
+  prefix: string;
+  embeddingMode: "automated" | "legacy";
+} {
+  if (cfg.memory?.backend !== "mongodb" || !cfg.memory.mongodb?.uri) {
+    throw new Error("seeded lifecycle demo requires MongoDB memory backend with a configured URI");
+  }
+
+  return {
+    uri: cfg.memory.mongodb.uri,
+    database: cfg.memory.mongodb.database,
+    prefix: cfg.memory.mongodb.collectionPrefix ?? "",
+    embeddingMode: cfg.memory.mongodb.embeddingMode === "legacy" ? "legacy" : "automated",
+  };
+}
+
+async function seedLifecycleDemo(
+  cfg: OpenClawConfig,
+  agentId: string,
+): Promise<SeededLifecycleDemo> {
+  const target = requireMongoEvalTarget(cfg);
+  const client = new MongoClient(target.uri, {
+    connectTimeoutMS: 10_000,
+    serverSelectionTimeoutMS: 10_000,
+  });
+
+  await client.connect();
+  try {
+    const db = client.db(target.database);
+    await ensureCollections(db, target.prefix);
+    await ensureStandardIndexes(db, target.prefix, target.embeddingMode);
+
+    const suffix = randomUUID().slice(0, 8);
+    const rescueSuffix = randomUUID().slice(0, 8);
+    const contradictionSuffix = randomUUID().slice(0, 8);
+    const now = new Date();
+    const graphRootName = `Orpheus${suffix}`;
+    const staleGraphTarget = `AtlasOwner${suffix}`;
+    const currentGraphTarget = `PhoenixOwner${suffix}`;
+    const rescueSubject = `phoenix-rescue-${rescueSuffix}`;
+    const contradictionSubject = `phoenix-conflict-${contradictionSuffix}`;
+
+    await upsertEntity({
+      db,
+      prefix: target.prefix,
+      entity: {
+        entityId: `ent-root-${suffix}`,
+        name: graphRootName,
+        type: "system",
+        agentId,
+        scope: "agent",
+        updatedAt: now,
+      },
+    });
+    await upsertEntity({
+      db,
+      prefix: target.prefix,
+      entity: {
+        entityId: `ent-stale-${suffix}`,
+        name: staleGraphTarget,
+        type: "org",
+        agentId,
+        scope: "agent",
+        updatedAt: now,
+      },
+    });
+    await upsertEntity({
+      db,
+      prefix: target.prefix,
+      entity: {
+        entityId: `ent-current-${suffix}`,
+        name: currentGraphTarget,
+        type: "org",
+        agentId,
+        scope: "agent",
+        updatedAt: now,
+      },
+    });
+    await upsertRelation({
+      db,
+      prefix: target.prefix,
+      relation: {
+        fromEntityId: `ent-root-${suffix}`,
+        toEntityId: `ent-stale-${suffix}`,
+        type: "owns",
+        agentId,
+        scope: "agent",
+        updatedAt: new Date(now.getTime() - 60_000),
+        weight: 0.55,
+      },
+    });
+    await upsertRelation({
+      db,
+      prefix: target.prefix,
+      relation: {
+        fromEntityId: `ent-root-${suffix}`,
+        toEntityId: `ent-current-${suffix}`,
+        type: "owns",
+        agentId,
+        scope: "agent",
+        updatedAt: now,
+        weight: 0.95,
+      },
+    });
+
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "fact",
+        key: `lifecycle-current-${suffix}`,
+        value: `Lifecycle authority marker ${suffix} is Sarah.`,
+        confidence: 0.96,
+        agentId,
+        scope: "agent",
+        salience: "high",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-current-a-${suffix}`, `evt-current-b-${suffix}`],
+        sourceReliability: 0.95,
+        reinforcementCount: 4,
+        lastConfirmedAt: now,
+        reviewAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+      },
+      embeddingMode: target.embeddingMode,
+    });
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "fact",
+        key: `lifecycle-stale-${suffix}`,
+        value: `Lifecycle authority marker ${suffix} is Mike.`,
+        confidence: 0.5,
+        agentId,
+        scope: "agent",
+        salience: "high",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-stale-${suffix}`],
+        sourceReliability: 0.35,
+        reinforcementCount: 1,
+        lastConfirmedAt: new Date(now.getTime() - 120 * 24 * 60 * 60 * 1000),
+        reviewAt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+      },
+      embeddingMode: target.embeddingMode,
+    });
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "fact",
+        key: `freshness-rescue-stale-${suffix}`,
+        value: `Current owner of ${rescueSubject} production database is Mike.`,
+        confidence: 0.6,
+        agentId,
+        scope: "agent",
+        salience: "high",
+        temporalScope: "ongoing",
+        sourceEventIds: [`evt-rescue-stale-${suffix}`],
+        sourceReliability: 0.45,
+        reinforcementCount: 1,
+        lastConfirmedAt: new Date(now.getTime() - 120 * 24 * 60 * 60 * 1000),
+        reviewAt: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000),
+      },
+      embeddingMode: target.embeddingMode,
+    });
+    await writeEventAndProject(db, target.prefix, {
+      agentId,
+      role: "assistant",
+      body: `Handoff update for ${rescueSubject}: Sarah owns the production database right now after the cutover.`,
+      scope: "agent",
+      sessionId: `eval-freshness-rescue-${suffix}`,
+      metadata: { evalDemo: "freshness-rescue", rescueSubject },
+    });
+    await writeStructuredMemory({
+      db,
+      prefix: target.prefix,
+      entry: {
+        type: "fact",
+        key: `contradiction-conflicted-${suffix}`,
+        value: `Current owner of ${contradictionSubject} production database is Mike.`,
+        confidence: 0.58,
+        agentId,
+        scope: "agent",
+        salience: "high",
+        temporalScope: "ongoing",
+        state: "conflicted",
+        sourceEventIds: [`evt-contradiction-${suffix}`],
+        sourceReliability: 0.45,
+        reinforcementCount: 1,
+        lastConfirmedAt: now,
+      },
+      embeddingMode: target.embeddingMode,
+    });
+    await writeEventAndProject(db, target.prefix, {
+      agentId,
+      role: "assistant",
+      body: `Ownership clarification for ${contradictionSubject}: Sarah owns the production database right now after Mike handed it off.`,
+      scope: "agent",
+      sessionId: `eval-contradiction-resolution-${suffix}`,
+      metadata: { evalDemo: "contradiction-correction", contradictionSubject },
+    });
+
+    return {
+      defaultQueries: [
+        `who owns ${graphRootName}?`,
+        `lifecycle authority marker ${suffix}`,
+        {
+          query: `who owns the ${rescueSubject} production database right now`,
+          directRequest: {
+            sourcePreference: ["structured"],
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          agenticRequest: {
+            sourcePreference: ["structured"],
+            maxPasses: 2,
+            maxResults: 5,
+          },
+        },
+        {
+          query: `who owns the ${contradictionSubject} production database right now`,
+          directRequest: {
+            sourcePreference: ["structured"],
+            maxPasses: 2,
+            maxResults: 5,
+          },
+          agenticRequest: {
+            sourcePreference: ["structured"],
+            maxPasses: 2,
+            maxResults: 5,
+          },
+        },
+      ],
+      notes: [
+        `Seeded graph current-state demo: ${graphRootName} should resolve to ${currentGraphTarget}, not ${staleGraphTarget}.`,
+        `Seeded structured current-state demo: lifecycle authority marker ${suffix} should prefer Sarah over stale Mike.`,
+        `Seeded freshness-rescue demo: ${rescueSubject} should be rescued from stale Mike structured memory to fresh Sarah event evidence.`,
+        `Seeded contradiction demo: ${contradictionSubject} should require a conflict-evidence correction pass and resolve to Sarah.`,
+      ],
+    };
+  } finally {
+    await client.close();
+  }
 }
 
 function summarize(response: MemorySearchResponse): Summary {
@@ -91,6 +379,10 @@ function summarize(response: MemorySearchResponse): Summary {
     passes: response.metadata.passes.length,
     sourceOrder: response.metadata.sourceOrder,
     evidenceCoverage: response.metadata.evidenceCoverage,
+    trustApplied: response.metadata.trustApplied,
+    corrections: response.metadata.passes
+      .map((pass) => pass.correctionApplied)
+      .filter((value): value is string => typeof value === "string"),
     pathsExecuted: response.metadata.pathsExecuted,
     queriesTried: response.metadata.queriesTried,
     noDirectEvidenceReason: response.metadata.noDirectEvidenceReason,
@@ -98,6 +390,8 @@ function summarize(response: MemorySearchResponse): Summary {
       path: result.path,
       score: result.score,
       source: result.source,
+      ...(typeof result.signals?.state === "string" ? { state: result.signals.state } : {}),
+      ...(typeof result.trust?.score === "number" ? { trust: result.trust.score } : {}),
     })),
   };
 }
@@ -126,8 +420,14 @@ function compareResults(
   };
 }
 
-function renderMarkdown(rows: EvalRow[]): string {
+function renderMarkdown(rows: EvalRow[], notes: string[] = []): string {
   const lines: string[] = ["# ClawMongo Agentic Internal Search Eval", ""];
+  if (notes.length > 0) {
+    for (const note of notes) {
+      lines.push(`> ${note}`);
+    }
+    lines.push("");
+  }
   for (const row of rows) {
     lines.push(`## ${row.query}`);
     lines.push("");
@@ -137,6 +437,14 @@ function renderMarkdown(rows: EvalRow[]): string {
     lines.push(`- Agentic passes: ${row.agentic.passes}`);
     lines.push(`- Direct evidence: ${row.direct.evidenceCoverage ?? "unknown"}`);
     lines.push(`- Agentic evidence: ${row.agentic.evidenceCoverage ?? "unknown"}`);
+    lines.push(`- Direct trust applied: ${row.direct.trustApplied ? "yes" : "no"}`);
+    lines.push(`- Agentic trust applied: ${row.agentic.trustApplied ? "yes" : "no"}`);
+    lines.push(
+      `- Direct corrections: ${row.direct.corrections?.length ? row.direct.corrections.join(", ") : "none"}`,
+    );
+    lines.push(
+      `- Agentic corrections: ${row.agentic.corrections?.length ? row.agentic.corrections.join(", ") : "none"}`,
+    );
     lines.push(`- Extra agentic queries: ${row.delta.extraQueriesTried}`);
     lines.push(
       `- Extra agentic paths: ${row.delta.extraPaths.length > 0 ? row.delta.extraPaths.join(", ") : "none"}`,
@@ -146,7 +454,9 @@ function renderMarkdown(rows: EvalRow[]): string {
     lines.push("");
     lines.push("Direct top results:");
     for (const result of row.direct.topResults) {
-      lines.push(`- ${result.source} | ${result.score.toFixed(3)} | ${result.path}`);
+      lines.push(
+        `- ${result.source} | ${result.score.toFixed(3)} | trust ${result.trust?.toFixed(3) ?? "n/a"} | state ${result.state ?? "n/a"} | ${result.path}`,
+      );
     }
     if (row.direct.topResults.length === 0) {
       lines.push("- none");
@@ -154,7 +464,9 @@ function renderMarkdown(rows: EvalRow[]): string {
     lines.push("");
     lines.push("Agentic top results:");
     for (const result of row.agentic.topResults) {
-      lines.push(`- ${result.source} | ${result.score.toFixed(3)} | ${result.path}`);
+      lines.push(
+        `- ${result.source} | ${result.score.toFixed(3)} | trust ${result.trust?.toFixed(3) ?? "n/a"} | state ${result.state ?? "n/a"} | ${result.path}`,
+      );
     }
     if (row.agentic.topResults.length === 0) {
       lines.push("- none");
@@ -169,9 +481,12 @@ function renderMarkdown(rows: EvalRow[]): string {
 }
 
 async function main() {
-  const cfg = resolveEvalConfig();
+  const cfg = await resolveEvalConfig();
   const agentId = readFlag("--agent") ?? resolveDefaultAgentId(cfg);
-  const queries = await loadQueries();
+  const seededDemo = hasFlag("--seed-lifecycle-demo")
+    ? await seedLifecycleDemo(cfg, agentId)
+    : undefined;
+  const queries = await loadQueries(seededDemo?.defaultQueries);
   const { manager, error } = await getMemorySearchManager({ cfg, agentId, purpose: "status" });
   if (!manager) {
     throw new Error(error ?? "memory manager unavailable");
@@ -181,16 +496,19 @@ async function main() {
   }
 
   const rows: EvalRow[] = [];
-  for (const query of queries) {
+  for (const entry of queries) {
+    const query = typeof entry === "string" ? entry : entry.query;
     const direct = await manager.searchDetailed({
       query,
       searchMode: "direct",
       returnPlan: true,
+      ...(typeof entry === "string" ? {} : (entry.directRequest ?? {})),
     });
     const agentic = await manager.searchDetailed({
       query,
       searchMode: "agentic",
       returnPlan: true,
+      ...(typeof entry === "string" ? {} : (entry.agenticRequest ?? {})),
     });
     rows.push({
       query,
@@ -204,7 +522,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return;
   }
-  process.stdout.write(`${renderMarkdown(rows)}\n`);
+  process.stdout.write(`${renderMarkdown(rows, seededDemo?.notes ?? [])}\n`);
 }
 
 main().catch((error: unknown) => {

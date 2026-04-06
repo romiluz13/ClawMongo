@@ -54,7 +54,9 @@ import {
   type RelevanceSourceScope,
 } from "./mongodb-relevance.js";
 import { crossEncoderRerank, type RerankConfig } from "./mongodb-reranker.js";
+import { applyTrustAwareReranking } from "./mongodb-result-trust.js";
 import {
+  hasProceduralSignal,
   planRetrieval,
   type RetrievalPath,
   type RetrievalPlan,
@@ -89,6 +91,7 @@ import {
   executeMongoSearchPlan,
   normalizeMemorySearchRequest,
   requestHasHardConstraints,
+  summarizeContradictionState,
 } from "./mongodb-search-executor.js";
 import { mongoSearch } from "./mongodb-search.js";
 import type {
@@ -229,6 +232,8 @@ function emptySearchMetadata(request: MemorySearchRequest): MemorySearchMetadata
     resultsByPath: {},
     queryRewritten: false,
     reranked: false,
+    contradictionSummary: summarizeContradictionState([]),
+    abstained: false,
   };
 }
 
@@ -244,6 +249,8 @@ export type RerankWeights = {
   diversityWeight?: number;
   /** Bonus for episode results (default 0.12) */
   episodeBoost?: number;
+  /** Blend weight for lifecycle trust (default 0.28) */
+  trustWeight?: number;
 };
 
 /**
@@ -259,44 +266,11 @@ export function rerankResults(
   _query: string,
   weights?: RerankWeights,
 ): MemorySearchResult[] {
-  if (results.length === 0) {
-    return [];
-  }
-
-  const diversityWeight = weights?.diversityWeight ?? 0.15;
-  const episodeBoost = weights?.episodeBoost ?? 0.12;
-
-  // Score each result (copy, don't mutate)
-  const scored = results.map((r) => ({
-    result: r,
-    adjustedScore: r.score,
-  }));
-
-  // 1. Episode priority boost
-  for (const entry of scored) {
-    if (entry.result.path.startsWith("episode:")) {
-      entry.adjustedScore += episodeBoost;
-    }
-  }
-
-  // 2. Sort by adjusted score descending
-  scored.sort((a, b) => b.adjustedScore - a.adjustedScore);
-
-  // 3. Source diversity penalty: penalize 3rd+ result from same source
-  const sourceCounts = new Map<string, number>();
-  for (const entry of scored) {
-    const source = entry.result.source;
-    const count = (sourceCounts.get(source) ?? 0) + 1;
-    sourceCounts.set(source, count);
-    if (count > 2) {
-      entry.adjustedScore -= diversityWeight * (count - 2);
-    }
-  }
-
-  // 4. Re-sort after diversity penalty
-  scored.sort((a, b) => b.adjustedScore - a.adjustedScore);
-
-  return scored.map((s) => s.result);
+  return applyTrustAwareReranking(results, {
+    diversityWeight: weights?.diversityWeight,
+    episodeBoost: weights?.episodeBoost,
+    trustWeight: weights?.trustWeight,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -937,6 +911,11 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             ],
             evidenceCoverage: computeEvidenceCoverage(cacheResult.results),
             pathsExecuted: cachedPaths,
+            contradictionSummary: summarizeContradictionState(cacheResult.results),
+            abstained: cacheResult.results.length === 0,
+            ...(cacheResult.results.length === 0
+              ? { abstainReason: "No memory evidence satisfied the request." }
+              : {}),
           },
         };
       }
@@ -946,8 +925,14 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const response = await executeMongoSearchPlan({
       request: normalized,
       availablePaths,
-      executePass: async ({ query: passQuery, availablePaths: passPaths, timeRange }) =>
-        searchV2(this.db, this.prefix, passQuery, this.agentId, {
+      executePass: async ({
+        query: passQuery,
+        availablePaths: passPaths,
+        sourcePreference,
+        timeRange,
+      }) => {
+        const passSourcePreference = sourcePreference ?? normalized.sourcePreference ?? [];
+        return searchV2(this.db, this.prefix, passQuery, this.agentId, {
           availablePaths: passPaths,
           hasEpisodes: mongoCfg.episodes.enabled,
           hasGraphData: mongoCfg.graph.enabled,
@@ -973,15 +958,14 @@ export class MongoDBMemoryManager implements MemorySearchManager {
             queryRewriteConfig: mongoCfg.queryRewriting,
             enableContiguousMerge: mongoCfg.enableContiguousMerge,
             enableContextExpansion: mongoCfg.enableContextExpansion,
-            ...(normalized.sourcePreference
-              ? { sourcePreference: normalized.sourcePreference }
-              : {}),
+            ...(passSourcePreference.length > 0 ? { sourcePreference: passSourcePreference } : {}),
             ...(timeRange ? { explicitTimeRange: timeRange } : {}),
             ...(normalized.structuredScope ? { structuredScope: normalized.structuredScope } : {}),
             ...(normalized.referenceScope ? { referenceScope: normalized.referenceScope } : {}),
             ...(normalized.proceduralScope ? { proceduralScope: normalized.proceduralScope } : {}),
           },
-        }),
+        });
+      },
     });
 
     mongodbTelemetry.emitTelemetry(this.db, this.prefix, {
@@ -1001,6 +985,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       pathsExecuted: response.metadata.pathsExecuted,
       resultsByPath: response.metadata.resultsByPath,
       evidenceCoverage: response.metadata.evidenceCoverage,
+      trustApplied: response.metadata.trustApplied,
     };
 
     if (response.results.length > 0) {
@@ -1653,21 +1638,25 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     }
 
     if (rawPath.startsWith("relation:")) {
-      const relationId = rawPath.slice("relation:".length).trim();
+      const [basePath, queryString] = rawPath.split("?", 2);
+      const relationId = basePath.slice("relation:".length).trim();
       if (!relationId) {
         throw new Error("path required");
       }
+      const query = new URLSearchParams(queryString ?? "");
+      const requestedScope = query.get("scope")?.trim();
+      const requestedScopeRef = query.get("scopeRef")?.trim();
       const relation = (
         await relationsCollection(this.db, this.prefix)
           .find(
             {
               agentId: this.agentId,
-              scope: "agent",
-              scopeRef: this.agentScopeRef,
+              ...(requestedScope ? { scope: requestedScope } : {}),
+              ...(requestedScopeRef ? { scopeRef: requestedScopeRef } : {}),
             },
             {
               sort: { updatedAt: -1, _id: 1 },
-              limit: 50,
+              limit: 100,
             },
           )
           .toArray()
@@ -1689,8 +1678,19 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         `type: ${String(relation.type ?? "")}`,
         `fromEntityId: ${String(relation.fromEntityId ?? "")}`,
         `toEntityId: ${String(relation.toEntityId ?? "")}`,
+        typeof relation.state === "string" ? `state: ${relation.state}` : null,
         typeof relation.weight === "number" ? `weight: ${relation.weight}` : null,
         typeof relation.confidence === "number" ? `confidence: ${relation.confidence}` : null,
+        relation.lastConfirmedAt instanceof Date
+          ? `lastConfirmedAt: ${relation.lastConfirmedAt.toISOString()}`
+          : null,
+        relation.validFrom instanceof Date
+          ? `validFrom: ${relation.validFrom.toISOString()}`
+          : null,
+        relation.validTo instanceof Date ? `validTo: ${relation.validTo.toISOString()}` : null,
+        relation.invalidatedBy && typeof relation.invalidatedBy === "object"
+          ? `invalidatedBy: ${JSON.stringify(relation.invalidatedBy)}`
+          : null,
         relation.updatedAt instanceof Date
           ? `updatedAt: ${relation.updatedAt.toISOString()}`
           : null,
@@ -2848,6 +2848,7 @@ export type V2SearchMetadata = {
   resultsByPath: Record<string, number>;
   reranked?: boolean;
   queryRewritten?: boolean;
+  trustApplied?: boolean;
 };
 
 function pathMatchesSourcePreference(
@@ -2907,6 +2908,32 @@ function graphRelationPriority(type: RelationType): number {
     default:
       return 1;
   }
+}
+
+function buildRelationLocator(params: {
+  fromEntityId: string;
+  toEntityId: string;
+  scope?: MemoryScope;
+  scopeRef?: string;
+  agentId: string;
+}): string {
+  const base = `relation:${params.fromEntityId}-${params.toEntityId}`;
+  const defaultAgentScopeRef = `agent:${params.agentId}`;
+  if (!params.scope || params.scope === "agent") {
+    if (!params.scopeRef || params.scopeRef === defaultAgentScopeRef) {
+      return base;
+    }
+  }
+
+  const query = new URLSearchParams();
+  if (params.scope) {
+    query.set("scope", params.scope);
+  }
+  if (params.scopeRef) {
+    query.set("scopeRef", params.scopeRef);
+  }
+  const suffix = query.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 function entityMatchScore(entity: Entity, query: string): number {
@@ -3295,25 +3322,53 @@ export async function searchV2(
                   scopeRef: agentScopeRef,
                 });
                 if (graph) {
-                  pathResults = graph.connections.map((c, i) => ({
-                    canonicalId: `${c.relation.fromEntityId}:${c.relation.type}:${c.relation.toEntityId}`,
-                    path: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
-                    filePath: `relation:${c.relation.fromEntityId}-${c.relation.toEntityId}`,
-                    startLine: 0,
-                    endLine: 0,
-                    snippet: `${graph.rootEntity.name} ${c.relation.type} ${c.entity.name}`,
-                    score: Math.min(
-                      1.0,
-                      Math.max(
-                        0.25,
-                        0.9 -
-                          c.depth * 0.08 -
-                          i * 0.02 -
-                          (4 - graphRelationPriority(c.relation.type)) * 0.05,
-                      ) + Math.min(c.relation.weight ?? 0, 0.15),
-                    ),
-                    source: "conversation" as MemorySource,
-                  }));
+                  pathResults = graph.connections.map((c, i) => {
+                    const relationLocator = buildRelationLocator({
+                      fromEntityId: c.relation.fromEntityId,
+                      toEntityId: c.relation.toEntityId,
+                      scope,
+                      scopeRef: agentScopeRef,
+                      agentId,
+                    });
+                    return {
+                      canonicalId: `${c.relation.fromEntityId}:${c.relation.type}:${c.relation.toEntityId}`,
+                      path: relationLocator,
+                      filePath: relationLocator,
+                      startLine: 0,
+                      endLine: 0,
+                      snippet: `${graph.rootEntity.name} ${c.relation.type} ${c.entity.name}`,
+                      score: Math.min(
+                        1.0,
+                        Math.max(
+                          0.25,
+                          0.9 -
+                            c.depth * 0.08 -
+                            i * 0.02 -
+                            (4 - graphRelationPriority(c.relation.type)) * 0.05,
+                        ) + Math.min(c.relation.weight ?? 0, 0.15),
+                      ),
+                      source: "conversation" as MemorySource,
+                      signals: {
+                        state: c.relation.state,
+                        sourceEventCount: Array.isArray(c.relation.sourceEventIds)
+                          ? c.relation.sourceEventIds.length
+                          : undefined,
+                        lastConfirmedAt:
+                          c.relation.lastConfirmedAt instanceof Date
+                            ? c.relation.lastConfirmedAt
+                            : undefined,
+                        validFrom:
+                          c.relation.validFrom instanceof Date ? c.relation.validFrom : undefined,
+                        validTo:
+                          c.relation.validTo instanceof Date ? c.relation.validTo : undefined,
+                        updatedAt:
+                          c.relation.updatedAt instanceof Date ? c.relation.updatedAt : undefined,
+                        conflictCount: Array.isArray(c.relation.conflictsWith)
+                          ? c.relation.conflictsWith.length
+                          : undefined,
+                      },
+                    };
+                  });
                 }
               }
             }
@@ -3444,10 +3499,12 @@ export async function searchV2(
 
     // Deduplicate, rerank, and limit
     let deduped = deduplicateSearchResults(results);
+    const hasProcedureHit = deduped.some((result) => result.path.startsWith("procedure:"));
     const needsProceduralBackstop =
       context.availablePaths.has("procedural") &&
-      !pathsToExecute.includes("procedural") &&
-      deduped.length < Math.max(2, Math.ceil(maxResults / 3));
+      ((!pathsToExecute.includes("procedural") &&
+        deduped.length < Math.max(2, Math.ceil(maxResults / 3))) ||
+        (hasProceduralSignal(query) && !hasProcedureHit));
     if (needsProceduralBackstop) {
       try {
         const procedureFallback = await searchProcedures(
@@ -3575,6 +3632,7 @@ export async function searchV2(
         resultsByPath,
         reranked: wasReranked,
         queryRewritten: wasQueryRewritten,
+        trustApplied: true,
       },
     };
   } catch (err) {

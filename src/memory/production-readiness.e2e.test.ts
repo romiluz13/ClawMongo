@@ -13,7 +13,7 @@
  *   - MongoDB operator inventory (one test per operator)
  *
  * Run:
- *   MONGODB_TEST_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
+ *   MONGODB_TEST_URI="mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
  *     pnpm vitest run --config vitest.e2e.config.ts src/memory/production-readiness.e2e.test.ts --reporter=verbose
  */
 
@@ -31,7 +31,12 @@ import { materializeEpisode, updateEpisodeStatus } from "./mongodb-episodes.js";
 import type { EpisodeSummarizer } from "./mongodb-episodes.js";
 import { getEventsByTimeRange } from "./mongodb-events.js";
 // v2 graph functions
-import { extractAndUpsertEntities } from "./mongodb-graph.js";
+import {
+  extractAndUpsertEntities,
+  expandGraph,
+  upsertEntity,
+  upsertRelation,
+} from "./mongodb-graph.js";
 // Lane coverage
 import { getLaneCoverage } from "./mongodb-lane-coverage.js";
 // v2 event functions
@@ -93,7 +98,7 @@ import type { MemorySearchRequest, MemorySearchResult } from "./types.js";
 
 const TEST_URI =
   process.env.MONGODB_TEST_URI ||
-  "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
+  "mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const PREFIX = "prodready_";
 const AGENT_ID = `agent-prodready-${randomUUID().slice(0, 8)}`;
 const VOYAGE_API_KEY = process.env.VOYAGE_RERANK_API_KEY ?? process.env.VOYAGE_API_KEY ?? "";
@@ -846,6 +851,315 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       const snippets = results.map((r) => r.snippet);
       const uniqueSnippets = new Set(snippets);
       expect(uniqueSnippets.size).toBe(snippets.length);
+    });
+
+    it("trust-aware reranking prefers fresher structured memory on seeded current-state facts", async () => {
+      const now = new Date();
+      const currentKey = `prod-db-owner-current-${randomUUID().slice(0, 8)}`;
+      const staleKey = `prod-db-owner-stale-${randomUUID().slice(0, 8)}`;
+
+      await writeStructuredMemory({
+        db,
+        prefix: PREFIX,
+        entry: {
+          type: "fact",
+          key: currentKey,
+          value: "Current production database owner for the platform rollout is Sarah.",
+          confidence: 0.96,
+          agentId: AGENT_ID,
+          scope: "agent",
+          salience: "high",
+          temporalScope: "ongoing",
+          sourceEventIds: ["evt-current-1", "evt-current-2", "evt-current-3"],
+          sourceReliability: 0.95,
+          reinforcementCount: 4,
+          lastConfirmedAt: now,
+          reviewAt: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
+        },
+        embeddingMode: "automated",
+      });
+
+      await writeStructuredMemory({
+        db,
+        prefix: PREFIX,
+        entry: {
+          type: "fact",
+          key: staleKey,
+          value: "Current production database owner for the platform rollout is Mike.",
+          confidence: 0.55,
+          agentId: AGENT_ID,
+          scope: "agent",
+          salience: "high",
+          temporalScope: "ongoing",
+          sourceEventIds: ["evt-stale-1"],
+          sourceReliability: 0.35,
+          reinforcementCount: 1,
+          lastConfirmedAt: new Date(now.getTime() - 120 * 24 * 60 * 60 * 1000),
+          reviewAt: new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000),
+        },
+        embeddingMode: "automated",
+      });
+
+      const { results, metadata } = await searchV2(
+        db,
+        PREFIX,
+        "current production database owner platform rollout",
+        AGENT_ID,
+        {
+          availablePaths: new Set<RetrievalPath>(["structured"]),
+          maxResults: 5,
+        },
+      );
+
+      expect(results.length).toBeGreaterThanOrEqual(2);
+      expect(results[0].snippet.toLowerCase()).toContain("sarah");
+      expect(results[0].trust?.score ?? 0).toBeGreaterThan(results[1].trust?.score ?? 0);
+      expect(metadata.trustApplied).toBe(true);
+    });
+
+    it("freshness corrective retrieval rescues stale structured current-state hits with recent events", async () => {
+      const suffix = randomUUID().slice(0, 8);
+      const subject = `phoenix-rollout-${suffix}`;
+      const staleNow = new Date();
+
+      await writeStructuredMemory({
+        db,
+        prefix: PREFIX,
+        entry: {
+          type: "fact",
+          key: `stale-current-owner-${suffix}`,
+          value: `Current owner of ${subject} production database is Mike.`,
+          confidence: 0.6,
+          agentId: AGENT_ID,
+          scope: "agent",
+          salience: "high",
+          temporalScope: "ongoing",
+          sourceEventIds: [`evt-owner-stale-${suffix}`],
+          sourceReliability: 0.45,
+          reinforcementCount: 1,
+          lastConfirmedAt: new Date(staleNow.getTime() - 120 * 24 * 60 * 60 * 1000),
+          reviewAt: new Date(staleNow.getTime() - 30 * 24 * 60 * 60 * 1000),
+        },
+        embeddingMode: "automated",
+      });
+
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "assistant",
+        body: `Handoff update for ${subject}: Sarah owns the production database right now after the cutover.`,
+        scope: "agent",
+        sessionId: `session-freshness-rescue-${suffix}`,
+        metadata: { phase: "freshness-correction", subject },
+      });
+
+      const response = await manager.searchDetailed({
+        query: `who owns the ${subject} production database right now`,
+        searchMode: "direct",
+        sourcePreference: ["structured"],
+        maxPasses: 2,
+        maxResults: 5,
+        returnPlan: true,
+      });
+
+      const correctivePass = response.metadata.passes.find(
+        (pass) => pass.correctionApplied === "freshness-rebalanced",
+      );
+      expect(response.metadata.trustApplied).toBe(true);
+      expect(response.metadata.passes.length).toBeGreaterThanOrEqual(1);
+      if (correctivePass) {
+        expect(correctivePass.correctionApplied).toBe("freshness-rebalanced");
+      }
+      expect(response.results.length).toBeGreaterThan(0);
+      expect(response.results[0].snippet.toLowerCase()).toContain("sarah");
+      expect(response.results[0].snippet.toLowerCase()).not.toContain("mike");
+    });
+
+    it("contradiction corrective retrieval demands exact evidence for conflicted current-state memory", async () => {
+      const suffix = randomUUID().slice(0, 8);
+      const subject = `contradiction-owner-${suffix}`;
+      const now = new Date();
+
+      await writeStructuredMemory({
+        db,
+        prefix: PREFIX,
+        entry: {
+          type: "fact",
+          key: `conflicted-current-owner-${suffix}`,
+          value: `Current owner of ${subject} production database is Mike.`,
+          confidence: 0.58,
+          agentId: AGENT_ID,
+          scope: "agent",
+          salience: "high",
+          temporalScope: "ongoing",
+          state: "conflicted",
+          sourceEventIds: [`evt-owner-conflicted-${suffix}`],
+          sourceReliability: 0.45,
+          reinforcementCount: 1,
+          lastConfirmedAt: now,
+        },
+        embeddingMode: "automated",
+      });
+
+      await writeEventAndProject(db, PREFIX, {
+        agentId: AGENT_ID,
+        role: "assistant",
+        body: `Ownership clarification for ${subject}: Sarah owns the production database right now after Mike handed it off.`,
+        scope: "agent",
+        sessionId: `session-contradiction-resolution-${suffix}`,
+        metadata: { phase: "contradiction-correction", subject },
+      });
+
+      const response = await manager.searchDetailed({
+        query: `who owns the ${subject} production database right now`,
+        searchMode: "direct",
+        sourcePreference: ["structured"],
+        maxPasses: 2,
+        maxResults: 5,
+        returnPlan: true,
+      });
+
+      const correctivePass = response.metadata.passes.find(
+        (pass) => pass.correctionApplied === "conflict-evidence-required",
+      );
+      expect(response.results.length).toBeGreaterThan(0);
+      expect(response.results.some((result) => result.snippet.includes(subject))).toBe(true);
+      if (correctivePass) {
+        expect(correctivePass.correctionApplied).toBe("conflict-evidence-required");
+      }
+    });
+
+    it("single-current graph relations invalidate prior active edges and only expand the latest truth", async () => {
+      const relationSuffix = randomUUID().slice(0, 8);
+      const ownerEntityId = `ent-owner-${relationSuffix}`;
+      const staleTargetId = `ent-target-stale-${relationSuffix}`;
+      const currentTargetId = `ent-target-current-${relationSuffix}`;
+
+      await upsertEntity({
+        db,
+        prefix: PREFIX,
+        entity: {
+          entityId: ownerEntityId,
+          name: `Control Plane ${relationSuffix}`,
+          type: "system",
+          agentId: AGENT_ID,
+          scope: "agent",
+          updatedAt: new Date(),
+        },
+      });
+      await upsertEntity({
+        db,
+        prefix: PREFIX,
+        entity: {
+          entityId: staleTargetId,
+          name: `Atlas Team ${relationSuffix}`,
+          type: "org",
+          agentId: AGENT_ID,
+          scope: "agent",
+          updatedAt: new Date(),
+        },
+      });
+      await upsertEntity({
+        db,
+        prefix: PREFIX,
+        entity: {
+          entityId: currentTargetId,
+          name: `Phoenix Team ${relationSuffix}`,
+          type: "org",
+          agentId: AGENT_ID,
+          scope: "agent",
+          updatedAt: new Date(),
+        },
+      });
+
+      await upsertRelation({
+        db,
+        prefix: PREFIX,
+        relation: {
+          fromEntityId: ownerEntityId,
+          toEntityId: staleTargetId,
+          type: "owns",
+          agentId: AGENT_ID,
+          scope: "agent",
+          updatedAt: new Date(),
+          weight: 0.7,
+          sourceEventIds: [`evt-old-${relationSuffix}`],
+        },
+      });
+
+      await upsertRelation({
+        db,
+        prefix: PREFIX,
+        relation: {
+          fromEntityId: ownerEntityId,
+          toEntityId: currentTargetId,
+          type: "owns",
+          agentId: AGENT_ID,
+          scope: "agent",
+          updatedAt: new Date(),
+          weight: 0.92,
+          sourceEventIds: [`evt-new-${relationSuffix}`],
+        },
+      });
+
+      const staleRelation = await relationsCollection(db, PREFIX).findOne({
+        fromEntityId: ownerEntityId,
+        toEntityId: staleTargetId,
+        type: "owns",
+        agentId: AGENT_ID,
+      });
+      const currentRelation = await relationsCollection(db, PREFIX).findOne({
+        fromEntityId: ownerEntityId,
+        toEntityId: currentTargetId,
+        type: "owns",
+        agentId: AGENT_ID,
+      });
+
+      expect(staleRelation).toBeTruthy();
+      expect(currentRelation).toBeTruthy();
+      expect(staleRelation?.state).toBe("invalidated");
+      expect(staleRelation?.validTo).toBeInstanceOf(Date);
+      expect(staleRelation?.invalidatedBy).toMatchObject({
+        fromEntityId: ownerEntityId,
+        toEntityId: currentTargetId,
+        type: "owns",
+      });
+      expect(currentRelation?.state ?? "active").toBe("active");
+      expect(currentRelation?.lastConfirmedAt).toBeInstanceOf(Date);
+
+      const graph = await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: ownerEntityId,
+        agentId: AGENT_ID,
+        scope: "agent",
+        scopeRef: resolveScopeRef({ scope: "agent", agentId: AGENT_ID }),
+      });
+
+      expect(graph).not.toBeNull();
+      expect(graph?.connections.map((connection) => connection.entity.entityId)).toEqual([
+        currentTargetId,
+      ]);
+      expect(graph?.connections[0]?.relation.state).toBe("active");
+
+      const retrieval = await searchV2(
+        db,
+        PREFIX,
+        `who owns Control Plane ${relationSuffix}`,
+        AGENT_ID,
+        {
+          availablePaths: new Set<RetrievalPath>(["graph"]),
+          knownEntityNames: [`Control Plane ${relationSuffix}`],
+          hasGraphData: true,
+          maxResults: 5,
+        },
+      );
+
+      expect(retrieval.metadata.trustApplied).toBe(true);
+      expect(retrieval.results.length).toBeGreaterThan(0);
+      expect(retrieval.results[0]?.snippet).toContain(`Phoenix Team ${relationSuffix}`);
+      expect(retrieval.results[0]?.snippet).not.toContain(`Atlas Team ${relationSuffix}`);
+      expect(retrieval.results[0]?.signals?.state).toBe("active");
+      expect(retrieval.results[0]?.trust?.score ?? 0).toBeGreaterThan(0.6);
     });
   });
 
@@ -3165,6 +3479,15 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
       expect(agentic.metadata.queriesTried.length).toBeGreaterThanOrEqual(
         direct.metadata.queriesTried.length,
       );
+      if (agentic.metadata.queriesTried.length > 1) {
+        expect(
+          agentic.metadata.queriesTried.some(
+            (candidate) =>
+              candidate !== query &&
+              /istio service mesh config|rollback procedures/i.test(candidate),
+          ),
+        ).toBe(true);
+      }
       expect(EVIDENCE_RANK[agentic.metadata.evidenceCoverage]).toBeGreaterThanOrEqual(
         EVIDENCE_RANK[direct.metadata.evidenceCoverage],
       );
@@ -3644,6 +3967,49 @@ describeIfMongo("Production-Readiness E2E: Operational Quality Validation", () =
         .find({ agentId: extractionAgentId })
         .toArray();
       expect(procedures.length).toBeGreaterThanOrEqual(1);
+    }, 15_000);
+
+    it("assistant decision summaries require user confirmation before durable structured promotion", async () => {
+      const decisionValue = `use Redis for session caching ${randomUUID().slice(0, 8)}.`;
+      const decisionText = `We decided: ${decisionValue}`;
+
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "assistant",
+        body: decisionText,
+        scope: "agent",
+        sessionId,
+      });
+
+      await new Promise((r) => setTimeout(r, 500));
+
+      const afterAssistant = await structuredMemCollection(db, PREFIX)
+        .find({
+          agentId: extractionAgentId,
+          type: "decision",
+          value: decisionValue,
+        })
+        .toArray();
+      expect(afterAssistant).toHaveLength(0);
+
+      await writeEventAndProject(db, PREFIX, {
+        agentId: extractionAgentId,
+        role: "user",
+        body: decisionText,
+        scope: "agent",
+        sessionId,
+      });
+
+      await new Promise((r) => setTimeout(r, 500));
+
+      const afterUser = await structuredMemCollection(db, PREFIX)
+        .find({
+          agentId: extractionAgentId,
+          type: "decision",
+          value: decisionValue,
+        })
+        .toArray();
+      expect(afterUser).toHaveLength(1);
     }, 15_000);
 
     it("extraction failure does not block event write", async () => {

@@ -896,6 +896,7 @@ describe("rerankResults", () => {
     snippet: string,
     score: number,
     source: MemorySearchResult["source"],
+    overrides: Partial<MemorySearchResult> = {},
   ): MemorySearchResult => ({
     path,
     filePath: path,
@@ -904,6 +905,7 @@ describe("rerankResults", () => {
     snippet,
     score,
     source,
+    ...overrides,
   });
 
   it("returns empty array for empty input", () => {
@@ -952,6 +954,62 @@ describe("rerankResults", () => {
     const originalOrder = results.map((r) => r.path);
     rerankResults(results, "query");
     expect(results.map((r) => r.path)).toEqual(originalOrder);
+  });
+
+  it("uses lifecycle trust signals to demote stale structured memories", () => {
+    const results = [
+      makeResult(
+        "structured:fact:stale-owner",
+        "Current production database owner is Mike",
+        0.82,
+        "structured",
+        {
+          signals: {
+            state: "active",
+            temporalScope: "ongoing",
+            sourceReliability: 0.3,
+            reinforcementCount: 1,
+            sourceEventCount: 1,
+            lastConfirmedAt: new Date("2025-01-01T00:00:00.000Z"),
+            reviewAt: new Date("2025-02-01T00:00:00.000Z"),
+          },
+        },
+      ),
+      makeResult(
+        "structured:fact:current-owner",
+        "Current production database owner is Sarah",
+        0.79,
+        "structured",
+        {
+          signals: {
+            state: "active",
+            temporalScope: "ongoing",
+            sourceReliability: 0.95,
+            reinforcementCount: 4,
+            sourceEventCount: 3,
+            lastConfirmedAt: new Date(),
+            reviewAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          },
+        },
+      ),
+    ];
+
+    const reranked = rerankResults(results, "current production database owner");
+
+    expect(reranked[0].path).toBe("structured:fact:current-owner");
+    expect(reranked[0].trust?.score ?? 0).toBeGreaterThan(reranked[1].trust?.score ?? 0);
+    expect(reranked[0].score).toBeGreaterThan(reranked[1].score);
+  });
+
+  it("keeps reranked scores bounded after trust and episode boosts", () => {
+    const reranked = rerankResults(
+      [makeResult("episode:ep1", "Episode summary", 0.97, "conversation")],
+      "query",
+    );
+
+    expect(reranked[0].score).toBeGreaterThanOrEqual(0);
+    expect(reranked[0].score).toBeLessThanOrEqual(1);
+    expect(reranked[0].trust).toBeDefined();
   });
 });
 

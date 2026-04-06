@@ -74,6 +74,11 @@ describe("mongodb-retrieval-planner", () => {
     expect(plan.paths[0]).toBe("procedural");
   });
 
+  it("routes concise operational procedure names to procedural first", () => {
+    const plan = planRetrieval("incident response", makeContext());
+    expect(plan.paths[0]).toBe("procedural");
+  });
+
   it("routes 'what's in the docs about authentication' to kb first", () => {
     const plan = planRetrieval("what's in the docs about authentication", makeContext());
     expect(plan.paths[0]).toBe("kb");

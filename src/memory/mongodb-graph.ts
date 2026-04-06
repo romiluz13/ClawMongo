@@ -12,6 +12,7 @@ import {
 } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
 import { emitTelemetry } from "./mongodb-telemetry.js";
+import type { MemoryLifecycleState } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:graph");
 
@@ -55,6 +56,15 @@ export type RelationType =
   | "reported_by"
   | "related_to";
 
+export type RelationState = MemoryLifecycleState;
+
+export type RelationInvalidationRef = {
+  fromEntityId: string;
+  toEntityId: string;
+  type: RelationType;
+  updatedAt: Date;
+};
+
 export type Relation = {
   fromEntityId: string;
   toEntityId: string;
@@ -64,6 +74,12 @@ export type Relation = {
   scope: MemoryScope;
   scopeRef?: string;
   sourceEventIds?: string[];
+  state?: RelationState;
+  validFrom?: Date;
+  validTo?: Date;
+  lastConfirmedAt?: Date;
+  invalidatedBy?: RelationInvalidationRef;
+  conflictsWith?: Array<Record<string, unknown>>;
   updatedAt: Date;
 };
 
@@ -113,6 +129,18 @@ function relationPriority(type: RelationType): number {
 
 function relationRecency(value: unknown): number {
   return value instanceof Date ? value.getTime() : 0;
+}
+
+function activeRelationQuery(): Document {
+  return { $or: [{ state: "active" }, { state: { $exists: false } }] };
+}
+
+function isActiveRelationRecord(value: Pick<Relation, "state"> | Document): boolean {
+  return value.state === undefined || value.state === "active";
+}
+
+function isSingleCurrentRelationType(type: RelationType): boolean {
+  return type === "decided" || type === "owns";
 }
 
 function canonicalizeEntityPair(left: string, right: string) {
@@ -265,6 +293,39 @@ export async function upsertRelation(params: {
       scopeRef: relation.scopeRef,
       agentId: relation.agentId,
     });
+    const state = relation.state ?? "active";
+    const invalidatedBy: RelationInvalidationRef = {
+      fromEntityId: relation.fromEntityId,
+      toEntityId: relation.toEntityId,
+      type: relation.type,
+      updatedAt: now,
+    };
+
+    if (state === "active" && isSingleCurrentRelationType(relation.type)) {
+      await collection.updateMany(
+        {
+          fromEntityId: relation.fromEntityId,
+          type: relation.type,
+          agentId: relation.agentId,
+          scope: relation.scope,
+          scopeRef,
+          toEntityId: { $ne: relation.toEntityId },
+          ...activeRelationQuery(),
+        },
+        {
+          $set: {
+            state: "invalidated",
+            updatedAt: now,
+            validTo: now,
+            invalidatedBy,
+          },
+          $unset: {
+            conflictsWith: "",
+          },
+        },
+      );
+    }
+
     const setDoc: Document = {
       fromEntityId: relation.fromEntityId,
       toEntityId: relation.toEntityId,
@@ -272,6 +333,8 @@ export async function upsertRelation(params: {
       agentId: relation.agentId,
       scope: relation.scope,
       scopeRef,
+      state,
+      lastConfirmedAt: relation.lastConfirmedAt ?? now,
       updatedAt: now,
     };
     if (relation.weight !== undefined) {
@@ -279,6 +342,22 @@ export async function upsertRelation(params: {
     }
     if (relation.sourceEventIds !== undefined) {
       setDoc.sourceEventIds = relation.sourceEventIds;
+    }
+    if (relation.validTo !== undefined) {
+      setDoc.validTo = relation.validTo;
+    }
+    if (relation.invalidatedBy !== undefined) {
+      setDoc.invalidatedBy = relation.invalidatedBy;
+    }
+    if (relation.conflictsWith !== undefined) {
+      setDoc.conflictsWith = relation.conflictsWith;
+    }
+
+    const unsetDoc: Document = {};
+    if (state === "active") {
+      unsetDoc.invalidatedBy = "";
+      unsetDoc.validTo = "";
+      unsetDoc.conflictsWith = "";
     }
 
     const result = await collection.updateOne(
@@ -290,7 +369,11 @@ export async function upsertRelation(params: {
         scope: relation.scope,
         scopeRef,
       },
-      { $set: setDoc, $setOnInsert: { createdAt: now } },
+      {
+        $set: setDoc,
+        $setOnInsert: { createdAt: now, validFrom: relation.validFrom ?? now },
+        ...(Object.keys(unsetDoc).length > 0 ? { $unset: unsetDoc } : {}),
+      },
       { upsert: true },
     );
 
@@ -630,6 +713,9 @@ export async function expandGraph(params: {
 
     function collectRelations(rels: Document[]): void {
       for (const directRel of rels) {
+        if (!isActiveRelationRecord(directRel)) {
+          continue;
+        }
         const key = `${directRel.fromEntityId}:${directRel.toEntityId}:${directRel.type}`;
         if (!relationsByKey.has(key)) {
           relationsByKey.set(key, { relation: directRel, depth: 0 });
@@ -637,6 +723,9 @@ export async function expandGraph(params: {
         // Process transitive relations from $graphLookup
         const transitive = (directRel.transitiveRelations ?? []) as Document[];
         for (const transRel of transitive) {
+          if (!isActiveRelationRecord(transRel)) {
+            continue;
+          }
           const tKey = `${transRel.fromEntityId}:${transRel.toEntityId}:${transRel.type}`;
           const depth = ((transRel.depth as number) ?? 0) + 1;
           if (!relationsByKey.has(tKey)) {
@@ -658,6 +747,7 @@ export async function expandGraph(params: {
                   agentId,
                   ...(scope ? { scope } : {}),
                   ...(scopeRef ? { scopeRef } : {}),
+                  ...activeRelationQuery(),
                 },
               },
               {
@@ -673,6 +763,7 @@ export async function expandGraph(params: {
                     agentId,
                     ...(scope ? { scope } : {}),
                     ...(scopeRef ? { scopeRef } : {}),
+                    ...activeRelationQuery(),
                   },
                 },
               },
@@ -684,6 +775,7 @@ export async function expandGraph(params: {
                   agentId,
                   ...(scope ? { scope } : {}),
                   ...(scopeRef ? { scopeRef } : {}),
+                  ...activeRelationQuery(),
                 },
               },
               {
@@ -699,6 +791,7 @@ export async function expandGraph(params: {
                     agentId,
                     ...(scope ? { scope } : {}),
                     ...(scopeRef ? { scopeRef } : {}),
+                    ...activeRelationQuery(),
                   },
                 },
               },
@@ -721,6 +814,7 @@ export async function expandGraph(params: {
             agentId,
             ...(scope ? { scope } : {}),
             ...(scopeRef ? { scopeRef } : {}),
+            ...activeRelationQuery(),
           },
         },
         {
@@ -736,6 +830,7 @@ export async function expandGraph(params: {
               agentId,
               ...(scope ? { scope } : {}),
               ...(scopeRef ? { scopeRef } : {}),
+              ...activeRelationQuery(),
             },
           },
         },
@@ -1193,10 +1288,17 @@ export async function extractAndUpsertEntities(params: {
                   agentId,
                   scope,
                   scopeRef,
+                  state: "active",
+                  lastConfirmedAt: now,
                   updatedAt: now,
                   ...(sourceEventId ? { sourceEventIds: [sourceEventId] } : {}),
                 },
-                $setOnInsert: { createdAt: now },
+                $unset: {
+                  invalidatedBy: "",
+                  validTo: "",
+                  conflictsWith: "",
+                },
+                $setOnInsert: { createdAt: now, validFrom: now },
               },
               upsert: true,
             },

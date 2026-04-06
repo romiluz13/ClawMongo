@@ -23,6 +23,46 @@ export type MemorySearchTimeRangePreset =
   | "last-30d"
   | "this-month";
 
+export type MemoryLifecycleState = "active" | "invalidated" | "conflicted";
+export type MemoryLifecycleSalience = "critical" | "high" | "normal" | "low";
+export type MemoryLifecycleTemporalScope = "ongoing" | "bounded" | "permanent" | "transient";
+
+export type MemorySearchResultSignals = {
+  state?: MemoryLifecycleState;
+  salience?: MemoryLifecycleSalience;
+  temporalScope?: MemoryLifecycleTemporalScope;
+  confidence?: number;
+  sourceReliability?: number;
+  reinforcementCount?: number;
+  sourceEventCount?: number;
+  reviewAt?: Date;
+  lastConfirmedAt?: Date;
+  validFrom?: Date;
+  validTo?: Date;
+  updatedAt?: Date;
+  conflictCount?: number;
+};
+
+export type MemorySearchTrust = {
+  score: number;
+  freshness: number;
+  provenance: number;
+  exactness: number;
+  contradiction: number;
+  recency: number;
+};
+
+export type MemorySearchContradictionStatus = "clear" | "detected" | "unresolved";
+
+export type MemorySearchContradictionSummary = {
+  status: MemorySearchContradictionStatus;
+  conflictedResults: number;
+  invalidatedResults: number;
+  lowTrustResults: number;
+  exactResolutionAvailable: boolean;
+  topResultConflicted: boolean;
+};
+
 export type MemorySearchResult = {
   path: string;
   filePath?: string;
@@ -36,6 +76,8 @@ export type MemorySearchResult = {
   canonicalId?: string;
   sessionId?: string; // session the chunk belongs to (for contiguous merge / context expansion)
   timestamp?: Date; // event timestamp (for ordering in merge/expansion)
+  signals?: MemorySearchResultSignals;
+  trust?: MemorySearchTrust;
 };
 
 export type MemorySearchTimeRange = {
@@ -112,6 +154,10 @@ export type MemorySearchMetadata = {
   resultsByPath: Record<string, number>;
   queryRewritten: boolean;
   reranked: boolean;
+  trustApplied?: boolean;
+  contradictionSummary?: MemorySearchContradictionSummary;
+  abstained?: boolean;
+  abstainReason?: string;
   noDirectEvidenceReason?: string;
   constraintRelaxations?: Array<{ constraint: string; action: string }>;
   mmrApplied?: boolean;

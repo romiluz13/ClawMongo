@@ -11,7 +11,7 @@ import {
   MONGODB_MAX_NUM_CANDIDATES,
   type SearchExplainOptions,
 } from "./mongodb-search.js";
-import type { MemorySearchResult } from "./types.js";
+import type { MemoryLifecycleState, MemorySearchResult } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:procedures");
 
@@ -466,6 +466,12 @@ function toProcedureResult(doc: Document): MemorySearchResult {
     source: "structured",
     sourceType: "structured",
     canonicalId: String(doc._id ?? doc.procedureId ?? ""),
+    signals: {
+      ...(typeof doc.state === "string" ? { state: doc.state as MemoryLifecycleState } : {}),
+      ...(typeof doc.confidence === "number" ? { confidence: doc.confidence } : {}),
+      ...(Array.isArray(doc.sourceEventIds) ? { sourceEventCount: doc.sourceEventIds.length } : {}),
+      ...(doc.updatedAt instanceof Date ? { updatedAt: doc.updatedAt } : {}),
+    },
   };
 }
 
@@ -540,6 +546,10 @@ export async function searchProcedures(
               _id: 0,
               procedureId: 1,
               searchText: 1,
+              confidence: 1,
+              sourceEventIds: 1,
+              state: 1,
+              updatedAt: 1,
               score: { $meta: "vectorSearchScore" },
             },
           },
@@ -581,6 +591,10 @@ export async function searchProcedures(
             _id: 0,
             procedureId: 1,
             searchText: 1,
+            confidence: 1,
+            sourceEventIds: 1,
+            state: 1,
+            updatedAt: 1,
             score: { $meta: "textScore" },
           },
         },

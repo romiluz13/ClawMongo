@@ -25,6 +25,7 @@ function createMockCollection(overrides: Partial<Record<string, unknown>> = {}):
   return {
     insertOne: vi.fn().mockResolvedValue({ insertedId: "mock-id", acknowledged: true }),
     updateOne: vi.fn().mockResolvedValue({ upsertedCount: 1, matchedCount: 0, modifiedCount: 0 }),
+    updateMany: vi.fn().mockResolvedValue({ matchedCount: 0, modifiedCount: 0 }),
     bulkWrite: vi.fn().mockResolvedValue({
       insertedCount: 0,
       matchedCount: 0,
@@ -154,7 +155,54 @@ describe("mongodb-graph", () => {
       });
       expect(update.$set.agentId).toBe("agent-1");
       expect(update.$set.scope).toBe("agent");
+      expect(update.$set.state).toBe("active");
+      expect(update.$set.lastConfirmedAt).toBeInstanceOf(Date);
+      expect(update.$setOnInsert.validFrom).toBeInstanceOf(Date);
+      expect(update.$unset).toEqual({
+        invalidatedBy: "",
+        validTo: "",
+        conflictsWith: "",
+      });
       expect(opts).toEqual({ upsert: true });
+      expect(relationsCol.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("invalidates older active single-current relations when the target changes", async () => {
+      const relationsCol = createMockCollection({
+        updateMany: vi.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
+      });
+      const db = createMockDb({ [`${PREFIX}relations`]: relationsCol });
+
+      await upsertRelation({
+        db,
+        prefix: PREFIX,
+        relation: makeRelation({
+          type: "decided",
+          toEntityId: "ent-3",
+        }),
+      });
+
+      expect(relationsCol.updateMany).toHaveBeenCalledOnce();
+      const [invalidateFilter, invalidateUpdate] = (
+        relationsCol.updateMany as ReturnType<typeof vi.fn>
+      ).mock.calls[0];
+      expect(invalidateFilter).toEqual({
+        fromEntityId: "ent-1",
+        type: "decided",
+        agentId: "agent-1",
+        scope: "agent",
+        scopeRef: "agent:agent-1",
+        toEntityId: { $ne: "ent-3" },
+        $or: [{ state: "active" }, { state: { $exists: false } }],
+      });
+      expect(invalidateUpdate.$set.state).toBe("invalidated");
+      expect(invalidateUpdate.$set.validTo).toBeInstanceOf(Date);
+      expect(invalidateUpdate.$set.invalidatedBy).toMatchObject({
+        fromEntityId: "ent-1",
+        toEntityId: "ent-3",
+        type: "decided",
+      });
+      expect(invalidateUpdate.$unset).toEqual({ conflictsWith: "" });
     });
   });
 
@@ -404,6 +452,10 @@ describe("mongodb-graph", () => {
       // maxDepth is (requested - 1) because the initial $match already captures direct edges
       expect(graphLookupStage.$graphLookup.maxDepth).toBe(1);
       expect(graphLookupStage.$graphLookup.restrictSearchWithMatch.agentId).toBe("agent-1");
+      expect(graphLookupStage.$graphLookup.restrictSearchWithMatch.$or).toEqual([
+        { state: "active" },
+        { state: { $exists: false } },
+      ]);
     });
 
     it("respects agentId filter", async () => {
@@ -427,6 +479,65 @@ describe("mongodb-graph", () => {
 
       // Should return null when root entity not found for agent
       expect(result).toBeNull();
+    });
+
+    it("filters invalidated relations out of returned connections", async () => {
+      const rootEntity = makeEntity();
+      const activeEntity = makeEntity({ entityId: "ent-2", name: "Phoenix", type: "project" });
+      const invalidatedEntity = makeEntity({ entityId: "ent-3", name: "Atlas", type: "project" });
+
+      const entitiesCol = createMockCollection({
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([activeEntity, invalidatedEntity]),
+        }),
+      });
+      (entitiesCol as unknown as Record<string, unknown>).findOne = vi
+        .fn()
+        .mockResolvedValue(rootEntity);
+
+      const relationsCol = createMockCollection({
+        aggregate: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              fromEntityId: "ent-1",
+              toEntityId: "ent-2",
+              type: "owns",
+              state: "active",
+              agentId: "agent-1",
+              scope: "agent",
+              updatedAt: new Date("2026-01-02"),
+              transitiveRelations: [],
+            },
+            {
+              fromEntityId: "ent-1",
+              toEntityId: "ent-3",
+              type: "owns",
+              state: "invalidated",
+              agentId: "agent-1",
+              scope: "agent",
+              updatedAt: new Date("2026-01-01"),
+              transitiveRelations: [],
+            },
+          ]),
+        }),
+      });
+
+      const db = createMockDb({
+        [`${PREFIX}entities`]: entitiesCol,
+        [`${PREFIX}relations`]: relationsCol,
+      });
+
+      const result = await expandGraph({
+        db,
+        prefix: PREFIX,
+        entityId: "ent-1",
+        agentId: "agent-1",
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.connections).toHaveLength(1);
+      expect(result!.connections[0]?.entity.name).toBe("Phoenix");
+      expect(result!.connections[0]?.relation.state).toBe("active");
     });
   });
 

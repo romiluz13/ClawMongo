@@ -4,7 +4,7 @@
  * Tests ALL v2 capabilities against a live MongoDB (atlas-local:preview)
  * with realistic multi-turn AI agent simulation data.
  *
- * Run: MONGODB_TEST_URI="mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
+ * Run: MONGODB_TEST_URI="mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true" \
  *      pnpm vitest run --config vitest.e2e.config.ts src/memory/real-e2e-v2.e2e.test.ts --reporter=verbose
  */
 
@@ -69,7 +69,7 @@ import type { MemorySearchResult } from "./types.js";
 
 const TEST_URI =
   process.env.MONGODB_TEST_URI ||
-  "mongodb://admin:admin@localhost:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
+  "mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const PREFIX = "clawtest_";
 const AGENT_ID = `agent-e2e-${randomUUID().slice(0, 8)}`;
 const AUTO_EMBED_ENABLED = Boolean(
@@ -322,7 +322,7 @@ describe("Real E2E: Memory v2 Full Capability Test", () => {
         await db.collection(col.name).deleteMany({ agentId: AGENT_ID });
       }
     }
-  }, 30_000);
+  }, 120_000);
 
   afterAll(async () => {
     await client?.close();

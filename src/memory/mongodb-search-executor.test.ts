@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  analyzeContradictionCorrection,
   analyzeCorrectionNeeded,
+  analyzeFreshnessCorrection,
   applyHardConstraintRejections,
   applyMMRReranking,
   buildExecutorPasses,
@@ -70,6 +72,52 @@ describe("buildExecutorPasses", () => {
       "open source eval tools",
       "open source eval tools alternatives",
       "open source eval tools related tools",
+    ]);
+  });
+
+  it("decomposes comparison queries into focused subject passes", () => {
+    const passes = buildExecutorPasses(
+      normalizeMemorySearchRequest({
+        query: "compare MongoDB and Postgres",
+        searchMode: "agentic",
+      }),
+      "comparison",
+    );
+    expect(passes.map((pass) => pass.query)).toEqual([
+      "compare MongoDB and Postgres",
+      "MongoDB overview",
+      "Postgres overview",
+    ]);
+  });
+
+  it("decomposes multi-hop queries into clause-focused follow-up passes", () => {
+    const passes = buildExecutorPasses(
+      normalizeMemorySearchRequest({
+        query:
+          "Who worked on the Istio service mesh config and what rollback procedures did they define?",
+        searchMode: "agentic",
+      }),
+      "multi-hop",
+    );
+    expect(passes.map((pass) => pass.query)).toEqual([
+      "Who worked on the Istio service mesh config and what rollback procedures did they define?",
+      "Who worked on the Istio service mesh config",
+      "Istio service mesh config rollback procedures",
+    ]);
+  });
+
+  it("gives direct current-state auto queries a bounded freshness follow-up", () => {
+    const passes = buildExecutorPasses(
+      normalizeMemorySearchRequest({
+        query: "who owns the production database right now",
+        searchMode: "auto",
+        maxPasses: 2,
+      }),
+      "direct",
+    );
+    expect(passes.map((pass) => pass.query)).toEqual([
+      "who owns the production database right now",
+      "who owns the production database right now latest status",
     ]);
   });
 });
@@ -171,6 +219,8 @@ function makeResult(overrides: Partial<MemorySearchResult> = {}): MemorySearchRe
     canonicalId: overrides.canonicalId ?? `id-${Math.random().toString(36).slice(2, 8)}`,
     ...(overrides.timestamp ? { timestamp: overrides.timestamp } : {}),
     ...(overrides.sessionId ? { sessionId: overrides.sessionId } : {}),
+    ...(overrides.signals ? { signals: overrides.signals } : {}),
+    ...(overrides.trust ? { trust: overrides.trust } : {}),
   };
 }
 
@@ -324,6 +374,8 @@ describe("executeMongoSearchPlan", () => {
     expect(response.metadata.resultsRejected.length).toBeGreaterThan(0);
     expect(response.metadata.resultsRejected[0]?.reason).toBe("outside requested time range");
     expect(response.metadata.noDirectEvidenceReason).toContain("No exact-evidence results");
+    expect(response.metadata.abstained).toBe(true);
+    expect(response.metadata.abstainReason).toContain("No exact-evidence results");
   });
 
   it("returns noDirectEvidenceReason when needExactEvidence filters all results", async () => {
@@ -346,6 +398,8 @@ describe("executeMongoSearchPlan", () => {
 
     expect(response.results).toHaveLength(0);
     expect(response.metadata.noDirectEvidenceReason).toContain("No exact-evidence results");
+    expect(response.metadata.abstained).toBe(true);
+    expect(response.metadata.abstainReason).toContain("No exact-evidence results");
   });
 
   it("merges pathsExecuted and resultsByPath across passes", async () => {
@@ -485,6 +539,353 @@ describe("executeMongoSearchPlan", () => {
     expect(response.metadata.constraintRelaxations?.[0]?.action).toBe("removed-time-range");
     expect(response.results.length).toBeGreaterThan(0);
   });
+
+  it("does not stop early on stale current-state hits when a fresher follow-up pass is available", async () => {
+    const stale = makeResult({
+      canonicalId: "stale-owner",
+      path: "structured:owner-stale",
+      snippet: "Current owner of the production database is Mike.",
+      signals: {
+        state: "active",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2025-10-01T00:00:00.000Z"),
+        reviewAt: new Date("2025-11-01T00:00:00.000Z"),
+      },
+    });
+    const fresh = makeResult({
+      canonicalId: "fresh-owner",
+      path: "events/fresh-owner",
+      snippet: "Sarah owns the production database right now after the handoff.",
+      timestamp: new Date(),
+    });
+    const mock = makeMockExecutePass([[stale], [fresh]]);
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "auto",
+        maxPasses: 2,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(response.results[0]?.snippet.toLowerCase()).toContain("sarah");
+  });
+
+  it("fires freshness corrective retrieval when direct current-state results stay stale", async () => {
+    const stale = makeResult({
+      canonicalId: "stale-owner",
+      path: "structured:owner-stale",
+      snippet: "Current owner of the production database is Mike.",
+      signals: {
+        state: "active",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2025-10-01T00:00:00.000Z"),
+        reviewAt: new Date("2025-11-01T00:00:00.000Z"),
+      },
+    });
+    const fresh = makeResult({
+      canonicalId: "fresh-owner",
+      path: "events/fresh-owner",
+      snippet: "Sarah owns the production database right now after the handoff.",
+      timestamp: new Date(),
+    });
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [stale],
+        metadata: {
+          plan: { paths: ["structured"], confidence: "high" as const, reasoning: "pass 1" },
+          pathsExecuted: ["structured"],
+          resultsByPath: { structured: 1 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        results: [fresh],
+        metadata: {
+          plan: { paths: ["raw-window"], confidence: "medium" as const, reasoning: "corrective" },
+          pathsExecuted: ["raw-window"],
+          resultsByPath: { "raw-window": 1 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      });
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "direct",
+        maxPasses: 2,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    const correctivePass = response.metadata.passes.find(
+      (pass) => pass.correctionApplied === "freshness-rebalanced",
+    );
+    expect(correctivePass).toBeDefined();
+    expect(response.results[0]?.snippet.toLowerCase()).toContain("sarah");
+    const secondCall = mock.mock.calls[1]?.[0];
+    expect(secondCall?.availablePaths.has("raw-window")).toBe(true);
+    expect(secondCall?.availablePaths.has("structured")).toBe(true);
+    expect(secondCall?.sourcePreference).toEqual(["conversation", "structured"]);
+  });
+
+  it("does not stop early on conflicted current-state hits when a disambiguating follow-up pass is available", async () => {
+    const conflicted = makeResult({
+      canonicalId: "owner-conflicted",
+      path: "structured:owner-conflicted",
+      snippet: "Current owner of the production database is Mike.",
+      signals: {
+        state: "conflicted",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2026-04-01T00:00:00.000Z"),
+        conflictCount: 1,
+      },
+    });
+    const fresh = makeResult({
+      canonicalId: "owner-resolution",
+      path: "events/owner-resolution",
+      snippet: "Sarah owns the production database right now after the handoff.",
+      timestamp: new Date(),
+    });
+    const mock = makeMockExecutePass([[conflicted], [fresh]]);
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "auto",
+        maxPasses: 2,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(response.results[0]?.snippet.toLowerCase()).toContain("sarah");
+  });
+
+  it("fires contradiction corrective retrieval when current-state results are conflicted", async () => {
+    const conflicted = makeResult({
+      canonicalId: "owner-conflicted",
+      path: "structured:owner-conflicted",
+      snippet: "Current owner of the production database is Mike.",
+      signals: {
+        state: "conflicted",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2026-04-01T00:00:00.000Z"),
+        conflictCount: 1,
+      },
+    });
+    const fresh = makeResult({
+      canonicalId: "owner-resolution",
+      path: "events/owner-resolution",
+      snippet: "Sarah owns the production database right now after the handoff.",
+      timestamp: new Date(),
+    });
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [conflicted],
+        metadata: {
+          plan: { paths: ["structured"], confidence: "high" as const, reasoning: "pass 1" },
+          pathsExecuted: ["structured"],
+          resultsByPath: { structured: 1 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        results: [fresh],
+        metadata: {
+          plan: {
+            paths: ["raw-window", "graph"],
+            confidence: "medium" as const,
+            reasoning: "corrective",
+          },
+          pathsExecuted: ["raw-window", "graph"],
+          resultsByPath: { "raw-window": 1, graph: 0 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      });
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "direct",
+        maxPasses: 2,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    const correctivePass = response.metadata.passes.find(
+      (pass) => pass.correctionApplied === "conflict-evidence-required",
+    );
+    expect(correctivePass).toBeDefined();
+    expect(response.results[0]?.snippet.toLowerCase()).toContain("sarah");
+    expect(response.metadata.contradictionSummary?.status).toBe("detected");
+    expect(response.metadata.contradictionSummary?.exactResolutionAvailable).toBe(true);
+    expect(response.metadata.contradictionSummary?.topResultConflicted).toBe(false);
+    const secondCall = mock.mock.calls[1]?.[0];
+    expect(secondCall?.availablePaths.has("raw-window")).toBe(true);
+    expect(secondCall?.availablePaths.has("structured")).toBe(true);
+    expect(secondCall?.availablePaths.has("graph")).toBe(true);
+    expect(secondCall?.sourcePreference).toEqual(["conversation", "graph", "structured"]);
+  });
+
+  it("does not treat stale exact structured memory as conflict resolution support", async () => {
+    const stale = makeResult({
+      canonicalId: "owner-stale",
+      path: "structured:owner-stale",
+      snippet: "Mike owns the production database right now.",
+      signals: {
+        state: "active",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2026-03-01T00:00:00.000Z"),
+        reviewAt: new Date("2026-03-15T00:00:00.000Z"),
+      },
+    });
+    const conflicted = makeResult({
+      canonicalId: "owner-conflicted",
+      path: "structured:owner-conflicted",
+      snippet: "Ownership is conflicted for the production database right now.",
+      signals: {
+        state: "conflicted",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2026-04-01T00:00:00.000Z"),
+        conflictCount: 1,
+      },
+    });
+    const fresh = makeResult({
+      canonicalId: "owner-resolution",
+      path: "events/owner-resolution",
+      snippet: "Sarah owns the production database right now after the handoff.",
+      timestamp: new Date("2026-04-06T00:00:00.000Z"),
+    });
+    const mock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        results: [stale, conflicted],
+        metadata: {
+          plan: { paths: ["structured"], confidence: "high" as const, reasoning: "pass 1" },
+          pathsExecuted: ["structured"],
+          resultsByPath: { structured: 2 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        results: [fresh],
+        metadata: {
+          plan: {
+            paths: ["raw-window", "graph"],
+            confidence: "medium" as const,
+            reasoning: "corrective",
+          },
+          pathsExecuted: ["raw-window", "graph"],
+          resultsByPath: { "raw-window": 1, graph: 0 },
+          reranked: false,
+          queryRewritten: false,
+          trustApplied: true,
+        },
+      });
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "direct",
+        maxPasses: 2,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    const correctivePass = response.metadata.passes.find(
+      (pass) => pass.correctionApplied === "conflict-evidence-required",
+    );
+    expect(correctivePass).toBeDefined();
+    expect(response.results[0]?.snippet.toLowerCase()).toContain("sarah");
+  });
+
+  it("reports unresolved contradiction metadata when only conflicted current-state memory remains", async () => {
+    const conflicted = makeResult({
+      canonicalId: "owner-conflicted",
+      path: "structured:owner-conflicted",
+      snippet: "Current owner of the production database is Mike.",
+      signals: {
+        state: "conflicted",
+        temporalScope: "ongoing",
+        lastConfirmedAt: new Date("2026-04-01T00:00:00.000Z"),
+        conflictCount: 1,
+      },
+    });
+    const mock = makeMockExecutePass([[conflicted]]);
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query: "who owns the production database right now",
+        searchMode: "direct",
+        maxPasses: 1,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    expect(response.results).toHaveLength(1);
+    expect(response.metadata.contradictionSummary).toEqual({
+      status: "unresolved",
+      conflictedResults: 1,
+      invalidatedResults: 0,
+      lowTrustResults: 1,
+      exactResolutionAvailable: false,
+      topResultConflicted: true,
+    });
+    expect(response.metadata.abstained).toBe(false);
+  });
+
+  it("continues into a decomposition pass for multi-hop queries when the first pass is thin", async () => {
+    const mock = makeMockExecutePass([
+      [
+        makeResult({
+          canonicalId: "istio-owner",
+          snippet: "Sarah worked on the Istio service mesh config.",
+        }),
+      ],
+      [
+        makeResult({
+          canonicalId: "rollback-procedure",
+          snippet: "Rollback procedures were defined in the incident playbook.",
+        }),
+      ],
+    ]);
+
+    const response = await executeMongoSearchPlan({
+      request: {
+        query:
+          "Who worked on the Istio service mesh config and what rollback procedures did they define?",
+        searchMode: "agentic",
+        maxPasses: 3,
+      },
+      availablePaths: allPaths,
+      executePass: mock,
+    });
+
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(response.metadata.queriesTried[1]).toBe("Who worked on the Istio service mesh config");
+    expect(response.results).toHaveLength(2);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -536,6 +937,107 @@ describe("analyzeCorrectionNeeded", () => {
         rejected: [{ reason: "outside requested time range" }],
         passCount: 3,
         maxPasses: 3,
+      }),
+    ).toEqual({ needed: false });
+  });
+});
+
+describe("analyzeFreshnessCorrection", () => {
+  it("requests correction when current-state results are stale and passes remain", () => {
+    const result = analyzeFreshnessCorrection({
+      query: "who owns the production database right now",
+      accepted: [
+        makeResult({
+          path: "structured:owner-stale",
+          snippet: "Current owner is Mike.",
+          signals: {
+            state: "active",
+            temporalScope: "ongoing",
+            lastConfirmedAt: new Date("2025-10-01T00:00:00.000Z"),
+            reviewAt: new Date("2025-11-01T00:00:00.000Z"),
+          },
+        }),
+      ],
+      passCount: 1,
+      maxPasses: 2,
+      now: new Date("2026-04-05T00:00:00.000Z"),
+    });
+    expect(result).toEqual({
+      needed: true,
+      correction: "freshness-rebalanced",
+      reason: "current-state results were stale or weak",
+    });
+  });
+
+  it("does not request correction when a fresh current-state result is already present", () => {
+    expect(
+      analyzeFreshnessCorrection({
+        query: "who owns the production database right now",
+        accepted: [
+          makeResult({
+            path: "events/fresh-owner",
+            snippet: "Sarah owns the production database right now.",
+            timestamp: new Date("2026-04-05T00:00:00.000Z"),
+          }),
+        ],
+        passCount: 1,
+        maxPasses: 2,
+        now: new Date("2026-04-05T00:00:00.000Z"),
+      }),
+    ).toEqual({ needed: false });
+  });
+});
+
+describe("analyzeContradictionCorrection", () => {
+  it("requests correction when current-state results are conflicted and unresolved", () => {
+    expect(
+      analyzeContradictionCorrection({
+        query: "who owns the production database right now",
+        accepted: [
+          makeResult({
+            path: "structured:owner-conflicted",
+            snippet: "Current owner is Mike.",
+            signals: {
+              state: "conflicted",
+              temporalScope: "ongoing",
+              conflictCount: 1,
+            },
+          }),
+        ],
+        passCount: 1,
+        maxPasses: 2,
+        now: new Date("2026-04-05T00:00:00.000Z"),
+      }),
+    ).toEqual({
+      needed: true,
+      correction: "conflict-evidence-required",
+      reason: "current-state results were conflicted or contradictory",
+    });
+  });
+
+  it("does not request correction when exact non-conflicted evidence is already present", () => {
+    expect(
+      analyzeContradictionCorrection({
+        query: "who owns the production database right now",
+        accepted: [
+          makeResult({
+            path: "events/fresh-owner",
+            snippet: "Sarah owns the production database right now.",
+            timestamp: new Date("2026-04-05T00:00:00.000Z"),
+          }),
+          makeResult({
+            path: "structured:owner-conflicted",
+            snippet: "Current owner is Mike.",
+            signals: {
+              state: "conflicted",
+              temporalScope: "ongoing",
+              conflictCount: 1,
+            },
+          }),
+        ],
+        passCount: 1,
+        maxPasses: 2,
+        now: new Date("2026-04-05T00:00:00.000Z"),
       }),
     ).toEqual({ needed: false });
   });

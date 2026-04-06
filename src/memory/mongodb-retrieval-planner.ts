@@ -99,7 +99,11 @@ export function classifyRetrievalQuery(params: {
   ) {
     return "family";
   }
-  if (/\b(because|why did|how did|lead to|after that|before that|then what)\b/i.test(query)) {
+  if (
+    /\b(because|why did|how did|lead to|after that|before that|then what)\b/i.test(query) ||
+    /\b(and|then)\b/i.test(query) ||
+    (query.match(/\?/g)?.length ?? 0) > 1
+  ) {
     return "multi-hop";
   }
   return "direct";
@@ -200,6 +204,33 @@ const ACTIVE_CRITICAL_KEYWORDS = [
 ];
 const ACTIVE_CRITICAL_REGEXES = buildKeywordRegexes(ACTIVE_CRITICAL_KEYWORDS);
 
+export function hasActiveCriticalSignal(query: string): boolean {
+  return ACTIVE_CRITICAL_REGEXES.some((re) => re.test(query));
+}
+
+export function hasProceduralSignal(query: string): boolean {
+  if (PROCEDURAL_REGEXES.some((re) => re.test(query))) {
+    return true;
+  }
+  if (PROCEDURAL_OPERATIONAL_REGEXES.some((re) => re.test(query))) {
+    return true;
+  }
+
+  const tokens = query
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 5) {
+    return false;
+  }
+  if (tokens.some((token) => NON_PROCEDURAL_QUERY_TERMS.has(token))) {
+    return false;
+  }
+  return tokens.some((token) => PROCEDURAL_OPERATIONAL_TERMS.has(token));
+}
+
 const PROCEDURAL_KEYWORDS = [
   "how do we",
   "workflow",
@@ -211,6 +242,56 @@ const PROCEDURAL_KEYWORDS = [
   "checklist",
 ];
 const PROCEDURAL_REGEXES = buildKeywordRegexes(PROCEDURAL_KEYWORDS);
+const PROCEDURAL_OPERATIONAL_PHRASES = [
+  "incident response",
+  "incident handling",
+  "emergency rollback",
+  "key rotation",
+  "on-call handoff",
+  "status page",
+];
+const PROCEDURAL_OPERATIONAL_REGEXES = buildKeywordRegexes(PROCEDURAL_OPERATIONAL_PHRASES);
+const PROCEDURAL_OPERATIONAL_TERMS = new Set([
+  "checklist",
+  "escalate",
+  "escalation",
+  "failover",
+  "handoff",
+  "on-call",
+  "playbook",
+  "recovery",
+  "response",
+  "restore",
+  "rollback",
+  "rotation",
+  "runbook",
+  "triage",
+  "workflow",
+]);
+const NON_PROCEDURAL_QUERY_TERMS = new Set([
+  "all",
+  "compare",
+  "difference",
+  "docs",
+  "documentation",
+  "explain",
+  "family",
+  "history",
+  "latest",
+  "overview",
+  "recap",
+  "recent",
+  "show",
+  "status",
+  "summarize",
+  "summary",
+  "tell",
+  "what",
+  "when",
+  "where",
+  "who",
+  "why",
+]);
 const FAMILY_REGEXES = buildKeywordRegexes([
   "family",
   "alternatives",
@@ -389,7 +470,7 @@ function extractKBConstraint(query: string): RetrievalConstraints["kb"] | undefi
 function extractActiveCriticalConstraint(
   query: string,
 ): RetrievalConstraints["activeCritical"] | undefined {
-  if (ACTIVE_CRITICAL_REGEXES.some((re) => re.test(query))) {
+  if (hasActiveCriticalSignal(query)) {
     return {
       salience: ["critical", "high"],
       requireCurrent: true,
@@ -504,9 +585,14 @@ export function planRetrieval(query: string, context: RetrievalContext): Retriev
       reasons.push("episodic/summary keywords detected");
     }
 
-    if (PROCEDURAL_REGEXES.some((re) => re.test(query))) {
+    const proceduralKeywordSignal = PROCEDURAL_REGEXES.some((re) => re.test(query));
+    if (proceduralKeywordSignal || hasProceduralSignal(query)) {
       scores.procedural += 3;
-      reasons.push("procedural/workflow keywords detected");
+      reasons.push(
+        proceduralKeywordSignal
+          ? "procedural/workflow keywords detected"
+          : "procedure-like operational phrase detected",
+      );
     }
 
     // Hybrid is always baseline

@@ -233,6 +233,18 @@ function buildFallbackDetailedResponse(
       resultsByPath: {},
       queryRewritten: false,
       reranked: false,
+      contradictionSummary: {
+        status: "clear",
+        conflictedResults: 0,
+        invalidatedResults: 0,
+        lowTrustResults: 0,
+        exactResolutionAvailable: false,
+        topResultConflicted: false,
+      },
+      abstained: results.length === 0,
+      ...(results.length === 0
+        ? { abstainReason: "No memory evidence satisfied the request." }
+        : {}),
     },
   };
 }

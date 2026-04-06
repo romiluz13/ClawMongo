@@ -133,6 +133,20 @@ function buildEpisodeTitleTerms(
   return pickTopTerms(events.map((event) => event.body).join(" "), 3);
 }
 
+function shouldAutoPromoteStructuredCandidate(
+  event: ConversationEvent,
+  candidate: StructuredMemoryEntry,
+): boolean {
+  if (event.role !== "assistant") {
+    return true;
+  }
+
+  // Assistant-authored summaries are useful for procedures, but they should
+  // not silently become durable structured truth unless they reflect critical
+  // active context that the agent needs immediately.
+  return candidate.salience === "critical";
+}
+
 export async function heuristicEpisodeSummarizer(
   events: Array<{ role: string; body: string; timestamp: Date }>,
 ): Promise<{ title: string; summary: string; tags?: string[] }> {
@@ -270,7 +284,9 @@ export function extractStructuredCandidatesFromEvent(
     }
   }
 
-  return [...candidates.values()];
+  return [...candidates.values()].filter((candidate) =>
+    shouldAutoPromoteStructuredCandidate(event, candidate),
+  );
 }
 
 function extractStepsFromProcedureBody(body: string): string[] {

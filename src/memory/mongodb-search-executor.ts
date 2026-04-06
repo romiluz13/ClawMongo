@@ -1,10 +1,20 @@
+import {
+  applyTrustAwareReranking,
+  computeResultTrust,
+  hasOverdueReview,
+} from "./mongodb-result-trust.js";
 import type { RetrievalPath } from "./mongodb-retrieval-planner.js";
-import { classifyRetrievalQuery, resolveTimeRangePreset } from "./mongodb-retrieval-planner.js";
+import {
+  classifyRetrievalQuery,
+  hasActiveCriticalSignal,
+  resolveTimeRangePreset,
+} from "./mongodb-retrieval-planner.js";
 import { sortObject } from "./search-utils.js";
 import type { MemorySearchResult } from "./types.js";
 import type {
   EvidenceCoverage,
   MemorySearchClassification,
+  MemorySearchContradictionSummary,
   MemorySearchMetadata,
   MemorySearchMode,
   MemorySearchPass,
@@ -180,6 +190,141 @@ function uniqueQueries(values: string[]): string[] {
   return ordered;
 }
 
+function normalizeFollowUpQuery(query: string): string {
+  return query.replace(/[?!]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+const CLAUSE_VERB_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "be",
+  "before",
+  "by",
+  "can",
+  "could",
+  "define",
+  "defined",
+  "did",
+  "do",
+  "does",
+  "for",
+  "he",
+  "how",
+  "i",
+  "in",
+  "is",
+  "it",
+  "lead",
+  "led",
+  "of",
+  "on",
+  "or",
+  "she",
+  "that",
+  "the",
+  "their",
+  "them",
+  "then",
+  "they",
+  "this",
+  "those",
+  "to",
+  "used",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "who",
+  "why",
+  "will",
+  "with",
+  "would",
+  "worked",
+]);
+
+function extractAnchorTerms(clause: string, maxTerms = 5): string {
+  const tokens = normalizeFollowUpQuery(clause)
+    .split(/\s+/)
+    .filter((token) => token.length > 1)
+    .filter((token) => !CLAUSE_VERB_STOPWORDS.has(token.toLowerCase()));
+  return tokens.slice(-maxTerms).join(" ");
+}
+
+function simplifyClauseForSearch(clause: string, anchor: string): string {
+  const normalized = normalizeFollowUpQuery(clause);
+  if (!normalized) {
+    return "";
+  }
+
+  const hadPronounReference = /\b(?:it|they|them|that|those|these|he|she)\b/i.test(normalized);
+  const simplified = normalized
+    .replace(/^(?:who|what|which|where|when|why|how)\b\s*/i, "")
+    .replace(
+      /\b(?:did|does|do|is|are|was|were|can|could|should|would|will|it|they|them|that|those|these|he|she|define|defined|used)\b/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (anchor && hadPronounReference) {
+    return normalizeFollowUpQuery(`${anchor} ${simplified}`);
+  }
+  return simplified || normalized;
+}
+
+function buildComparisonExpansionQueries(query: string): string[] {
+  const normalized = normalizeFollowUpQuery(query);
+  const directVsMatch = normalized.match(/\bcompare\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+)$/i);
+  const betweenMatch = normalized.match(
+    /\b(?:difference|differences) between\s+(.+?)\s+and\s+(.+)$/i,
+  );
+  const bareVsMatch = normalized.match(/^(.+?)\s+(?:vs\.?|versus)\s+(.+)$/i);
+  const match = directVsMatch ?? betweenMatch ?? bareVsMatch;
+  if (!match) {
+    return [`${normalized} differences`, `${normalized} tradeoffs`];
+  }
+
+  const left = normalizeFollowUpQuery(match[1] ?? "");
+  const right = normalizeFollowUpQuery(match[2] ?? "");
+  if (!left || !right) {
+    return [`${normalized} differences`, `${normalized} tradeoffs`];
+  }
+
+  return [`${left} overview`, `${right} overview`, `${left} vs ${right} tradeoffs`];
+}
+
+function buildMultiHopExpansionQueries(query: string): string[] {
+  const normalized = normalizeFollowUpQuery(query);
+  const rawClauses = normalized
+    .split(/\b(?:and then|followed by|after that|before that|then|and)\b/i)
+    .map((clause) => normalizeFollowUpQuery(clause))
+    .filter(Boolean);
+
+  const clauses =
+    rawClauses.length >= 2
+      ? rawClauses
+      : normalized
+          .split(/\b(?:lead to|leads to|caused?|because)\b/i)
+          .map(normalizeFollowUpQuery)
+          .filter(Boolean);
+
+  if (clauses.length < 2) {
+    return [`${normalized} cause`, `${normalized} consequence`];
+  }
+
+  const anchor = extractAnchorTerms(clauses[0] ?? "");
+  const expansions = [clauses[0] ?? ""];
+  for (const clause of clauses.slice(1, 3)) {
+    expansions.push(simplifyClauseForSearch(clause, anchor));
+  }
+  return expansions;
+}
+
 export function buildExecutorPasses(
   request: MemorySearchExecutorRequest,
   classification: MemorySearchClassification,
@@ -187,9 +332,11 @@ export function buildExecutorPasses(
   const passes: MemorySearchExecutorPlanPass[] = [
     { pass: 1, query: request.query, reason: "original query", variant: "original" },
   ];
+  const currentStateSignal = hasActiveCriticalSignal(request.query);
   const allowAgentic =
     request.searchMode === "agentic" ||
-    (request.searchMode === "auto" && classification !== "direct");
+    (request.searchMode === "auto" &&
+      (classification !== "direct" || request.needExactEvidence || currentStateSignal));
   if (!allowAgentic || request.maxPasses <= 1) {
     return passes;
   }
@@ -201,8 +348,7 @@ export function buildExecutorPasses(
       expansionQueries.push(`${request.query} related tools`);
       break;
     case "comparison":
-      expansionQueries.push(`${request.query} differences`);
-      expansionQueries.push(`${request.query} tradeoffs`);
+      expansionQueries.push(...buildComparisonExpansionQueries(request.query));
       break;
     case "temporal":
       expansionQueries.push(`${request.query} exact evidence`);
@@ -211,11 +357,15 @@ export function buildExecutorPasses(
       expansionQueries.push(`${request.query} exact match`);
       break;
     case "multi-hop":
-      expansionQueries.push(`${request.query} cause`);
-      expansionQueries.push(`${request.query} consequence`);
+      expansionQueries.push(...buildMultiHopExpansionQueries(request.query));
       break;
     case "direct":
-      if (request.needExactEvidence) {
+      if (currentStateSignal) {
+        expansionQueries.push(`${request.query} latest status`);
+        if (request.needExactEvidence || request.searchMode === "agentic") {
+          expansionQueries.push(`${request.query} exact evidence`);
+        }
+      } else if (request.needExactEvidence) {
         expansionQueries.push(`${request.query} exact evidence`);
       }
       break;
@@ -223,11 +373,17 @@ export function buildExecutorPasses(
 
   const deduped = uniqueQueries(expansionQueries);
   for (const query of deduped.slice(0, Math.max(0, request.maxPasses - 1))) {
+    const decompositionVariant = classification === "multi-hop" || classification === "comparison";
     passes.push({
       pass: passes.length + 1,
       query,
-      reason: classification === "family" ? "family expansion" : "agentic follow-up",
-      variant: classification === "multi-hop" ? "decomposition" : "family-expansion",
+      reason:
+        classification === "family"
+          ? "family expansion"
+          : decompositionVariant
+            ? `${classification} decomposition`
+            : "agentic follow-up",
+      variant: decompositionVariant ? "decomposition" : "family-expansion",
     });
   }
 
@@ -260,6 +416,170 @@ export function computeEvidenceCoverage(results: MemorySearchResult[]): Evidence
     return "partial";
   }
   return "indirect";
+}
+
+function hasFreshCurrentStateSupport(results: MemorySearchResult[], now = new Date()): boolean {
+  return results.some((result) => {
+    if (result.signals?.state === "invalidated" || result.signals?.state === "conflicted") {
+      return false;
+    }
+
+    const trust = result.trust ?? computeResultTrust(result, now);
+    if (trust.freshness < 0.58 || trust.score < 0.62) {
+      return false;
+    }
+
+    if (hasOverdueReview(result, now) && trust.recency < 0.75) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildClearContradictionSummary(): MemorySearchContradictionSummary {
+  return {
+    status: "clear",
+    conflictedResults: 0,
+    invalidatedResults: 0,
+    lowTrustResults: 0,
+    exactResolutionAvailable: false,
+    topResultConflicted: false,
+  };
+}
+
+function hasConflictSignal(result: MemorySearchResult, now = new Date()): boolean {
+  if (result.signals?.state === "conflicted") {
+    return true;
+  }
+  if (typeof result.signals?.conflictCount === "number" && result.signals.conflictCount > 0) {
+    return true;
+  }
+
+  const trust = result.trust ?? computeResultTrust(result, now);
+  return trust.contradiction < 0.62;
+}
+
+function hasExactConflictResolutionSupport(
+  results: MemorySearchResult[],
+  now = new Date(),
+): boolean {
+  return results.some((result) => {
+    if (!resultHasExactEvidence(result)) {
+      return false;
+    }
+    if (result.signals?.state === "invalidated" || result.signals?.state === "conflicted") {
+      return false;
+    }
+
+    const trust = result.trust ?? computeResultTrust(result, now);
+    if (trust.freshness < 0.58 || hasOverdueReview(result, now)) {
+      return false;
+    }
+
+    return trust.contradiction >= 0.72 && trust.score >= 0.62;
+  });
+}
+
+export function analyzeContradictionCorrection(params: {
+  query: string;
+  accepted: MemorySearchResult[];
+  passCount: number;
+  maxPasses: number;
+  needExactEvidence?: boolean;
+  now?: Date;
+}): { needed: boolean; correction?: string; reason?: string } {
+  if (params.passCount >= params.maxPasses) {
+    return { needed: false };
+  }
+  if (!hasActiveCriticalSignal(params.query) && !params.needExactEvidence) {
+    return { needed: false };
+  }
+  if (params.accepted.length === 0) {
+    return { needed: false };
+  }
+
+  const leading = params.accepted.slice(0, Math.min(params.accepted.length, 3));
+  if (!leading.some((result) => hasConflictSignal(result, params.now))) {
+    return { needed: false };
+  }
+  if (hasExactConflictResolutionSupport(leading, params.now)) {
+    return { needed: false };
+  }
+
+  return {
+    needed: true,
+    correction: "conflict-evidence-required",
+    reason: "current-state results were conflicted or contradictory",
+  };
+}
+
+export function summarizeContradictionState(
+  results: MemorySearchResult[],
+  now = new Date(),
+): MemorySearchContradictionSummary {
+  if (results.length === 0) {
+    return buildClearContradictionSummary();
+  }
+
+  let conflictedResults = 0;
+  let invalidatedResults = 0;
+  let lowTrustResults = 0;
+
+  for (const result of results) {
+    if (result.signals?.state === "conflicted") {
+      conflictedResults++;
+    }
+    if (result.signals?.state === "invalidated") {
+      invalidatedResults++;
+    }
+    const trust = result.trust ?? computeResultTrust(result, now);
+    if (trust.contradiction < 0.62) {
+      lowTrustResults++;
+    }
+  }
+
+  const exactResolutionAvailable = hasExactConflictResolutionSupport(results, now);
+  const leading = results.slice(0, Math.min(results.length, 3));
+  const topResultConflicted = hasConflictSignal(results[0], now);
+  const unresolved =
+    leading.some((result) => hasConflictSignal(result, now)) && !exactResolutionAvailable;
+  const detected = conflictedResults > 0 || invalidatedResults > 0 || lowTrustResults > 0;
+
+  return {
+    status: !detected ? "clear" : unresolved ? "unresolved" : "detected",
+    conflictedResults,
+    invalidatedResults,
+    lowTrustResults,
+    exactResolutionAvailable,
+    topResultConflicted,
+  };
+}
+
+export function analyzeFreshnessCorrection(params: {
+  query: string;
+  accepted: MemorySearchResult[];
+  passCount: number;
+  maxPasses: number;
+  now?: Date;
+}): { needed: boolean; correction?: string; reason?: string } {
+  if (params.passCount >= params.maxPasses) {
+    return { needed: false };
+  }
+  if (!hasActiveCriticalSignal(params.query)) {
+    return { needed: false };
+  }
+  if (params.accepted.length === 0) {
+    return { needed: false };
+  }
+  if (hasFreshCurrentStateSupport(params.accepted, params.now)) {
+    return { needed: false };
+  }
+  return {
+    needed: true,
+    correction: "freshness-rebalanced",
+    reason: "current-state results were stale or weak",
+  };
 }
 
 export function applyHardConstraintRejections(params: {
@@ -305,6 +625,62 @@ export function applyHardConstraintRejections(params: {
   }
 
   return { accepted, rejected };
+}
+
+function shouldStopAfterPass(params: {
+  classification: MemorySearchClassification;
+  request: MemorySearchExecutorRequest;
+  acceptedResults: MemorySearchResult[];
+  pass: number;
+  now?: Date;
+}): boolean {
+  const { acceptedResults, classification, request } = params;
+  if (acceptedResults.length === 0) {
+    return false;
+  }
+
+  const evidenceCoverage = computeEvidenceCoverage(acceptedResults);
+  const freshnessSatisfied =
+    !hasActiveCriticalSignal(request.query) ||
+    hasFreshCurrentStateSupport(acceptedResults, params.now);
+  const contradictionSatisfied = !analyzeContradictionCorrection({
+    query: request.query,
+    accepted: acceptedResults,
+    passCount: params.pass,
+    maxPasses: request.maxPasses,
+    needExactEvidence: request.needExactEvidence,
+    now: params.now,
+  }).needed;
+
+  if (classification === "family" || classification === "comparison") {
+    return (
+      contradictionSatisfied &&
+      freshnessSatisfied &&
+      acceptedResults.length >= Math.min(request.maxResults ?? 10, 3)
+    );
+  }
+
+  if (classification === "multi-hop") {
+    if (params.pass < Math.min(request.maxPasses, 2)) {
+      return (
+        contradictionSatisfied &&
+        freshnessSatisfied &&
+        acceptedResults.length >= Math.min(request.maxResults ?? 10, 2) &&
+        evidenceCoverage !== "none"
+      );
+    }
+    return contradictionSatisfied && freshnessSatisfied && evidenceCoverage !== "none";
+  }
+
+  if (request.needExactEvidence) {
+    return (
+      contradictionSatisfied &&
+      freshnessSatisfied &&
+      (evidenceCoverage === "direct" || evidenceCoverage === "partial")
+    );
+  }
+
+  return contradictionSatisfied && freshnessSatisfied;
 }
 
 export function canUseLegacyFallback(request: MemorySearchRequest): boolean {
@@ -359,7 +735,7 @@ export function mergeMetadata(params: {
     MemorySearchPass & {
       metadata: Pick<
         MemorySearchMetadata,
-        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "plan"
+        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "trustApplied" | "plan"
       >;
     }
   >;
@@ -379,6 +755,11 @@ export function mergeMetadata(params: {
     }
     return acc;
   }, {});
+  const contradictionSummary = summarizeContradictionState(params.results);
+  const abstained = params.results.length === 0;
+  const abstainReason = abstained
+    ? (params.noDirectEvidenceReason ?? "No memory evidence satisfied the request.")
+    : undefined;
   return {
     mode: params.request.searchMode,
     classification: params.classification,
@@ -392,6 +773,10 @@ export function mergeMetadata(params: {
     resultsByPath,
     queryRewritten: params.passes.some((pass) => pass.metadata.queryRewritten),
     reranked: params.passes.some((pass) => pass.metadata.reranked),
+    trustApplied: params.passes.some((pass) => pass.metadata.trustApplied === true),
+    contradictionSummary,
+    abstained,
+    ...(abstainReason ? { abstainReason } : {}),
     ...(params.noDirectEvidenceReason
       ? { noDirectEvidenceReason: params.noDirectEvidenceReason }
       : {}),
@@ -413,7 +798,7 @@ export function buildNoDirectEvidenceResponse(params: {
     MemorySearchPass & {
       metadata: Pick<
         MemorySearchMetadata,
-        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "plan"
+        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "trustApplied" | "plan"
       >;
     }
   >;
@@ -615,6 +1000,7 @@ export async function executeMongoSearchPlan(params: {
       | "episodic"
       | "procedural"
     >;
+    sourcePreference?: MemorySearchSourcePreference[];
     timeRange?: MemorySearchExecutorTimeRange;
   }) => Promise<{
     results: MemorySearchResult[];
@@ -629,18 +1015,20 @@ export async function executeMongoSearchPlan(params: {
       resultsByPath: Record<string, number>;
       reranked?: boolean;
       queryRewritten?: boolean;
+      trustApplied?: boolean;
     };
   }>;
 }): Promise<MemorySearchResponse> {
   const normalized = normalizeMemorySearchRequest(params.request);
   const classification = classifyExecutorSearch(normalized);
   const timeRange = resolveExecutorTimeRange(normalized);
+  const now = new Date();
   const passPlans = buildExecutorPasses(normalized, classification);
   const passes: Array<
     MemorySearchPass & {
       metadata: Pick<
         MemorySearchMetadata,
-        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "plan"
+        "pathsExecuted" | "resultsByPath" | "queryRewritten" | "reranked" | "trustApplied" | "plan"
       >;
     }
   > = [];
@@ -658,6 +1046,7 @@ export async function executeMongoSearchPlan(params: {
       pass: passPlan.pass,
       query: passPlan.query,
       availablePaths: passPaths,
+      sourcePreference: normalized.sourcePreference,
       ...(timeRange ? { timeRange } : {}),
     });
     const filtered = applyHardConstraintRejections({
@@ -682,6 +1071,7 @@ export async function executeMongoSearchPlan(params: {
         resultsByPath: executed.metadata.resultsByPath,
         queryRewritten: executed.metadata.queryRewritten === true,
         reranked: executed.metadata.reranked === true,
+        trustApplied: executed.metadata.trustApplied === true,
         plan: {
           paths: executed.metadata.plan.paths,
           confidence: executed.metadata.plan.confidence,
@@ -694,19 +1084,15 @@ export async function executeMongoSearchPlan(params: {
     });
 
     const acceptedResults = Array.from(acceptedById.values());
-    const evidenceCoverage = computeEvidenceCoverage(acceptedResults);
-    const shouldStop =
-      acceptedResults.length > 0 &&
-      (classification === "direct"
-        ? !normalized.needExactEvidence ||
-          evidenceCoverage === "direct" ||
-          evidenceCoverage === "partial"
-        : classification === "family" || classification === "comparison"
-          ? acceptedResults.length >= Math.min(normalized.maxResults ?? 10, 3)
-          : !normalized.needExactEvidence ||
-            evidenceCoverage === "direct" ||
-            evidenceCoverage === "partial");
-    if (shouldStop) {
+    if (
+      shouldStopAfterPass({
+        classification,
+        request: normalized,
+        acceptedResults,
+        pass: passPlan.pass,
+        now,
+      })
+    ) {
       break;
     }
   }
@@ -714,15 +1100,37 @@ export async function executeMongoSearchPlan(params: {
   let acceptedResults = Array.from(acceptedById.values());
 
   // --- CRAG corrective retrieval: if coverage is poor, try a corrective pass ---
-  const correction = analyzeCorrectionNeeded({
-    evidenceCoverage: computeEvidenceCoverage(acceptedResults),
-    rejected: allRejected,
+  const contradictionCorrection = analyzeContradictionCorrection({
+    query: normalized.query,
+    accepted: acceptedResults,
     passCount: passes.length,
     maxPasses: normalized.maxPasses,
+    needExactEvidence: normalized.needExactEvidence,
+    now,
   });
+  const freshnessCorrection = contradictionCorrection.needed
+    ? { needed: false as const }
+    : analyzeFreshnessCorrection({
+        query: normalized.query,
+        accepted: acceptedResults,
+        passCount: passes.length,
+        maxPasses: normalized.maxPasses,
+        now,
+      });
+  const correction = contradictionCorrection.needed
+    ? contradictionCorrection
+    : freshnessCorrection.needed
+      ? freshnessCorrection
+      : analyzeCorrectionNeeded({
+          evidenceCoverage: computeEvidenceCoverage(acceptedResults),
+          rejected: allRejected,
+          passCount: passes.length,
+          maxPasses: normalized.maxPasses,
+        });
   if (correction.needed && correction.correction) {
     let correctiveTimeRange = timeRange;
     let correctiveRequest = normalized;
+    let correctiveSourcePreference = normalized.sourcePreference;
     if (correction.correction === "time-range-widened-2x" && timeRange) {
       const duration = timeRange.end.getTime() - timeRange.start.getTime();
       correctiveTimeRange = {
@@ -732,15 +1140,50 @@ export async function executeMongoSearchPlan(params: {
     }
     if (correction.correction === "hybrid-evidence-relaxed") {
       correctiveRequest = { ...normalized, needExactEvidence: false };
+    } else if (correction.correction === "conflict-evidence-required") {
+      correctiveRequest = { ...normalized, needExactEvidence: true };
+      // Conflict recovery should prioritize fresh canonical conversation evidence
+      // and graph relations ahead of already-conflicted structured memory.
+      correctiveSourcePreference = ["conversation", "graph", "structured"];
     }
     const correctivePaths =
       correction.correction === "hybrid-evidence-relaxed"
         ? new Set(["hybrid" as const, ...params.availablePaths])
-        : params.availablePaths;
+        : correction.correction === "freshness-rebalanced"
+          ? (() => {
+              const focused = new Set(
+                (
+                  ["active-critical", "structured", "raw-window", "hybrid"] as RetrievalPath[]
+                ).filter((path) => params.availablePaths.has(path)),
+              );
+              return focused.size > 0 ? focused : params.availablePaths;
+            })()
+          : correction.correction === "conflict-evidence-required"
+            ? (() => {
+                const focused = new Set(
+                  (
+                    [
+                      "active-critical",
+                      "structured",
+                      "raw-window",
+                      "hybrid",
+                      "graph",
+                    ] as RetrievalPath[]
+                  ).filter((path) => params.availablePaths.has(path)),
+                );
+                return focused.size > 0 ? focused : params.availablePaths;
+              })()
+            : params.availablePaths;
+    if (correction.correction === "freshness-rebalanced") {
+      // Freshness recovery should favor recent conversation evidence before
+      // re-reading the same structured lane that already looked stale.
+      correctiveSourcePreference = ["conversation", "structured"];
+    }
     const corrExec = await params.executePass({
       pass: passes.length + 1,
       query: normalized.query,
       availablePaths: correctivePaths,
+      sourcePreference: correctiveSourcePreference,
       ...(correctiveTimeRange ? { timeRange: correctiveTimeRange } : {}),
     });
     const corrFiltered = applyHardConstraintRejections({
@@ -766,6 +1209,7 @@ export async function executeMongoSearchPlan(params: {
         resultsByPath: corrExec.metadata.resultsByPath,
         queryRewritten: corrExec.metadata.queryRewritten === true,
         reranked: corrExec.metadata.reranked === true,
+        trustApplied: corrExec.metadata.trustApplied === true,
         plan: corrExec.metadata.plan,
       },
     });
@@ -813,6 +1257,7 @@ export async function executeMongoSearchPlan(params: {
           resultsByPath: relaxExec.metadata.resultsByPath,
           queryRewritten: relaxExec.metadata.queryRewritten === true,
           reranked: relaxExec.metadata.reranked === true,
+          trustApplied: relaxExec.metadata.trustApplied === true,
           plan: relaxExec.metadata.plan,
         },
       });
@@ -831,8 +1276,10 @@ export async function executeMongoSearchPlan(params: {
     });
   }
 
+  const rerankedResults = applyTrustAwareReranking(acceptedResults, { now });
+
   // --- MMR diversity scoring: reorder results for content diversity ---
-  const mmr = applyMMRReranking({ results: acceptedResults, classification });
+  const mmr = applyMMRReranking({ results: rerankedResults, classification });
 
   return {
     results: mmr.results,

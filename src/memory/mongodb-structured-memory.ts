@@ -13,7 +13,12 @@ import {
   MONGODB_MAX_NUM_CANDIDATES,
   type SearchExplainOptions,
 } from "./mongodb-search.js";
-import type { MemorySearchResult } from "./types.js";
+import type {
+  MemoryLifecycleSalience,
+  MemoryLifecycleState,
+  MemoryLifecycleTemporalScope,
+  MemorySearchResult,
+} from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:structured");
 
@@ -597,6 +602,29 @@ function toStructuredResult(doc: Document): MemorySearchResult {
     source: "structured",
     sourceType: "structured",
     canonicalId: String(doc._id ?? locator),
+    signals: {
+      ...(typeof doc.state === "string" ? { state: doc.state as MemoryLifecycleState } : {}),
+      ...(typeof doc.salience === "string"
+        ? { salience: doc.salience as MemoryLifecycleSalience }
+        : {}),
+      ...(typeof doc.temporalScope === "string"
+        ? { temporalScope: doc.temporalScope as MemoryLifecycleTemporalScope }
+        : {}),
+      ...(typeof doc.confidence === "number" ? { confidence: doc.confidence } : {}),
+      ...(typeof doc.sourceReliability === "number"
+        ? { sourceReliability: doc.sourceReliability }
+        : {}),
+      ...(typeof doc.reinforcementCount === "number"
+        ? { reinforcementCount: doc.reinforcementCount }
+        : {}),
+      ...(Array.isArray(doc.sourceEventIds) ? { sourceEventCount: doc.sourceEventIds.length } : {}),
+      ...(doc.reviewAt instanceof Date ? { reviewAt: doc.reviewAt } : {}),
+      ...(doc.lastConfirmedAt instanceof Date ? { lastConfirmedAt: doc.lastConfirmedAt } : {}),
+      ...(doc.validFrom instanceof Date ? { validFrom: doc.validFrom } : {}),
+      ...(doc.validTo instanceof Date ? { validTo: doc.validTo } : {}),
+      ...(doc.updatedAt instanceof Date ? { updatedAt: doc.updatedAt } : {}),
+      ...(Array.isArray(doc.conflictsWith) ? { conflictCount: doc.conflictsWith.length } : {}),
+    },
   };
 }
 
@@ -721,6 +749,15 @@ export async function searchStructuredMemory(
               state: 1,
               salience: 1,
               temporalScope: 1,
+              sourceEventIds: 1,
+              sourceReliability: 1,
+              reinforcementCount: 1,
+              reviewAt: 1,
+              lastConfirmedAt: 1,
+              validFrom: 1,
+              validTo: 1,
+              updatedAt: 1,
+              conflictsWith: 1,
               score: { $meta: "vectorSearchScore" },
             },
           },
@@ -806,6 +843,15 @@ export async function searchStructuredMemory(
             state: 1,
             salience: 1,
             temporalScope: 1,
+            sourceEventIds: 1,
+            sourceReliability: 1,
+            reinforcementCount: 1,
+            reviewAt: 1,
+            lastConfirmedAt: 1,
+            validFrom: 1,
+            validTo: 1,
+            updatedAt: 1,
+            conflictsWith: 1,
             score: { $meta: "textScore" },
           },
         },

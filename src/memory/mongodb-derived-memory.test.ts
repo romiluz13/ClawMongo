@@ -38,6 +38,34 @@ describe("mongodb-derived-memory", () => {
     expect(candidates.some((candidate) => candidate.type === "preference")).toBe(true);
   });
 
+  it("does not auto-promote assistant decision summaries into structured memory", () => {
+    const candidates = extractStructuredCandidatesFromEvent({
+      eventId: "evt-2b",
+      agentId: "agent-1",
+      role: "assistant",
+      body: "We decided: use Redis for session caching.",
+      timestamp: new Date("2026-03-21T10:00:00Z"),
+      scope: "agent",
+      scopeRef: "agent:agent-1",
+    });
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("still promotes explicit user decisions into structured memory", () => {
+    const candidates = extractStructuredCandidatesFromEvent({
+      eventId: "evt-2c",
+      agentId: "agent-1",
+      role: "user",
+      body: "We decided: use Redis for session caching.",
+      timestamp: new Date("2026-03-21T10:00:00Z"),
+      scope: "agent",
+      scopeRef: "agent:agent-1",
+    });
+
+    expect(candidates.some((candidate) => candidate.type === "decision")).toBe(true);
+  });
+
   it("extracts procedures from assistant workflow-style responses", () => {
     const procedures = extractProcedureCandidatesFromEvent({
       eventId: "evt-3",
