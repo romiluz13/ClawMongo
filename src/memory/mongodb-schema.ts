@@ -167,6 +167,12 @@ const KB_SCHEMA: Document = {
       chunkCount: { bsonType: "number" },
       importedBy: { bsonType: "string" },
       updatedAt: { bsonType: "date" },
+      wikiSource: {
+        enum: ["wiki", "reference", "imported"],
+        description: "Source category for wiki/reference material",
+      },
+      vault: { bsonType: "string", description: "Wiki vault name" },
+      section: { bsonType: "string", description: "Wiki section path" },
     },
   },
 };
@@ -187,6 +193,12 @@ const KB_CHUNKS_SCHEMA: Document = {
       tags: { bsonType: "array", items: { bsonType: "string" } },
       embedding: { bsonType: "array", description: "Vector embedding (legacy field)" },
       updatedAt: { bsonType: "date" },
+      wikiSource: {
+        enum: ["wiki", "reference", "imported"],
+        description: "Source category for wiki/reference material",
+      },
+      vault: { bsonType: "string", description: "Wiki vault name" },
+      section: { bsonType: "string", description: "Wiki section path" },
     },
   },
 };
@@ -1450,6 +1462,13 @@ export async function ensureStandardIndexes(
   await consolidationRuns.createIndex(
     { agentId: 1, startedAt: -1 },
     { name: "idx_consolidation_runs_agent_started" },
+  );
+  applied++;
+
+  // KB wiki source index (sparse — fields may not exist on all docs)
+  await kbChunks.createIndex(
+    { docId: 1, wikiSource: 1, vault: 1 },
+    { name: "idx_kb_chunks_doc_wikisource_vault", sparse: true },
   );
   applied++;
 

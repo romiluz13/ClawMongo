@@ -285,10 +285,10 @@ describe("schema constants", () => {
 // ---------------------------------------------------------------------------
 
 describe("ensureCollections", () => {
-  it("creates all 24 collections when none exist (23 regular + 1 time series)", async () => {
+  it("creates all 25 collections when none exist (24 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(24);
+    expect(db.createCollection).toHaveBeenCalledTimes(25);
     // Non-validated collections: called with name only
     expect(db.createCollection).toHaveBeenCalledWith("test_files");
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
@@ -327,7 +327,7 @@ describe("ensureCollections", () => {
   it("skips already-existing collections", async () => {
     const db = mockDb(["test_chunks", "test_files"]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(22);
+    expect(db.createCollection).toHaveBeenCalledTimes(23);
     expect(db.createCollection).toHaveBeenCalledWith("test_embedding_cache");
     expect(db.createCollection).toHaveBeenCalledWith("test_meta");
     expect(db.createCollection).toHaveBeenCalledWith(
@@ -379,6 +379,7 @@ describe("ensureCollections", () => {
       "oc_memory_mutations",
       "oc_lane_coverage",
       "oc_memory_telemetry",
+      "oc_consolidation_runs",
     ]);
     await ensureCollections(db, "oc_");
     expect(db.createCollection).not.toHaveBeenCalled();
@@ -422,15 +423,17 @@ describe("ensureStandardIndexes", () => {
       createIndex: ReturnType<typeof vi.fn>;
     };
 
-    // 4 chunks + 2 cache + 5 KB + 3 KB chunks + 7 structured (6 + 1 v2 scope) +
+    // 4 chunks + 2 cache + 5 KB + 6 KB chunks (5 + 1 wiki) + 7 structured (6 + 1 v2 scope) +
     // 1 structured revisions + 3 relevance_runs + 2 relevance_artifacts +
     // 2 relevance_regressions + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
-    // 3 episodes + 1 ingest_runs + 1 projection_runs + 4 procedures +
-    expect(count).toBe(67);
+    // 4 episodes (3 + 1 importance_access) + 1 ingest_runs + 1 projection_runs + 4 procedures +
+    // 1 procedure_revisions + 4 query_cache + 2 telemetry + 3 mutations + 1 lane_coverage +
+    // 1 consolidation_runs
+    expect(count).toBe(70);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
-    expect(kbChunks.createIndex).toHaveBeenCalledTimes(5);
+    expect(kbChunks.createIndex).toHaveBeenCalledTimes(6);
     expect(structured.createIndex).toHaveBeenCalledTimes(7);
     expect(structuredRevisions.createIndex).toHaveBeenCalledTimes(1);
     expect(relevanceRuns.createIndex).toHaveBeenCalledTimes(3);
@@ -463,7 +466,7 @@ describe("ensureStandardIndexes", () => {
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
     expect(relations.createIndex).toHaveBeenCalledTimes(4);
     expect(entityLinks.createIndex).toHaveBeenCalledTimes(2);
-    expect(episodes.createIndex).toHaveBeenCalledTimes(3);
+    expect(episodes.createIndex).toHaveBeenCalledTimes(4);
     expect(ingestRuns.createIndex).toHaveBeenCalledTimes(1);
     expect(projectionRuns.createIndex).toHaveBeenCalledTimes(1);
 
@@ -624,9 +627,10 @@ describe("ensureStandardIndexes", () => {
   it("index count includes relevance telemetry indexes and v2 collection indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    // 27 (v1 base) + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links + 3 episodes +
-    // 1 ingest_runs + 1 projection_runs + 1 structured scope + 1 structured revisions +
-    expect(count).toBe(67);
+    // 27 (v1 base) + 1 kb wiki + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
+    // 4 episodes (3 + 1 importance_access) + 1 ingest_runs + 1 projection_runs +
+    // 1 structured scope + 1 structured revisions + 1 consolidation_runs
+    expect(count).toBe(70);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -1082,6 +1086,70 @@ describe("checkKBOrphans", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Wiki source categorization (Phase 5)
+// ---------------------------------------------------------------------------
+
+describe("wiki source categorization", () => {
+  it("KB entry with wikiSource enum passes schema validation", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const kbCall = createCalls.find((c: unknown[]) => c[0] === "test_knowledge_base");
+    expect(kbCall).toBeDefined();
+    const validator = kbCall![1]?.validator;
+    expect(validator.$jsonSchema.properties.wikiSource).toBeDefined();
+    expect(validator.$jsonSchema.properties.wikiSource.enum).toEqual([
+      "wiki",
+      "reference",
+      "imported",
+    ]);
+  });
+
+  it("KB entry with vault and section fields passes validation", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const kbCall = createCalls.find((c: unknown[]) => c[0] === "test_knowledge_base");
+    expect(kbCall).toBeDefined();
+    const validator = kbCall![1]?.validator;
+    expect(validator.$jsonSchema.properties.vault).toBeDefined();
+    expect(validator.$jsonSchema.properties.vault.bsonType).toBe("string");
+    expect(validator.$jsonSchema.properties.section).toBeDefined();
+    expect(validator.$jsonSchema.properties.section.bsonType).toBe("string");
+  });
+
+  it("KB entry without wikiSource/vault/section still passes (optional fields)", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const kbCall = createCalls.find((c: unknown[]) => c[0] === "test_knowledge_base");
+    expect(kbCall).toBeDefined();
+    const validator = kbCall![1]?.validator;
+    // wikiSource, vault, section should NOT be in required array
+    expect(validator.$jsonSchema.required).not.toContain("wikiSource");
+    expect(validator.$jsonSchema.required).not.toContain("vault");
+    expect(validator.$jsonSchema.required).not.toContain("section");
+  });
+
+  it("KB chunks schema also includes wikiSource, vault, section fields", async () => {
+    const db = mockDb([]);
+    await ensureCollections(db, "test_");
+    const createCalls = (db.createCollection as ReturnType<typeof vi.fn>).mock.calls;
+    const kbChunksCall = createCalls.find((c: unknown[]) => c[0] === "test_kb_chunks");
+    expect(kbChunksCall).toBeDefined();
+    const validator = kbChunksCall![1]?.validator;
+    expect(validator.$jsonSchema.properties.wikiSource).toBeDefined();
+    expect(validator.$jsonSchema.properties.wikiSource.enum).toEqual([
+      "wiki",
+      "reference",
+      "imported",
+    ]);
+    expect(validator.$jsonSchema.properties.vault.bsonType).toBe("string");
+    expect(validator.$jsonSchema.properties.section.bsonType).toBe("string");
+  });
+});
+
 describe("EPISODES_SCHEMA enum completeness", () => {
   it("EPISODES_SCHEMA enum includes all 5 EpisodeType values", async () => {
     const db = mockDb([]);
@@ -1451,10 +1519,10 @@ describe("telemetry standard indexes", () => {
 });
 
 describe("ensureCollections total count with query_cache and telemetry", () => {
-  it("creates 24 collections total when none exist (23 regular + 1 time series)", async () => {
+  it("creates 25 collections total when none exist (24 regular + 1 time series)", async () => {
     const db = mockDb([]);
     await ensureCollections(db, "test_");
-    expect(db.createCollection).toHaveBeenCalledTimes(24);
+    expect(db.createCollection).toHaveBeenCalledTimes(25);
   });
 });
 
@@ -1462,6 +1530,6 @@ describe("ensureStandardIndexes total count with query_cache and telemetry", () 
   it("returns updated total index count including query_cache and telemetry indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    expect(count).toBe(67);
+    expect(count).toBe(70);
   });
 });

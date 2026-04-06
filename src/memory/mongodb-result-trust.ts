@@ -153,12 +153,36 @@ export function computeResultTrust(
   };
 }
 
+/**
+ * Compute time-decayed effective importance.
+ * importance * 0.5^(daysSinceCreation / recencyHalfLifeDays)
+ * @param importance - raw importance score (0-1)
+ * @param createdAt - when the document was created
+ * @param now - current time
+ * @param recencyHalfLifeDays - half-life in days (default 7)
+ */
+export function computeImportanceDecay(
+  importance: number | undefined,
+  createdAt: Date | undefined,
+  now: Date = new Date(),
+  recencyHalfLifeDays: number = 7,
+): number {
+  const raw =
+    typeof importance === "number" && Number.isFinite(importance) ? clamp01(importance) : 0.5;
+  if (!(createdAt instanceof Date)) {
+    return raw;
+  }
+  const daysSinceCreation = Math.max(0, (now.getTime() - createdAt.getTime()) / DAY_MS);
+  return clamp01(raw * Math.pow(0.5, daysSinceCreation / recencyHalfLifeDays));
+}
+
 export function applyTrustAwareReranking(
   results: MemorySearchResult[],
   params?: {
     diversityWeight?: number;
     episodeBoost?: number;
     trustWeight?: number;
+    importanceWeight?: number;
     invalidatedPenalty?: number;
     conflictedPenalty?: number;
     overduePenalty?: number;
@@ -172,6 +196,7 @@ export function applyTrustAwareReranking(
   const diversityWeight = params?.diversityWeight ?? 0.15;
   const episodeBoost = params?.episodeBoost ?? 0.12;
   const trustWeight = params?.trustWeight ?? 0.28;
+  const importanceWeight = params?.importanceWeight ?? 0.1;
   const invalidatedPenalty = params?.invalidatedPenalty ?? 0.55;
   const conflictedPenalty = params?.conflictedPenalty ?? 0.78;
   const overduePenalty = params?.overduePenalty ?? 0.92;
@@ -185,6 +210,14 @@ export function applyTrustAwareReranking(
 
     const trust = computeResultTrust(result, now);
     adjustedScore = adjustedScore * (1 - trustWeight) + trust.score * trustWeight;
+
+    // Importance decay: time-weighted importance as additive scoring component
+    const importanceDecay = computeImportanceDecay(
+      (result as Record<string, unknown>).importance as number | undefined,
+      result.timestamp ?? result.signals?.updatedAt,
+      now,
+    );
+    adjustedScore += importanceDecay * importanceWeight;
 
     if (result.signals?.state === "invalidated") {
       adjustedScore *= invalidatedPenalty;

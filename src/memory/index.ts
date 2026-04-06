@@ -189,6 +189,13 @@ export {
   buildAssistantExtractionPrompt,
   parseExtractionResponse,
 } from "./mongodb-entity-extractor.js";
+export {
+  computeImportanceDecay,
+  computeResultTrust,
+  applyTrustAwareReranking,
+  summarizeResultTrust,
+  hasOverdueReview,
+} from "./mongodb-result-trust.js";
 export { traceReasoningChain } from "./mongodb-reasoning-chain.js";
 export { scanNovelty } from "./mongodb-novelty.js";
 export { AccessTracker } from "./mongodb-access-tracker.js";
