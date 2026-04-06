@@ -132,6 +132,10 @@ export function laneCoverageCollection(db: Db, prefix: string): Collection {
   return col(db, prefix, "lane_coverage");
 }
 
+export function consolidationRunsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "consolidation_runs");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -523,6 +527,26 @@ const EVENTS_SCHEMA: Document = {
         bsonType: "string",
         description: "Episode ID this event was consolidated into",
       },
+      importance: {
+        bsonType: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Importance score (0-1)",
+      },
+      accessCount: {
+        bsonType: "number",
+        minimum: 0,
+        description: "Approximate access count (approximation pattern)",
+      },
+      lastAccessedAt: { bsonType: "date", description: "Last access timestamp" },
+      dreamerProcessedAt: {
+        bsonType: "date",
+        description: "When this event was processed by the consolidation agent (Dreamer)",
+      },
+      dreamerRunId: {
+        bsonType: "string",
+        description: "Consolidation run that processed this event",
+      },
     },
   },
 };
@@ -662,6 +686,23 @@ const EPISODES_SCHEMA: Document = {
         enum: ["active", "archived", "deleted"],
         description: "Lifecycle status (default: active)",
       },
+      importance: {
+        bsonType: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Importance score (0-1)",
+      },
+      accessCount: {
+        bsonType: "number",
+        minimum: 0,
+        description: "Approximate access count (approximation pattern)",
+      },
+      lastAccessedAt: { bsonType: "date", description: "Last access timestamp" },
+      sourceEventIds: {
+        bsonType: "array",
+        items: { bsonType: "string" },
+        description: "Source event IDs for provenance",
+      },
     },
   },
 };
@@ -792,6 +833,29 @@ const MEMORY_MUTATIONS_SCHEMA: Document = {
   },
 };
 
+const CONSOLIDATION_RUNS_SCHEMA: Document = {
+  $jsonSchema: {
+    bsonType: "object",
+    required: ["runId", "agentId", "startedAt", "status"],
+    properties: {
+      runId: { bsonType: "string", description: "Unique run identifier" },
+      agentId: { bsonType: "string" },
+      startedAt: { bsonType: "date" },
+      completedAt: { bsonType: "date" },
+      status: {
+        enum: ["running", "completed", "failed"],
+        description: "Run status",
+      },
+      eventsProcessed: { bsonType: "number", minimum: 0 },
+      factsPromoted: { bsonType: "number", minimum: 0 },
+      factsPruned: { bsonType: "number", minimum: 0 },
+      conflictsResolved: { bsonType: "number", minimum: 0 },
+      durationMs: { bsonType: "number" },
+      error: { bsonType: "string" },
+    },
+  },
+};
+
 const VALIDATED_COLLECTIONS: Record<string, Document> = {
   chunks: CHUNKS_SCHEMA,
   knowledge_base: KB_SCHEMA,
@@ -812,6 +876,7 @@ const VALIDATED_COLLECTIONS: Record<string, Document> = {
   projection_runs: PROJECTION_RUNS_SCHEMA,
   query_cache: QUERY_CACHE_SCHEMA,
   memory_mutations: MEMORY_MUTATIONS_SCHEMA,
+  consolidation_runs: CONSOLIDATION_RUNS_SCHEMA,
 };
 
 export async function ensureCollections(db: Db, prefix: string): Promise<void> {
@@ -845,6 +910,7 @@ export async function ensureCollections(db: Db, prefix: string): Promise<void> {
     "query_cache",
     "memory_mutations",
     "lane_coverage",
+    "consolidation_runs",
   ].map((n) => `${prefix}${n}`);
   for (const name of needed) {
     if (!existing.has(name)) {
@@ -1369,6 +1435,21 @@ export async function ensureStandardIndexes(
   await laneCoverage.createIndex(
     { agentId: 1 },
     { name: "uq_lane_coverage_agentid", unique: true },
+  );
+  applied++;
+
+  // Importance-based promotion candidates (episodes)
+  await episodes.createIndex(
+    { agentId: 1, importance: -1, accessCount: -1 },
+    { name: "idx_episodes_agent_importance_access" },
+  );
+  applied++;
+
+  // Consolidation run tracking
+  const consolidationRuns = consolidationRunsCollection(db, prefix);
+  await consolidationRuns.createIndex(
+    { agentId: 1, startedAt: -1 },
+    { name: "idx_consolidation_runs_agent_started" },
   );
   applied++;
 

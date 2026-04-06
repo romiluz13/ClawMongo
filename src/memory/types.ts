@@ -496,6 +496,17 @@ export type NoveltyOptions = {
   timeRange?: { start: Date; end: Date };
 };
 
+// ---------------------------------------------------------------------------
+// Access Tracker types (Phase 3 — Honcho steal)
+// ---------------------------------------------------------------------------
+
+export type AccessTrackerConfig = {
+  /** Flush after this many buffered accesses. Default 10. */
+  flushThreshold?: number;
+  /** Flush every N ms. Default 60 000. */
+  flushIntervalMs?: number;
+};
+
 export interface MemorySearchManager {
   search(
     query: string,

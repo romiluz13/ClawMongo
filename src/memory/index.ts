@@ -36,6 +36,7 @@ export type {
   MemorySearchTimeRangePreset,
   MemorySource,
   RejectedResultSummary,
+  AccessTrackerConfig,
 } from "./types.js";
 export {
   closeAllMemorySearchManagers,
@@ -190,3 +191,5 @@ export {
 } from "./mongodb-entity-extractor.js";
 export { traceReasoningChain } from "./mongodb-reasoning-chain.js";
 export { scanNovelty } from "./mongodb-novelty.js";
+export { AccessTracker } from "./mongodb-access-tracker.js";
+export { consolidationRunsCollection } from "./mongodb-schema.js";
