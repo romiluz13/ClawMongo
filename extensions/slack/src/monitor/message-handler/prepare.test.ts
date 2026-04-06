@@ -2,11 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { App } from "@slack/bolt";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
+import { resolveThreadSessionKeys } from "openclaw/plugin-sdk/routing";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { expectChannelInboundContextContract as expectInboundContextContract } from "../../../../../src/channels/plugins/contracts/suites.js";
-import type { OpenClawConfig } from "../../../../../src/config/config.js";
-import { resolveAgentRoute } from "../../../../../src/routing/resolve-route.js";
-import { resolveThreadSessionKeys } from "../../../../../src/routing/session-key.js";
+import { expectChannelInboundContextContract as expectInboundContextContract } from "../../../../../src/channels/plugins/contracts/test-helpers.js";
 import type { ResolvedSlackAccount } from "../../accounts.js";
 import type { SlackMessageEvent } from "../../types.js";
 import type { SlackMonitorContext } from "../context.js";
@@ -45,7 +45,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
         channels: { slack: { enabled: true } },
       } as OpenClawConfig,
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
     return slackCtx;
   }
@@ -138,7 +137,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
         session: { dmScope: "main" },
       } as OpenClawConfig,
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
     // Simulate API returning correct type for DM channel
     slackCtx.resolveChannelName = async () => ({ name: undefined, type: "im" as const });
@@ -160,7 +158,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
     options?: { includeFromCheck?: boolean },
   ) {
     expect(prepared).toBeTruthy();
-    // oxlint-disable-next-line typescript/no-explicit-any
     expectInboundContextContract(prepared!.ctxPayload as any);
     expect(prepared!.isDirectMessage).toBe(true);
     expect(prepared!.route.sessionKey).toBe("agent:main:main");
@@ -190,7 +187,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
         ? {}
         : { defaultRequireMention: params.defaultRequireMention }),
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
     if (params?.asChannel) {
       slackCtx.resolveChannelName = async () => ({ name: "general", type: "channel" });
@@ -210,8 +206,33 @@ describe("slack prepareSlackMessage inbound contract", () => {
     const prepared = await prepareWithDefaultCtx(message);
 
     expect(prepared).toBeTruthy();
-    // oxlint-disable-next-line typescript/no-explicit-any
     expectInboundContextContract(prepared!.ctxPayload as any);
+  });
+
+  it("does not enable Slack status reactions when the message timestamp is missing", async () => {
+    const slackCtx = createInboundSlackCtx({
+      cfg: {
+        messages: {
+          ackReaction: "👀",
+          ackReactionScope: "all",
+          statusReactions: { enabled: true },
+        },
+        channels: { slack: { enabled: true } },
+      } as OpenClawConfig,
+    });
+    slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
+
+    const prepared = await prepareMessageWith(slackCtx, defaultAccount, {
+      channel: "D123",
+      channel_type: "im",
+      user: "U1",
+      text: "hi",
+      event_ts: "1.000",
+    } as SlackMessageEvent);
+
+    expect(prepared).toBeTruthy();
+    expect(prepared?.ackReactionMessageTs).toBeUndefined();
+    expect(prepared?.ackReactionPromise).toBeNull();
   });
 
   it("includes forwarded shared attachment text in raw body", async () => {
@@ -276,7 +297,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
       } as OpenClawConfig,
       defaultRequireMention: false,
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Bot" }) as any;
 
     const account = createSlackAccount({ allowBots: true });
@@ -311,7 +331,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
         C123: { systemPrompt: "Config prompt" },
       },
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
     const channelInfo = {
       name: "general",
@@ -350,6 +369,19 @@ describe("slack prepareSlackMessage inbound contract", () => {
     );
 
     expectMainScopedDmClassification(prepared, { includeFromCheck: true });
+  });
+
+  it("uses the concrete DM channel as the live reply target while keeping user-scoped routing", async () => {
+    const prepared = await prepareMessageWith(
+      createDmScopeMainSlackCtx(),
+      createSlackAccount(),
+      createMainScopedDmMessage({}),
+    );
+
+    expect(prepared).toBeTruthy();
+    expect(prepared!.replyTarget).toBe("channel:D0ACP6B1T8V");
+    expect(prepared!.ctxPayload.To).toBe("user:U1");
+    expect(prepared!.ctxPayload.NativeChannelId).toBe("D0ACP6B1T8V");
   });
 
   it("classifies D-prefix DMs when channel_type is missing", async () => {
@@ -554,7 +586,6 @@ describe("slack prepareSlackMessage inbound contract", () => {
       } as OpenClawConfig,
       replyToMode: "all",
     });
-    // oxlint-disable-next-line typescript/no-explicit-any
     slackCtx.resolveUserName = async () => ({ name: "Alice" }) as any;
 
     const message = createSlackMessage({ ts: "500.000" });

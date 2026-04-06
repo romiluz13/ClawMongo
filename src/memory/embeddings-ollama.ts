@@ -1,7 +1,7 @@
 import { resolveEnvApiKey } from "../agents/model-auth.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
-import { resolveOllamaApiBase } from "../plugin-sdk/ollama-surface.js";
+import { resolveOllamaApiBase } from "../plugin-sdk/ollama.js";
 import { normalizeOptionalSecretInput } from "../utils/normalize-secret-input.js";
 import { sanitizeAndNormalizeEmbedding } from "./embedding-vectors.js";
 import { normalizeEmbeddingModelWithPrefixes } from "./embeddings-model-normalize.js";

@@ -360,7 +360,7 @@ function sanitizeAnthropicReplayToolResults(messages: AgentMessage[]): AgentMess
             continue;
           }
           const typedBlock = block as { type?: unknown; id?: unknown };
-          if (typedBlock.type !== "toolUse" || typeof typedBlock.id !== "string") {
+          if (!isToolCallBlockType(typedBlock.type) || typeof typedBlock.id !== "string") {
             continue;
           }
           const trimmedId = typedBlock.id.trim();
@@ -565,9 +565,7 @@ export function wrapStreamFnSanitizeMalformedToolCalls(
     if (sanitized.messages === messages) {
       return baseFn(model, context, options);
     }
-    let nextMessages = sanitizeToolUseResultPairing(sanitized.messages, {
-      preserveErroredAssistantResults: true,
-    });
+    let nextMessages = sanitizeToolUseResultPairing(sanitized.messages);
     if (transcriptPolicy?.validateAnthropicTurns) {
       nextMessages = sanitizeAnthropicReplayToolResults(nextMessages);
     }

@@ -1,6 +1,6 @@
 {
   "name": "@openclaw/line",
-  "version": "2026.3.28-beta.1",
+  "version": "2026.4.6",
   "private": true,
   "description": "OpenClaw LINE channel plugin",
   "type": "module",
@@ -8,10 +8,10 @@
     "@romiluz/clawmongo": "workspace:*"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.3.28-beta.1"
+    "@romiluz/clawmongo": ">=2026.3.0"
   },
   "peerDependenciesMeta": {
-    "openclaw": {
+    "@romiluz/clawmongo": {
       "optional": true
     }
   },
@@ -34,9 +34,8 @@
     },
     "install": {
       "npmSpec": "@openclaw/line",
-      "localPath": "extensions/line",
       "defaultChoice": "npm",
-      "minHostVersion": ">=2026.3.28"
+      "minHostVersion": ">=2026.4.6"
     }
   }
 }

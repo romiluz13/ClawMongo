@@ -14,7 +14,12 @@ import { HookMappingSchema, HooksGmailSchema, InternalHooksSchema } from "./zod-
 import { PluginInstallRecordShape } from "./zod-schema.installs.js";
 import { ChannelsSchema } from "./zod-schema.providers.js";
 import { sensitive } from "./zod-schema.sensitive.js";
-import { CommandsSchema, MessagesSchema, SessionSchema } from "./zod-schema.session.js";
+import {
+  CommandsSchema,
+  MessagesSchema,
+  SessionSchema,
+  SessionSendPolicySchema,
+} from "./zod-schema.session.js";
 
 const BrowserSnapshotDefaultsSchema = z
   .object({
@@ -36,6 +41,52 @@ const NodeHostSchema = z
   .strict()
   .optional();
 
+const MemoryQmdPathSchema = z
+  .object({
+    path: z.string(),
+    name: z.string().optional(),
+    pattern: z.string().optional(),
+  })
+  .strict();
+
+const MemoryQmdSessionSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    exportDir: z.string().optional(),
+    retentionDays: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const MemoryQmdUpdateSchema = z
+  .object({
+    interval: z.string().optional(),
+    debounceMs: z.number().int().nonnegative().optional(),
+    onBoot: z.boolean().optional(),
+    waitForBootSync: z.boolean().optional(),
+    embedInterval: z.string().optional(),
+    commandTimeoutMs: z.number().int().nonnegative().optional(),
+    updateTimeoutMs: z.number().int().nonnegative().optional(),
+    embedTimeoutMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const MemoryQmdLimitsSchema = z
+  .object({
+    maxResults: z.number().int().positive().optional(),
+    maxSnippetChars: z.number().int().positive().optional(),
+    maxInjectedChars: z.number().int().positive().optional(),
+    timeoutMs: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+const MemoryQmdMcporterSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    serverName: z.string().optional(),
+    startDaemon: z.boolean().optional(),
+  })
+  .strict();
+
 const LoggingLevelSchema = z.union([
   z.literal("silent"),
   z.literal("fatal"),
@@ -46,126 +97,26 @@ const LoggingLevelSchema = z.union([
   z.literal("trace"),
 ]);
 
-const ClawMongoDeploymentProfileSchema = z
-  .string()
-  .optional()
-  .superRefine((value, ctx) => {
-    if (value === undefined || value === "community-mongot") {
-      return;
-    }
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `deploymentProfile "${value}" is not supported in ClawMongo. Use deploymentProfile "community-mongot".`,
-    });
-  });
-
-const ClawMongoEmbeddingModeSchema = z
-  .string()
-  .optional()
-  .superRefine((value, ctx) => {
-    if (value === undefined || value === "automated") {
-      return;
-    }
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `embeddingMode "${value}" is not supported in ClawMongo. Use embeddingMode "automated" with community-mongot.`,
-    });
-  });
-
-const MemoryMongoDBSchema = z
+const MemoryQmdSchema = z
   .object({
-    uri: z.string().optional(),
-    database: z.string().optional(),
-    collectionPrefix: z.string().optional(),
-    deploymentProfile: ClawMongoDeploymentProfileSchema,
-    embeddingMode: ClawMongoEmbeddingModeSchema,
-    fusionMethod: z
-      .union([z.literal("scoreFusion"), z.literal("rankFusion"), z.literal("js-merge")])
-      .optional(),
-    quantization: z.union([z.literal("none"), z.literal("scalar"), z.literal("binary")]).optional(),
-    watchDebounceMs: z.number().int().nonnegative().optional(),
-    numDimensions: z.number().int().positive().optional(),
-    maxPoolSize: z.number().int().positive().optional(),
-    minPoolSize: z.number().int().nonnegative().optional(),
-    embeddingCacheTtlDays: z.number().int().nonnegative().optional(),
-    memoryTtlDays: z.number().int().nonnegative().optional(),
-    enableChangeStreams: z.boolean().optional(),
-    changeStreamDebounceMs: z.number().int().nonnegative().optional(),
-    maxSessionChunks: z.number().int().positive().optional(),
-    connectTimeoutMs: z.number().int().positive().optional(),
-    numCandidates: z.number().int().positive().optional(),
-    kb: z
-      .object({
-        enabled: z.boolean().optional(),
-        chunking: z
-          .object({
-            tokens: z.number().int().positive().optional(),
-            overlap: z.number().int().nonnegative().optional(),
-          })
-          .strict()
-          .optional(),
-        autoImportPaths: z.array(z.string()).optional(),
-        maxDocumentSize: z.number().int().positive().optional(),
-        autoRefreshHours: z.number().nonnegative().optional(),
-      })
-      .strict()
-      .optional(),
-    relevance: z
-      .object({
-        enabled: z.boolean().optional(),
-        telemetry: z
-          .object({
-            enabled: z.boolean().optional(),
-            baseSampleRate: z.number().min(0).max(1).optional(),
-            adaptive: z
-              .object({
-                enabled: z.boolean().optional(),
-                maxSampleRate: z.number().min(0).max(1).optional(),
-                minWindowSize: z.number().int().positive().optional(),
-              })
-              .strict()
-              .optional(),
-            persistRawExplain: z.boolean().optional(),
-            queryPrivacyMode: z
-              .union([z.literal("redacted-hash"), z.literal("raw"), z.literal("none")])
-              .optional(),
-          })
-          .strict()
-          .optional(),
-        retention: z
-          .object({
-            days: z.number().int().positive().optional(),
-          })
-          .strict()
-          .optional(),
-        benchmark: z
-          .object({
-            enabled: z.boolean().optional(),
-            datasetPath: z.string().optional(),
-          })
-          .strict()
-          .optional(),
-      })
-      .strict()
-      .optional(),
+    command: z.string().optional(),
+    mcporter: MemoryQmdMcporterSchema.optional(),
+    searchMode: z.union([z.literal("query"), z.literal("search"), z.literal("vsearch")]).optional(),
+    searchTool: z.string().trim().min(1).optional(),
+    includeDefaultMemory: z.boolean().optional(),
+    paths: z.array(MemoryQmdPathSchema).optional(),
+    sessions: MemoryQmdSessionSchema.optional(),
+    update: MemoryQmdUpdateSchema.optional(),
+    limits: MemoryQmdLimitsSchema.optional(),
+    scope: SessionSendPolicySchema.optional(),
   })
-  .strict()
-  .optional();
+  .strict();
 
 const MemorySchema = z
   .object({
-    backend: z.literal("mongodb").optional(),
+    backend: z.union([z.literal("builtin"), z.literal("qmd")]).optional(),
     citations: z.union([z.literal("auto"), z.literal("on"), z.literal("off")]).optional(),
-    runtimeMode: z.string().optional(),
-    sources: z
-      .object({
-        reference: z.object({ enabled: z.boolean().optional() }).strict().optional(),
-        conversation: z.object({ enabled: z.boolean().optional() }).strict().optional(),
-        structured: z.object({ enabled: z.boolean().optional() }).strict().optional(),
-      })
-      .strict()
-      .optional(),
-    mongodb: MemoryMongoDBSchema,
+    qmd: MemoryQmdSchema.optional(),
   })
   .strict()
   .optional();
@@ -218,10 +169,6 @@ const PluginEntrySchema = z
 
 const TalkProviderEntrySchema = z
   .object({
-    voiceId: z.string().optional(),
-    voiceAliases: z.record(z.string(), z.string()).optional(),
-    modelId: z.string().optional(),
-    outputFormat: z.string().optional(),
     apiKey: SecretInputSchema.optional().register(sensitive),
   })
   .catchall(z.unknown());
@@ -230,11 +177,6 @@ const TalkSchema = z
   .object({
     provider: z.string().optional(),
     providers: z.record(z.string(), TalkProviderEntrySchema).optional(),
-    voiceId: z.string().optional(),
-    voiceAliases: z.record(z.string(), z.string()).optional(),
-    modelId: z.string().optional(),
-    outputFormat: z.string().optional(),
-    apiKey: SecretInputSchema.optional().register(sensitive),
     interruptOnSpeech: z.boolean().optional(),
     silenceTimeoutMs: z.number().int().positive().optional(),
   })
@@ -268,6 +210,12 @@ const McpServerSchema = z
     cwd: z.string().optional(),
     workingDirectory: z.string().optional(),
     url: HttpUrlSchema.optional(),
+    headers: z
+      .record(
+        z.string(),
+        z.union([z.string().register(sensitive), z.number(), z.boolean()]).register(sensitive),
+      )
+      .optional(),
   })
   .catchall(z.unknown());
 
@@ -418,7 +366,6 @@ export const OpenClawSchema = z
         snapshotDefaults: BrowserSnapshotDefaultsSchema,
         ssrfPolicy: z
           .object({
-            allowPrivateNetwork: z.boolean().optional(),
             dangerouslyAllowPrivateNetwork: z.boolean().optional(),
             allowedHostnames: z.array(z.string()).optional(),
             hostnameAllowlist: z.array(z.string()).optional(),
@@ -492,7 +439,12 @@ export const OpenClawSchema = z
             billingBackoffHours: z.number().positive().optional(),
             billingBackoffHoursByProvider: z.record(z.string(), z.number().positive()).optional(),
             billingMaxHours: z.number().positive().optional(),
+            authPermanentBackoffMinutes: z.number().positive().optional(),
+            authPermanentMaxMinutes: z.number().positive().optional(),
             failureWindowHours: z.number().positive().optional(),
+            overloadedProfileRotations: z.number().int().nonnegative().optional(),
+            overloadedBackoffMs: z.number().int().nonnegative().optional(),
+            rateLimitedProfileRotations: z.number().int().nonnegative().optional(),
           })
           .strict()
           .optional(),
@@ -766,6 +718,12 @@ export const OpenClawSchema = z
           .object({
             deny: z.array(z.string()).optional(),
             allow: z.array(z.string()).optional(),
+          })
+          .strict()
+          .optional(),
+        webchat: z
+          .object({
+            chatHistoryMaxChars: z.number().int().positive().max(500_000).optional(),
           })
           .strict()
           .optional(),

@@ -1,5 +1,5 @@
 // Private helper surface for the bundled nextcloud-talk plugin.
-// Keep this list additive and scoped to symbols used under extensions/nextcloud-talk.
+// Keep this list additive and scoped to the bundled Nextcloud Talk surface.
 
 export { logInboundDrop } from "../channels/logging.js";
 export { createAuthRateLimiter } from "../gateway/auth-rate-limit.js";
@@ -103,7 +103,7 @@ export {
   resolveOutboundMediaUrls,
 } from "./reply-payload.js";
 export { dispatchInboundReplyWithBase } from "./inbound-reply-dispatch.js";
-export { createLoggerBackedRuntime } from "./runtime.js";
+export { createLoggerBackedRuntime } from "./runtime-logger.js";
 export {
   buildBaseChannelStatusSummary,
   buildRuntimeAccountStatusSnapshot,

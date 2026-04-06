@@ -4,6 +4,20 @@ packages:
   - packages/*
   - extensions/*
 
+minimumReleaseAge: 2880
+
+minimumReleaseAgeExclude:
+  - "acpx"
+  - "openclaw"
+  - "@buape/carbon"
+  - "@cloudflare/workers-types"
+  - "@mariozechner/*"
+  - "@typescript/native-preview*"
+  - "@oxlint/*"
+  - "@oxfmt/*"
+  - "sqlite-vec"
+  - "sqlite-vec-*"
+
 onlyBuiltDependencies:
   - "@lydell/node-pty"
   - "@matrix-org/matrix-sdk-crypto-nodejs"

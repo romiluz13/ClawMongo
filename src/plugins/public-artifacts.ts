@@ -1,4 +1,4 @@
-import { BUNDLED_PLUGIN_METADATA } from "./bundled-plugin-metadata.js";
+import { BUNDLED_RUNTIME_SIDECAR_PATHS } from "./runtime-sidecar-paths.js";
 
 function assertUniqueValues<T extends string>(values: readonly T[], label: string): readonly T[] {
   const seen = new Set<string>();
@@ -19,15 +19,6 @@ function assertUniqueValues<T extends string>(values: readonly T[], label: strin
 export function getPublicArtifactBasename(relativePath: string): string {
   return relativePath.split("/").at(-1) ?? relativePath;
 }
-
-export const BUNDLED_RUNTIME_SIDECAR_PATHS = assertUniqueValues(
-  BUNDLED_PLUGIN_METADATA.flatMap((entry) =>
-    (entry.runtimeSidecarArtifacts ?? []).map(
-      (artifact) => `dist/extensions/${entry.dirName}/${artifact}`,
-    ),
-  ).toSorted((left, right) => left.localeCompare(right)),
-  "bundled runtime sidecar path",
-);
 
 const EXTRA_GUARDED_EXTENSION_PUBLIC_SURFACE_BASENAMES = assertUniqueValues(
   [
