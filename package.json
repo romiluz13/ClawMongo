@@ -1,6 +1,6 @@
 {
   "name": "@romiluz/clawmongo",
-  "version": "2026.4.6",
+  "version": "2026.4.7",
   "description": "MongoDB-native fork of OpenClaw — multi-channel AI gateway with MongoDB-first memory architecture",
   "keywords": [],
   "homepage": "https://github.com/romiluz/ClawMongo-v2#readme",
