@@ -32,7 +32,7 @@ const log = createSubsystemLogger("memory:mongodb:consolidator");
 // ---------------------------------------------------------------------------
 
 const DEFAULT_MAX_EVENTS = 100;
-const DEFAULT_MIN_COMBINED_SCORE = 0.3;
+const DEFAULT_MIN_COMBINED_SCORE = 0; // Pattern matching is the primary gate, scoring is informational
 const DEFAULT_MIN_INTERVAL_MS = 3_600_000; // 1 hour
 const DEFAULT_NOVELTY_WEIGHT = 0.4;
 const DEFAULT_IMPORTANCE_WEIGHT = 0.3;

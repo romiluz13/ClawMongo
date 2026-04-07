@@ -52,7 +52,7 @@ export class AccessTracker {
   private readonly config: Required<AccessTrackerConfig>;
   private timer: ReturnType<typeof setInterval> | null = null;
   private totalBuffered = 0;
-  private flushing = false;
+  // pendingFlush tracks in-flight flush to prevent race conditions
 
   constructor(
     private readonly db: Db,
@@ -91,13 +91,26 @@ export class AccessTracker {
   /**
    * Flush all buffered accesses to MongoDB.
    * Returns the number of documents updated.
+   * Awaits any in-flight flush before starting to prevent race conditions.
    */
   async flush(): Promise<number> {
-    if (this.flushing || this.buffer.size === 0) {
+    // Wait for in-flight flush to complete before starting a new one
+    if (this.pendingFlush) {
+      await this.pendingFlush;
+    }
+    if (this.buffer.size === 0) {
       return 0;
     }
-    this.flushing = true;
+    const p = this.doFlush();
+    this.pendingFlush = p;
+    const result = await p;
+    this.pendingFlush = null;
+    return result;
+  }
 
+  private pendingFlush: Promise<number> | null = null;
+
+  private async doFlush(): Promise<number> {
     // Snapshot and clear buffer
     const snapshot = new Map(this.buffer);
     this.buffer.clear();
@@ -126,7 +139,6 @@ export class AccessTracker {
       }
     }
 
-    this.flushing = false;
     return updated;
   }
 
