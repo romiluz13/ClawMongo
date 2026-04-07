@@ -84,28 +84,26 @@ export class AccessTracker {
     this.totalBuffered++;
 
     if (this.totalBuffered >= this.config.flushThreshold) {
-      void this.flush();
+      // Store the promise so manual flush() can await it — do NOT void it.
+      this.pendingFlush = this.doFlush();
     }
   }
 
   /**
    * Flush all buffered accesses to MongoDB.
    * Returns the number of documents updated.
-   * Awaits any in-flight flush before starting to prevent race conditions.
+   * Awaits any in-flight auto-flush before starting to prevent race conditions.
    */
   async flush(): Promise<number> {
-    // Wait for in-flight flush to complete before starting a new one
+    // Wait for any auto-triggered flush to complete
     if (this.pendingFlush) {
       await this.pendingFlush;
+      this.pendingFlush = null;
     }
     if (this.buffer.size === 0) {
       return 0;
     }
-    const p = this.doFlush();
-    this.pendingFlush = p;
-    const result = await p;
-    this.pendingFlush = null;
-    return result;
+    return this.doFlush();
   }
 
   private pendingFlush: Promise<number> | null = null;

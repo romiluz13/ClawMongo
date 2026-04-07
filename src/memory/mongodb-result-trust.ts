@@ -166,9 +166,14 @@ export function computeImportanceDecay(
   createdAt: Date | undefined,
   now: Date = new Date(),
   recencyHalfLifeDays: number = 7,
+  temporalScope?: string,
 ): number {
   const raw =
     typeof importance === "number" && Number.isFinite(importance) ? clamp01(importance) : 0.5;
+  // Permanent and ongoing memories NEVER decay — preferences, facts, etc.
+  if (temporalScope === "permanent" || temporalScope === "ongoing") {
+    return raw;
+  }
   if (!(createdAt instanceof Date)) {
     return raw;
   }
