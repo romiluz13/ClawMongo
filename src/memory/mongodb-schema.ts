@@ -1256,6 +1256,15 @@ export async function ensureStandardIndexes(
     { name: "idx_events_consolidated", sparse: true },
   );
   applied++;
+  // Dreamer processing status — sparse index for consistency with projectedAt/consolidatedAt.
+  // Note: sparse indexes do NOT optimize $exists:false queries (the consolidator's primary query).
+  // The agentId prefix of existing event indexes handles that. This index serves the inverse
+  // query ($exists:true) and maintains the codebase's sparse-lifecycle-field pattern.
+  await events.createIndex(
+    { dreamerProcessedAt: 1 },
+    { name: "idx_events_dreamer_processed", sparse: true },
+  );
+  applied++;
 
   // Entities indexes
   const entities = entitiesCollection(db, prefix);
