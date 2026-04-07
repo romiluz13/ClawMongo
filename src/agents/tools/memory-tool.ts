@@ -449,6 +449,23 @@ const MemoryWriteSchema = Type.Object({
   tags: Type.Optional(Type.Array(Type.String())),
 });
 
+const MemoryReasoningChainSchema = Type.Object({
+  fact_id: Type.String({
+    description: "The ID of the fact to trace (e.g., structured memory key, entity ID)",
+  }),
+  collection: Type.String({
+    description: "Source collection: structured_mem, entities, relations, procedures, entity_links",
+  }),
+  max_depth: Type.Optional(Type.Number({ description: "Maximum traversal depth (default 10)" })),
+});
+
+const MemoryNoveltyScanSchema = Type.Object({
+  limit: Type.Optional(
+    Type.Number({ description: "Number of most novel events to return (default 10)" }),
+  ),
+  scope: Type.Optional(Type.String({ description: "Memory scope filter" })),
+});
+
 function resolveMemoryToolContext(options: { config?: OpenClawConfig; agentSessionKey?: string }) {
   const cfg = options.config;
   if (!cfg) {
@@ -871,6 +888,92 @@ export function createMemoryWriteTool(options: {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           return jsonResult({ success: false, error: message });
+        }
+      },
+  });
+}
+
+export function createMemoryReasoningChainTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemoryTool({
+    options,
+    label: "Memory Reasoning Chain",
+    name: "memory_reasoning_chain",
+    description:
+      "Trace the provenance of any stored fact back to the original conversation events that produced it. Returns an ordered chain from root cause to derived fact. Use when you need to understand WHY a memory exists or verify its source.",
+    parameters: MemoryReasoningChainSchema,
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const factId = readStringParam(params, "factId", { required: true });
+        const collection = readStringParam(params, "collection", { required: true });
+        const maxDepth = readNumberParam(params, "maxDepth", { integer: true });
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult({ nodes: [], disabled: true, error: memory.error });
+        }
+        if (!memory.manager.traceReasoningChain) {
+          return jsonResult({
+            nodes: [],
+            disabled: true,
+            error: "reasoning chain is not supported on this memory backend",
+          });
+        }
+        try {
+          return jsonResult(
+            await memory.manager.traceReasoningChain({
+              factId,
+              collection,
+              options: maxDepth !== undefined ? { maxDepth } : undefined,
+            }),
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ nodes: [], disabled: true, error: message });
+        }
+      },
+  });
+}
+
+export function createMemoryNoveltyScanTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemoryTool({
+    options,
+    label: "Memory Novelty Scan",
+    name: "memory_novelty_scan",
+    description:
+      "Find the most novel and surprising observations stored in memory. Returns events ranked by how unusual they are compared to everything else stored. Use when looking for anomalies, new patterns, or unexpected information.",
+    parameters: MemoryNoveltyScanSchema,
+    execute:
+      ({ cfg, agentId }) =>
+      async (_toolCallId, params) => {
+        const limit = readNumberParam(params, "limit", { integer: true });
+        const scope = readMemoryScopeParam(params, "scope");
+        const memory = await getMemoryManagerContext({ cfg, agentId });
+        if ("error" in memory) {
+          return jsonResult({ events: [], disabled: true, error: memory.error });
+        }
+        if (!memory.manager.scanNovelty) {
+          return jsonResult({
+            events: [],
+            disabled: true,
+            error: "novelty scan is not supported on this memory backend",
+          });
+        }
+        try {
+          return jsonResult(
+            await memory.manager.scanNovelty({
+              ...(limit !== undefined ? { limit } : {}),
+              ...(scope ? { scope } : {}),
+            }),
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResult({ events: [], disabled: true, error: message });
         }
       },
   });

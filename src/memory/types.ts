@@ -574,6 +574,12 @@ export interface MemorySearchManager {
     sessionFiles?: string[];
     progress?: (update: MemorySyncProgressUpdate) => void;
   }): Promise<void>;
+  traceReasoningChain?(params: {
+    factId: string;
+    collection: string;
+    options?: ReasoningChainOptions;
+  }): Promise<ReasoningChain>;
+  scanNovelty?(params?: NoveltyOptions): Promise<NoveltyReport>;
   probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult>;
   probeVectorAvailability(): Promise<boolean>;
   close?(): Promise<void>;

@@ -33,6 +33,7 @@ import type { Entity, RelationType } from "./mongodb-graph.js";
 import { normalizeSearchResults, rrfScore, type SearchMethod } from "./mongodb-hybrid.js";
 import { searchKB } from "./mongodb-kb-search.js";
 import { updateLaneCoverage, getLaneCoverage } from "./mongodb-lane-coverage.js";
+import { scanNovelty } from "./mongodb-novelty.js";
 import * as mongodbOps from "./mongodb-ops.js";
 import type { IngestRun, ProjectionRun } from "./mongodb-ops.js";
 import type { ProcedureEntry } from "./mongodb-procedures.js";
@@ -48,6 +49,7 @@ import {
 } from "./mongodb-query-cache.js";
 import { rewriteQuery, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
 import { rankRawWindowEvents } from "./mongodb-raw-window-ranking.js";
+import { traceReasoningChain } from "./mongodb-reasoning-chain.js";
 import {
   MongoDBRelevanceRuntime,
   type RelevanceArtifact,
@@ -126,6 +128,10 @@ import type {
   MemorySearchSourcePreference,
   MemorySource,
   MemorySyncProgressUpdate,
+  NoveltyOptions,
+  NoveltyReport,
+  ReasoningChain,
+  ReasoningChainOptions,
 } from "./types.js";
 
 // v2 validation constants
@@ -2446,6 +2452,30 @@ export class MongoDBMemoryManager implements MemorySearchManager {
       maxEntities: params.maxEntities,
       maxEpisodes: params.maxEpisodes,
       activityWindowMs: params.activityWindowMs,
+    });
+  }
+
+  async traceReasoningChain(params: {
+    factId: string;
+    collection: string;
+    options?: ReasoningChainOptions;
+  }): Promise<ReasoningChain> {
+    return traceReasoningChain({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      factId: params.factId,
+      collection: params.collection,
+      options: params.options,
+    });
+  }
+
+  async scanNovelty(params?: NoveltyOptions): Promise<NoveltyReport> {
+    return scanNovelty({
+      db: this.db,
+      prefix: this.prefix,
+      agentId: this.agentId,
+      options: params,
     });
   }
 

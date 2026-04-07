@@ -4,6 +4,8 @@ import {
   createMemoryContextBundleTool,
   createMemoryDiscoveryProjectionTool,
   createMemoryGetTool,
+  createMemoryNoveltyScanTool,
+  createMemoryReasoningChainTool,
   createMemorySearchTool,
   createMemoryWriteTool,
 } from "../../agents/tools/memory-tool.js";
@@ -15,6 +17,8 @@ export function createRuntimeTools() {
     createMemoryContextBundleTool,
     createMemoryDiscoveryProjectionTool,
     createMemoryGetTool,
+    createMemoryNoveltyScanTool,
+    createMemoryReasoningChainTool,
     createMemorySearchTool,
     createMemoryWriteTool,
     registerMemoryCli,

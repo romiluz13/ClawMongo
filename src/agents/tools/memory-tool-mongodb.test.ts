@@ -15,6 +15,8 @@ import {
   createMemoryActiveSlateTool,
   createMemoryContextBundleTool,
   createMemoryDiscoveryProjectionTool,
+  createMemoryNoveltyScanTool,
+  createMemoryReasoningChainTool,
   createMemorySearchTool,
   createMemoryWriteTool,
 } from "./memory-tool.js";
@@ -387,5 +389,43 @@ describe("mongodb memory specialty tools", () => {
       timeRange: { preset: "last-24h" },
     });
     expect(parsed.metadata.tokenBudget).toBe(250);
+  });
+});
+
+describe("createMemoryReasoningChainTool", () => {
+  it("returns tool when mongodb backend is active", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp" } },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+    } as OpenClawConfig;
+
+    const tool = createMemoryReasoningChainTool({ config: cfg });
+    expect(tool).not.toBeNull();
+    expect(tool!.name).toBe("memory_reasoning_chain");
+    expect(tool!.description).toContain("provenance");
+  });
+
+  it("returns null when config is undefined", () => {
+    const tool = createMemoryReasoningChainTool({});
+    expect(tool).toBeNull();
+  });
+});
+
+describe("createMemoryNoveltyScanTool", () => {
+  it("returns tool when mongodb backend is active", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp" } },
+      memory: { backend: "mongodb", mongodb: { uri: "mongodb://localhost" } },
+    } as OpenClawConfig;
+
+    const tool = createMemoryNoveltyScanTool({ config: cfg });
+    expect(tool).not.toBeNull();
+    expect(tool!.name).toBe("memory_novelty_scan");
+    expect(tool!.description).toContain("novel");
+  });
+
+  it("returns null when config is undefined", () => {
+    const tool = createMemoryNoveltyScanTool({});
+    expect(tool).toBeNull();
   });
 });

@@ -481,6 +481,16 @@ export const TOOL_DISPLAY_CONFIG: ToolDisplayConfig = {
       title: "Context Bundle",
       detailKeys: ["query", "scope", "scopeRef", "tokenBudget"],
     },
+    memory_reasoning_chain: {
+      emoji: "🔗",
+      title: "Reasoning Chain",
+      detailKeys: ["fact_id", "collection", "max_depth"],
+    },
+    memory_novelty_scan: {
+      emoji: "✨",
+      title: "Novelty Scan",
+      detailKeys: ["limit", "scope"],
+    },
     memory_get: {
       emoji: "📓",
       title: "Memory Get",
