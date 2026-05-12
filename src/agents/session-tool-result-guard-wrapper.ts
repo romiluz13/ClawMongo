@@ -15,8 +15,6 @@ type GuardedSessionManager = SessionManager & {
   flushPendingToolResults?: () => void;
   /** Clear pending tool calls without persisting synthetic tool results. Idempotent. */
   clearPendingToolResults?: () => void;
-  /** Wait for any best-effort post-persist memory writes to complete. */
-  flushPendingPersistedWrites?: () => Promise<void>;
 };
 
 function redactTranscriptText(value: string, cfg?: OpenClawConfig): string {
@@ -91,9 +89,7 @@ function redactTranscriptMessage(message: AgentMessage, cfg?: OpenClawConfig): A
 export function guardSessionManager(
   sessionManager: SessionManager,
   opts?: {
-    cfg?: OpenClawConfig;
     agentId?: string;
-    sessionId?: string;
     sessionKey?: string;
     config?: OpenClawConfig;
     contextWindowTokens?: number;
@@ -139,8 +135,10 @@ export function guardSessionManager(
   };
 
   const transform = hookRunner?.hasHooks("tool_result_persist")
-    ? // oxlint-disable-next-line typescript/no-explicit-any
-      (message: any, meta: { toolCallId?: string; toolName?: string; isSynthetic?: boolean }) => {
+    ? (
+        message: AgentMessage,
+        meta: { toolCallId?: string; toolName?: string; isSynthetic?: boolean },
+      ) => {
         const out = hookRunner.runToolResultPersist(
           {
             toolName: meta.toolName,
@@ -158,8 +156,6 @@ export function guardSessionManager(
         return out?.message ?? message;
       }
     : undefined;
-  const memoryWriteCfg = opts?.cfg;
-  const memoryWriteAgentId = opts?.agentId;
 
   const guard = installSessionToolResultGuard(sessionManager, {
     sessionKey: opts?.sessionKey,
@@ -183,7 +179,5 @@ export function guardSessionManager(
   });
   (sessionManager as GuardedSessionManager).flushPendingToolResults = guard.flushPendingToolResults;
   (sessionManager as GuardedSessionManager).clearPendingToolResults = guard.clearPendingToolResults;
-  (sessionManager as GuardedSessionManager).flushPendingPersistedWrites =
-    guard.flushPendingPersistedWrites;
   return sessionManager as GuardedSessionManager;
 }

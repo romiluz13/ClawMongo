@@ -23,7 +23,7 @@ describe("Phase 5: Parallel search execution", () => {
     // timing (more reliable in CI). See the integration test below.
 
     // Import the source to verify the pattern exists
-    const managerSource = await import("fs").then((fs) =>
+    const managerSource = await import("node:fs").then((fs) =>
       fs.promises.readFile(
         new URL("./mongodb-manager.ts", import.meta.url).pathname.replace(
           "/mongodb-manager.ts",

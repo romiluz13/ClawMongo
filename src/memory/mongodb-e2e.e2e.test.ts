@@ -548,7 +548,7 @@ describe("E2E: $text Search fallback", () => {
           },
         },
       )
-      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
@@ -571,7 +571,7 @@ describe("E2E: $text Search fallback", () => {
           },
         },
       )
-      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();
@@ -593,7 +593,7 @@ describe("E2E: $text Search fallback", () => {
           },
         },
       )
-      // eslint-disable-next-line unicorn/no-array-sort -- MongoDB cursor sort (not Array.sort)
+      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
       .sort({ score: { $meta: "textScore" } })
       .limit(5)
       .toArray();

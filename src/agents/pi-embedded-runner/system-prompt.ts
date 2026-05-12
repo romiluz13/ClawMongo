@@ -74,7 +74,6 @@ export function buildEmbeddedSystemPrompt(params: {
   bootstrapTruncationNotice?: string;
   includeMemorySection?: boolean;
   memoryCitationsMode?: MemoryCitationsMode;
-  memoryBackend?: string;
   promptContribution?: ProviderSystemPromptContribution;
 }): string {
   return buildConfiguredAgentSystemPrompt({
@@ -115,7 +114,6 @@ export function buildEmbeddedSystemPrompt(params: {
     bootstrapTruncationNotice: params.bootstrapTruncationNotice,
     includeMemorySection: params.includeMemorySection,
     memoryCitationsMode: params.memoryCitationsMode,
-    memoryBackend: params.memoryBackend,
     promptContribution: params.promptContribution,
   });
 }

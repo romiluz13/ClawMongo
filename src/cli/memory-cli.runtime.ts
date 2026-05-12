@@ -3,7 +3,8 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { loadConfig } from "../config/config.js";
+import { getRuntimeConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveStateDir } from "../config/paths.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { setVerbose } from "../globals.js";
@@ -38,13 +39,13 @@ type MemorySourceScan = {
 };
 
 type LoadedMemoryCommandConfig = {
-  config: ReturnType<typeof loadConfig>;
+  config: OpenClawConfig;
   diagnostics: string[];
 };
 
 async function loadMemoryCommandConfig(commandName: string): Promise<LoadedMemoryCommandConfig> {
   const { resolvedConfig, diagnostics } = await resolveCommandSecretRefsViaGateway({
-    config: loadConfig(),
+    config: getRuntimeConfig(),
     commandName,
     targetIds: getMemoryCommandSecretTargetIds(),
   });
@@ -87,7 +88,7 @@ function formatSourceLabel(source: string, workspaceDir: string, agentId: string
   return source;
 }
 
-function resolveAgent(cfg: ReturnType<typeof loadConfig>, agent?: string) {
+function resolveAgent(cfg: OpenClawConfig, agent?: string) {
   const trimmed = agent?.trim();
   if (trimmed) {
     return trimmed;
@@ -95,14 +96,14 @@ function resolveAgent(cfg: ReturnType<typeof loadConfig>, agent?: string) {
   return resolveDefaultAgentId(cfg);
 }
 
-function resolveAgentIds(cfg: ReturnType<typeof loadConfig>, agent?: string): string[] {
+function resolveAgentIds(cfg: OpenClawConfig, agent?: string): string[] {
   const trimmed = agent?.trim();
   if (trimmed) {
     return [trimmed];
   }
   const list = cfg.agents?.list ?? [];
   if (list.length > 0) {
-    return list.map((entry) => entry.id).filter(Boolean);
+    return list.map((entry: { id: string }) => entry.id).filter(Boolean);
   }
   return [resolveDefaultAgentId(cfg)];
 }
@@ -112,7 +113,7 @@ function formatExtraPaths(workspaceDir: string, extraPaths: string[]): string[] 
 }
 
 async function withMemoryManagerForAgent(params: {
-  cfg: ReturnType<typeof loadConfig>;
+  cfg: OpenClawConfig;
   agentId: string;
   purpose?: MemoryManagerPurpose;
   run: (manager: MemoryManager) => Promise<void>;

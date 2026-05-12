@@ -40,13 +40,13 @@ The MongoDB memory backend now exposes specialized runtime tools instead of rout
 
 Most agent memory systems require you to manage an embedding pipeline: choose an embedding model, run it in your application code, handle batching, retries, model version upgrades, and dimension mismatches. This is an entire infrastructure category that has nothing to do with building an AI assistant.
 
-With mongot's `autoEmbed`, ClawMongo eliminates the embedding pipeline entirely. mongot reads the `text` field from your documents, calls the Voyage AI API to generate embeddings at index time, and does the same at query time. Your application code never touches embeddings. When Voyage releases a better model, you update the index definition -- not your application.
+With MongoDB Vector Search `autoEmbed`, ClawMongo eliminates the embedding pipeline entirely. MongoDB reads the `text` field from your documents, calls the configured embedding provider to generate embeddings at index time, and does the same at query time. Your application code never touches embeddings. When a better supported model is available, you update the index definition -- not your application.
 
 ### How It Works
 
-mongot delegates to the Voyage AI API using the `autoEmbed` field type in vector search index definitions. At index time, mongot reads the text field from each document and sends it to `voyage-4-large` for embedding. At query time, `$vectorSearch` sends the query text to mongot, which embeds it and runs approximate nearest neighbor (ANN) search.
+MongoDB delegates embedding generation using the `autoEmbed` field type in vector search index definitions. At index time, MongoDB reads the text field from each document and sends it to the configured autoEmbed model for embedding. At query time, `$vectorSearch` sends the query text to MongoDB Search, which embeds it and runs approximate nearest neighbor (ANN) search. `atlas-local-preview` defaults to `voyage-4-large`; `atlas-cloud` defaults to `voyage-3.5` unless `memory.mongodb.autoEmbedModel` is configured.
 
-Configuration: set `memory.mongodb.embeddingMode = "automated"` in ClawMongo config. Set the `VOYAGE_API_KEY` environment variable on the `mongodb-atlas-local:preview` container (or pass it to `start-preview.sh`).
+Configuration: set `memory.mongodb.embeddingMode = "automated"` and choose `memory.mongodb.deploymentProfile = "atlas-local-preview"` or `"atlas-cloud"` in ClawMongo config. For local preview, set the `VOYAGE_API_KEY` environment variable on the `mongodb-atlas-local:preview` container (or pass it to `start-preview.sh`). For Atlas cloud, configure the embedding/search credentials required by the Atlas cluster.
 
 ### Configuration Example
 
@@ -60,7 +60,7 @@ Configuration: set `memory.mongodb.embeddingMode = "automated"` in ClawMongo con
         type: "autoEmbed",
         modality: "text",
         path: "text",
-        model: "voyage-4-large", // 1024 dimensions
+        model: "voyage-3.5", // Atlas cloud default; local preview may use voyage-4-large
       },
       { type: "filter", path: "source" },
       { type: "filter", path: "agentId" },

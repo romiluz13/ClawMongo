@@ -46,72 +46,6 @@ import type { PromptMode, SilentReplyPromptMode } from "./system-prompt.types.js
  */
 type OwnerIdDisplay = "raw" | "hash";
 
-/**
- * Builds the MongoDB bridge section that gives MongoDB-specific instructions
- * the "last word" after AGENTS.md/SOUL.md context files.
- * Renders full bridge when memoryBackend === "mongodb" and !isMinimal.
- * Renders condensed bridge (memory_search guidance only) in minimal mode.
- */
-function buildMongoDBBridgeSection(params: {
-  memoryBackend?: string;
-  isMinimal: boolean;
-  availableTools?: ReadonlySet<string>;
-}): string[] {
-  if (params.memoryBackend !== "mongodb") {
-    return [];
-  }
-  if (params.isMinimal) {
-    const lines = [
-      "## MongoDB Memory",
-      "MongoDB memory is active. Use runtime memory tools before answering from background knowledge.",
-    ];
-    if (!params.availableTools || params.availableTools.has("memory_active_slate")) {
-      lines.push("- Current state, blockers, active constraints -> memory_active_slate");
-    }
-    if (!params.availableTools || params.availableTools.has("memory_discovery_projection")) {
-      lines.push("- Changes, contradictions, compact briefs -> memory_discovery_projection");
-    }
-    if (!params.availableTools || params.availableTools.has("memory_context_bundle")) {
-      lines.push("- Handoffs or prompt-ready compact context -> memory_context_bundle");
-    }
-    lines.push("- General prior recall -> memory_search", "");
-    return lines;
-  }
-  const tools = params.availableTools;
-  const lines: string[] = [
-    "## MongoDB Memory Integration",
-    "The MongoDB memory backend is active. Runtime knowledge is Mongo-canonical while heart/bootstrap files remain Markdown guidance:",
-    "- To recall: always call memory_search FIRST (not file reads)",
-    "- For current situation, active constraints, crises, blockers, or major ongoing context: treat active runtime memory as first-class recall, not optional background context",
-  ];
-  if (!tools || tools.has("memory_active_slate")) {
-    lines.push("- For current state, blockers, or what matters now: use memory_active_slate");
-  }
-  if (!tools || tools.has("memory_discovery_projection")) {
-    lines.push(
-      "- For changes, contradictions, topic briefs, or entity briefs: use memory_discovery_projection",
-    );
-  }
-  if (!tools || tools.has("memory_context_bundle")) {
-    lines.push("- For handoff briefs or prompt-ready packed context: use memory_context_bundle");
-  }
-  if (!tools || tools.has("memory_write")) {
-    lines.push("- To store structured data: use memory_write (not file writes)");
-  }
-  if (!tools || tools.has("kb_search")) {
-    lines.push("- To find reference docs: use kb_search");
-  }
-  lines.push("- Do not write runtime memory to workspace files");
-  lines.push(
-    "- Automatic extraction: every event is analyzed for structured facts (preferences, decisions, identities, project context, critical context), entities (named references detected by pattern matching -- people, projects, tools, and other capitalized terms), and procedures (step-by-step workflows). This happens automatically -- you do not need to explicitly store routine observations.",
-  );
-  lines.push(
-    "- Use memory_write for HIGH-IMPORTANCE facts the agent should never forget, or for corrections/updates to previously stored facts. Automatic extraction handles routine observations.",
-  );
-  lines.push("");
-  return lines;
-}
-
 const CONTEXT_FILE_ORDER = new Map<string, number>([
   ["agents.md", 10],
   ["soul.md", 20],
@@ -314,113 +248,14 @@ function buildMemorySection(params: {
   includeMemorySection?: boolean;
   availableTools: Set<string>;
   citationsMode?: MemoryCitationsMode;
-  memoryBackend?: string;
 }) {
   if (params.isMinimal || params.includeMemorySection === false) {
     return [];
   }
-  if (!params.availableTools.has("memory_search") && !params.availableTools.has("memory_get")) {
-    return [];
-  }
-  const isMongoDBBackend = params.memoryBackend === "mongodb";
-  const lines = ["## Memory Recall"];
-  if (isMongoDBBackend) {
-    const intro = params.availableTools.has("kb_search")
-      ? "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory. If the target is imported documentation or explicit reference material, use kb_search."
-      : "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search to recall facts from MongoDB-backed runtime memory.";
-    lines.push(intro);
-    lines.push(
-      "If the user asks about their current situation, active constraints, ongoing blockers, crisis context, location-sensitive context, or what matters right now, check active runtime memory before answering from generic background knowledge.",
-    );
-    lines.push("");
-    lines.push("### When to use each tool");
-    lines.push(
-      "- **memory_search** — Your primary runtime recall tool. Searches across all populated MongoDB-backed retrieval lanes (conversation history, structured facts, entities/graph, episodes, procedures, knowledge base). Coverage varies by agent -- the planner automatically skips empty lanes.",
-    );
-    if (params.availableTools.has("memory_active_slate")) {
-      lines.push(
-        "- **memory_active_slate** — Use when the question is about current state, blockers, active work, urgent constraints, or what matters now.",
-      );
-    }
-    if (params.availableTools.has("memory_discovery_projection")) {
-      lines.push(
-        "- **memory_discovery_projection** — Use for what changed, contradiction checks, and compact topic/entity briefs built from runtime evidence.",
-      );
-    }
-    if (params.availableTools.has("memory_context_bundle")) {
-      lines.push(
-        "- **memory_context_bundle** — Use for handoffs, prompt-ready compact memory packets, or when you need an evidence-backed brief under a token budget.",
-      );
-    }
-    if (params.availableTools.has("kb_search")) {
-      lines.push(
-        "- **kb_search** — Dedicated knowledge base search. Use when looking for imported reference material, documentation, FAQs, or architecture specs.",
-      );
-    }
-    if (params.availableTools.has("memory_write")) {
-      lines.push(
-        [
-          "- **memory_write** — Store high-importance structured observations to persistent memory. Routine facts are auto-extracted from events, so use this for:",
-          '  - **decision**: choices made that should persist (e.g., "We chose TypeScript for the backend")',
-          '  - **preference**: user likes/dislikes worth remembering (e.g., "User prefers concise responses")',
-          '  - **fact**: important information (e.g., "API rate limit is 100 req/min")',
-          '  - **person**: info about people (e.g., "Alice is the project manager")',
-          '  - **todo**: action items (e.g., "Migrate auth to OAuth2 by March")',
-          '  - **project**: project context (e.g., "Building ClawMongo with MongoDB 8.2")',
-          "  - corrections or updates to auto-extracted facts",
-          "  Type+key is the dedup key — writing the same type+key updates the existing record.",
-          "  Use heart/bootstrap Markdown for guidance only; do not store runtime knowledge there.",
-        ].join("\n"),
-      );
-    }
-    // Decision tree for memory routing
-    lines.push("");
-    lines.push("### Memory Routing Guide");
-    lines.push("When storing information:");
-    if (params.availableTools.has("memory_write")) {
-      lines.push("- Structured data (decisions, preferences, facts) -> memory_write");
-    }
-    lines.push("- Runtime knowledge -> MongoDB-backed sources only");
-    lines.push("");
-    lines.push("When searching:");
-    if (params.availableTools.has("kb_search")) {
-      lines.push("- Reference docs, imported files, architecture specs -> kb_search");
-    }
-    lines.push("- Conversation/history recall -> memory_search");
-    lines.push('- Broad "what do I know about X?" -> memory_search');
-    if (params.availableTools.has("memory_active_slate")) {
-      lines.push("- Current-state, blockers, or situational urgency -> memory_active_slate");
-    } else {
-      lines.push(
-        "- Current-state or situational questions -> memory_search first, with extra attention to active high-priority runtime memory",
-      );
-    }
-    if (params.availableTools.has("memory_discovery_projection")) {
-      lines.push(
-        "- Changes, contradictions, trend shifts, topic/entity brief -> memory_discovery_projection",
-      );
-    }
-    if (params.availableTools.has("memory_context_bundle")) {
-      lines.push(
-        "- Handoff brief, prompt-ready compact context, or token-bounded summary -> memory_context_bundle",
-      );
-    }
-  } else {
-    lines.push(
-      "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search against the configured runtime memory backend; then use memory_get only for the specific Mongo-backed locator you need. If low confidence after search, say you checked.",
-    );
-  }
-  if (params.citationsMode === "off") {
-    lines.push(
-      "Citations are disabled: do not mention file paths or line numbers in replies unless the user explicitly asks.",
-    );
-  } else {
-    lines.push(
-      "Citations: include Source: <path#line> when it helps the user verify memory snippets.",
-    );
-  }
-  lines.push("");
-  return lines;
+  return buildMemoryPromptSection({
+    availableTools: params.availableTools,
+    citationsMode: params.citationsMode,
+  });
 }
 
 export function buildAgentBootstrapSystemContext(params: {
@@ -856,8 +691,6 @@ export function buildAgentSystemPrompt(params: {
   };
   includeMemorySection?: boolean;
   memoryCitationsMode?: MemoryCitationsMode;
-  /** Memory backend type, used to customize system prompt for MongoDB. */
-  memoryBackend?: string;
   promptContribution?: ProviderSystemPromptContribution;
 }) {
   const acpEnabled = params.acpEnabled === true;
@@ -1064,7 +897,6 @@ export function buildAgentSystemPrompt(params: {
     includeMemorySection: params.includeMemorySection,
     availableTools,
     citationsMode: params.memoryCitationsMode,
-    memoryBackend: params.memoryBackend,
   });
   const docsSection = buildDocsSection({
     docsPath: params.docsPath,

@@ -957,9 +957,7 @@ async function compactEmbeddedPiSessionDirectOnce(
       await prewarmSessionFile(params.sessionFile);
       const transcriptPolicy = runtimePlan.transcript.resolvePolicy(runtimePlanModelContext);
       const sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
-        cfg: params.config,
         agentId: sessionAgentId,
-        sessionId: params.sessionId,
         sessionKey: params.sessionKey,
         config: params.config,
         contextWindowTokens: ctxInfo.tokens,

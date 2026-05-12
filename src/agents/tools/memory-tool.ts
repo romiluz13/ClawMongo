@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { MemoryCitationsMode, MemoryScope } from "../../config/types.memory.js";
 import type {
@@ -550,7 +550,7 @@ export function createMemorySearchTool(options: {
     parameters: MemorySearchSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const request = readMemorySearchRequest(params, options.agentSessionKey);
         const { resolveMemoryBackendConfig } = await loadMemoryToolRuntime();
         const memory = await getMemoryManagerContext({ cfg, agentId });
@@ -611,7 +611,7 @@ export function createMemoryGetTool(options: {
     parameters: MemoryGetSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const relPath = readStringParam(params, "path", { required: true });
         const from = readNumberParam(params, "from", { integer: true });
         const lines = readNumberParam(params, "lines", { integer: true });
@@ -653,7 +653,7 @@ export function createMemoryActiveSlateTool(options: {
     parameters: MemoryActiveSlateSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const request = {
           scope: readMemoryScopeParam(params, "scope"),
           scopeRef: readStringParam(params, "scopeRef"),
@@ -693,7 +693,7 @@ export function createMemoryDiscoveryProjectionTool(options: {
     parameters: MemoryDiscoveryProjectionSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const request = readMemoryDiscoveryRequest(params);
         const memory = await getMemoryManagerContext({ cfg, agentId });
         if ("error" in memory) {
@@ -729,7 +729,7 @@ export function createMemoryContextBundleTool(options: {
     parameters: MemoryContextBundleSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const request = readMemoryContextBundleRequest(params);
         const memory = await getMemoryManagerContext({ cfg, agentId });
         if ("error" in memory) {
@@ -765,15 +765,12 @@ export function createKBSearchTool(options: {
     parameters: KBSearchSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const query = readStringParam(params, "query", { required: true });
         const maxResults = readNumberParam(params, "maxResults") ?? 5;
         const category = readStringParam(params, "category");
         const source = readStringParam(params, "source");
-        const tags =
-          params && typeof params === "object" && "tags" in params
-            ? ((params as Record<string, unknown>).tags as string[] | undefined)
-            : undefined;
+        const tags = "tags" in params ? (params.tags as string[] | undefined) : undefined;
 
         const memory = await getMemoryManagerContext({ cfg, agentId });
         if ("error" in memory) {
@@ -827,16 +824,13 @@ export function createMemoryWriteTool(options: {
     parameters: MemoryWriteSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const type = readStringParam(params, "type", { required: true });
         const key = readStringParam(params, "key", { required: true });
         const value = readStringParam(params, "value", { required: true });
         const context = readStringParam(params, "context");
         const confidence = readNumberParam(params, "confidence");
-        const tags =
-          params && typeof params === "object" && "tags" in params
-            ? ((params as Record<string, unknown>).tags as string[] | undefined)
-            : undefined;
+        const tags = "tags" in params ? (params.tags as string[] | undefined) : undefined;
         const { hasWriteCapability } = await loadMemoryToolRuntime();
         const memory = await getMemoryManagerContext({ cfg, agentId });
         if ("error" in memory) {
@@ -881,7 +875,7 @@ export function createMemoryReasoningChainTool(options: {
     parameters: MemoryReasoningChainSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const factId = readStringParam(params, "factId", { required: true });
         const collection = readStringParam(params, "collection", { required: true });
         const maxDepth = readNumberParam(params, "maxDepth", { integer: true });
@@ -925,7 +919,7 @@ export function createMemoryNoveltyScanTool(options: {
     parameters: MemoryNoveltyScanSchema,
     execute:
       ({ cfg, agentId }) =>
-      async (_toolCallId, params) => {
+      async (_toolCallId, params: Record<string, unknown>) => {
         const limit = readNumberParam(params, "limit", { integer: true });
         const scope = readMemoryScopeParam(params, "scope");
         const memory = await getMemoryManagerContext({ cfg, agentId });

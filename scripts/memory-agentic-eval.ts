@@ -522,13 +522,26 @@ function summarize(response: MemorySearchResponse): Summary {
     pathsExecuted: response.metadata.pathsExecuted,
     queriesTried: response.metadata.queriesTried,
     noDirectEvidenceReason: response.metadata.noDirectEvidenceReason,
-    topResults: response.results.slice(0, 5).map((result) => ({
-      path: result.path,
-      score: result.score,
-      source: result.source,
-      ...(typeof result.signals?.state === "string" ? { state: result.signals.state } : {}),
-      ...(typeof result.trust?.score === "number" ? { trust: result.trust.score } : {}),
-    })),
+    topResults: response.results.slice(0, 5).map((result) => {
+      const entry: {
+        path: string;
+        score: number;
+        source: string;
+        state?: string;
+        trust?: number;
+      } = {
+        path: result.path,
+        score: result.score,
+        source: result.source,
+      };
+      if (typeof result.signals?.state === "string") {
+        entry.state = result.signals.state;
+      }
+      if (typeof result.trust?.score === "number") {
+        entry.trust = result.trust.score;
+      }
+      return entry;
+    }),
   };
 }
 

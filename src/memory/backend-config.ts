@@ -188,8 +188,12 @@ function resolveAutoEmbedModel(params: {
     typeof params.rawModel !== "string" ||
     !SUPPORTED_AUTO_EMBED_MODELS.has(params.rawModel as MemoryMongoDBAutoEmbedModel)
   ) {
+    const rendered =
+      typeof params.rawModel === "string"
+        ? params.rawModel
+        : (JSON.stringify(params.rawModel) ?? typeof params.rawModel);
     throw new Error(
-      `Unsupported memory.mongodb.autoEmbedModel "${String(params.rawModel)}". ` +
+      `Unsupported memory.mongodb.autoEmbedModel "${rendered}". ` +
         `Supported values: ${Array.from(SUPPORTED_AUTO_EMBED_MODELS).join(", ")}.`,
     );
   }
@@ -205,7 +209,7 @@ export function resolveMemoryBackendConfig(params: {
 
   if (backend !== "mongodb") {
     throw new Error(
-      `Unsupported memory.backend "${String(backend)}". ClawMongo supports only the MongoDB memory backend.`,
+      `Unsupported memory.backend "${backend}". ClawMongo supports only the MongoDB memory backend.`,
     );
   }
 

@@ -6,15 +6,15 @@ type PackageManifest = {
   dependencies?: Record<string, string>;
 };
 
-function readJson<T>(relativePath: string): T {
+function readJson(relativePath: string): PackageManifest {
   const absolutePath = path.resolve(process.cwd(), relativePath);
-  return JSON.parse(fs.readFileSync(absolutePath, "utf8")) as T;
+  return JSON.parse(fs.readFileSync(absolutePath, "utf8")) as PackageManifest;
 }
 
 describe("bundled plugin runtime dependencies", () => {
   function expectPluginOwnsRuntimeDep(pluginPath: string, dependencyName: string) {
-    const rootManifest = readJson<PackageManifest>("package.json");
-    const pluginManifest = readJson<PackageManifest>(pluginPath);
+    const rootManifest = readJson("package.json");
+    const pluginManifest = readJson(pluginPath);
     const pluginSpec = pluginManifest.dependencies?.[dependencyName];
     const rootSpec = rootManifest.dependencies?.[dependencyName];
 

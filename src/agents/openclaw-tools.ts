@@ -373,6 +373,15 @@ export function createOpenClawTools(
       agentId: sessionAgentId,
       agentAccountId: options?.agentAccountId,
     }),
+    ...collectPresentOpenClawTools([
+      createMemorySearchTool({ config: resolvedConfig, agentSessionKey: options?.agentSessionKey }),
+      createMemoryGetTool({ config: resolvedConfig, agentSessionKey: options?.agentSessionKey }),
+      createKBSearchTool({ config: resolvedConfig }),
+      createMemoryWriteTool({ config: resolvedConfig }),
+      createMemoryActiveSlateTool({ config: resolvedConfig }),
+      createMemoryDiscoveryProjectionTool({ config: resolvedConfig }),
+      createMemoryContextBundleTool({ config: resolvedConfig }),
+    ]),
     ...collectPresentOpenClawTools([imageGenerateTool, musicGenerateTool, videoGenerateTool]),
     ...(embedded
       ? []

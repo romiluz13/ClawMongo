@@ -869,7 +869,9 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
       }
     }
     if (status.fallback) {
-      lines.push(`${label("Fallback")} ${warn(status.fallback.from)}`);
+      const fallbackLabel =
+        typeof status.fallback === "string" ? status.fallback : status.fallback.from;
+      lines.push(`${label("Fallback")} ${warn(fallbackLabel)}`);
     }
     if (status.vector) {
       const formatVectorState = (available: boolean | undefined) =>
@@ -985,7 +987,7 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
         lines.push(`${label("Dream archive")} ${info(shortenHomePath(dreamingRepair.archiveDir))}`);
       }
     }
-    if (status.fallback?.reason) {
+    if (typeof status.fallback === "object" && status.fallback.reason) {
       lines.push(muted(status.fallback.reason));
     }
     if (indexError) {
@@ -1063,7 +1065,9 @@ export async function runMemoryIndex(opts: MemoryCommandOptions) {
               extraPaths.length ? `${label("Extra paths")} ${info(extraPaths.join(", "))}` : null,
             ].filter(Boolean) as string[];
             if (status.fallback) {
-              lines.push(`${label("Fallback")} ${warn(status.fallback.from)}`);
+              const fallbackLabel =
+                typeof status.fallback === "string" ? status.fallback : status.fallback.from;
+              lines.push(`${label("Fallback")} ${warn(fallbackLabel)}`);
             }
             defaultRuntime.log(lines.join("\n"));
             defaultRuntime.log("");

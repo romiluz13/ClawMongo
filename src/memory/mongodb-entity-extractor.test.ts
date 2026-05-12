@@ -254,7 +254,7 @@ describe("mongodb-entity-extractor", () => {
 
     it("extracts natural dates (Month Day, Year) as concept entities", async () => {
       const result = await extractor.extract("met with Alice on May 7, 2023 for lunch");
-      const dateEntities = result.filter((e) => e.type === "concept" && /2023/.test(e.name));
+      const dateEntities = result.filter((e) => e.type === "concept" && e.name.includes("2023"));
       expect(dateEntities.length).toBeGreaterThanOrEqual(1);
     });
 

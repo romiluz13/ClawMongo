@@ -399,6 +399,7 @@ export function resolveTimeRangePreset(
     case "this-month":
       return { start: startOfUtcMonth(now), end };
   }
+  throw new Error(`unsupported time range preset: ${String(preset)}`);
 }
 
 function extractTimeConstraint(query: string): RetrievalConstraints["timeRange"] | undefined {

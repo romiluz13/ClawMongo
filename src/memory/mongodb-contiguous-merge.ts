@@ -57,8 +57,7 @@ export function mergeContiguousChunks(results: MemorySearchResult[]): MemorySear
 
   for (const [, group] of bySession) {
     // Sort by timestamp ascending
-    // oxlint-disable-next-line unicorn/no-array-sort -- intentional in-place sort on copy
-    const sorted = [...group].sort((a, b) => {
+    const sorted = group.toSorted((a, b) => {
       const ta = a.timestamp?.getTime() ?? 0;
       const tb = b.timestamp?.getTime() ?? 0;
       return ta - tb;

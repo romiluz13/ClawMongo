@@ -14,7 +14,7 @@ import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { formatContextLimitTruncationNotice } from "./pi-embedded-runner/context-truncation-notice.js";
 import {
-  HARD_MAX_TOOL_RESULT_CHARS,
+  DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
   truncateToolResultMessage,
 } from "./pi-embedded-runner/tool-result-truncation.js";
 import {
@@ -283,7 +283,7 @@ export { getRawSessionAppendMessage };
 export function installSessionToolResultGuard(
   sessionManager: SessionManager,
   opts?: {
-    /** Session key associated with this transcript stream, when available. */
+    /** Optional session key for transcript update broadcasts. */
     sessionKey?: string;
     /**
      * Optional transform applied to any message before persistence.
@@ -326,12 +326,10 @@ export function installSessionToolResultGuard(
   flushPendingToolResults: () => void;
   clearPendingToolResults: () => void;
   getPendingIds: () => string[];
-  flushPendingPersistedWrites: () => Promise<void>;
 } {
   const originalAppend = getRawSessionAppendMessage(sessionManager);
   setRawSessionAppendMessage(sessionManager, originalAppend);
   const pendingState = createPendingToolCallState();
-  const pendingPersistedWrites = new Set<Promise<void>>();
   const persistMessage = (message: AgentMessage) => {
     const transformer = opts?.transformMessageForPersistence;
     return transformer ? transformer(message) : message;
@@ -397,12 +395,6 @@ export function installSessionToolResultGuard(
 
   const clearPendingToolResults = () => {
     pendingState.clear();
-  };
-  const flushPendingPersistedWrites = async () => {
-    if (pendingPersistedWrites.size === 0) {
-      return;
-    }
-    await Promise.allSettled(Array.from(pendingPersistedWrites));
   };
 
   const guardedAppend = (message: AgentMessage) => {
@@ -520,6 +512,5 @@ export function installSessionToolResultGuard(
     flushPendingToolResults,
     clearPendingToolResults,
     getPendingIds: pendingState.getPendingIds,
-    flushPendingPersistedWrites,
   };
 }

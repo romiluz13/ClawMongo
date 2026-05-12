@@ -428,8 +428,8 @@ describe("ensureStandardIndexes", () => {
     // 2 relevance_regressions + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
     // 4 episodes (3 + 1 importance_access) + 1 ingest_runs + 1 projection_runs + 4 procedures +
     // 1 procedure_revisions + 4 query_cache + 2 telemetry + 3 mutations + 1 lane_coverage +
-    // 1 consolidation_runs
-    expect(count).toBe(70);
+    // 1 consolidation_runs + 1 KB wiki source index
+    expect(count).toBe(71);
     expect(chunks.createIndex).toHaveBeenCalledTimes(4);
     expect(cache.createIndex).toHaveBeenCalledTimes(2);
     expect(kb.createIndex).toHaveBeenCalledTimes(5);
@@ -462,7 +462,7 @@ describe("ensureStandardIndexes", () => {
     const projectionRuns = db.collection("test_projection_runs") as unknown as {
       createIndex: ReturnType<typeof vi.fn>;
     };
-    expect(events.createIndex).toHaveBeenCalledTimes(7);
+    expect(events.createIndex).toHaveBeenCalledTimes(8);
     expect(entities.createIndex).toHaveBeenCalledTimes(3);
     expect(relations.createIndex).toHaveBeenCalledTimes(4);
     expect(entityLinks.createIndex).toHaveBeenCalledTimes(2);
@@ -630,7 +630,7 @@ describe("ensureStandardIndexes", () => {
     // 27 (v1 base) + 1 kb wiki + 7 events (6 + 1 agent_session_ts) + 3 entities + 4 relations + 2 entity links +
     // 4 episodes (3 + 1 importance_access) + 1 ingest_runs + 1 projection_runs +
     // 1 structured scope + 1 structured revisions + 1 consolidation_runs
-    expect(count).toBe(70);
+    expect(count).toBe(71);
   });
 
   it("creates relevance TTL indexes when relevanceRetentionDays is set", async () => {
@@ -1530,6 +1530,6 @@ describe("ensureStandardIndexes total count with query_cache and telemetry", () 
   it("returns updated total index count including query_cache and telemetry indexes", async () => {
     const db = mockDb();
     const count = await ensureStandardIndexes(db, "test_");
-    expect(count).toBe(70);
+    expect(count).toBe(71);
   });
 });

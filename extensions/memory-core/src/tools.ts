@@ -324,7 +324,7 @@ export function createMemorySearchTool(options: {
                 : decorated;
             surfacedMemoryResults = memoryResults.map((result) => ({
               ...result,
-              corpus: result.source,
+              corpus: result.source as MemorySource,
             }));
             const sleepTimezone = resolveMemoryDeepDreamingConfig({
               pluginConfig: resolveMemoryCorePluginConfig(cfg),

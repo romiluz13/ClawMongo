@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenClaw ships with QMD (SQLite + Markdown files) as its default memory backend. ClawMongo replaces this with MongoDB Community + mongot + Voyage AI. This page compares the two approaches feature by feature to help you decide which is right for your workload.
+OpenClaw ships with QMD (SQLite + Markdown files) as its default memory backend. ClawMongo replaces this with MongoDB + MongoDB Search and Vector Search. This page compares the two approaches feature by feature to help you decide which is right for your workload.
 
 Both are valid choices. The default memory is simpler to set up. ClawMongo is more capable at scale. This is not a judgment -- it is a tradeoff.
 
@@ -12,8 +12,8 @@ Both are valid choices. The default memory is simpler to set up. ClawMongo is mo
 
 | Capability                 | OpenClaw Default (QMD/SQLite)                              | ClawMongo (MongoDB)                                                                  |
 | -------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| **Storage backend**        | SQLite file + Markdown files                               | MongoDB Community (replica set)                                                      |
-| **Vector search**          | sqlite-vec extension or LanceDB                            | mongot + Voyage AI autoEmbed (`voyage-4-large`)                                      |
+| **Storage backend**        | SQLite file + Markdown files                               | MongoDB Atlas Local Preview or MongoDB Atlas cloud                                   |
+| **Vector search**          | sqlite-vec extension or LanceDB                            | MongoDB Vector Search with autoEmbed                                                 |
 | **Embedding management**   | Application-side (OpenAI, Gemini, Voyage, Mistral, Ollama) | Automated via mongot (zero application-side code)                                    |
 | **Full-text search**       | SQLite FTS5 / BM25                                         | mongot text indexes (Lucene standard analyzer)                                       |
 | **Hybrid search**          | BM25 + vector with MMR diversity                           | `$rankFusion` / `$scoreFusion` + manual RRF fallback                                 |
@@ -91,11 +91,11 @@ ClawMongo includes a built-in migration function (`backfillEventsFromChunks`) th
 Steps:
 
 1. Install ClawMongo: `npm install -g @romiluz/clawmongo@latest`
-2. Configure MongoDB connection: `clawmongo config set memory.mongodb.uri "mongodb://..."`
+2. Configure MongoDB connection: `clawmongo config set memory.mongodb.uri "mongodb://..."` and set `memory.mongodb.deploymentProfile` to `atlas-local-preview` or `atlas-cloud`
 3. Run onboarding: `clawmongo onboard --install-daemon`
 4. The migration runs automatically on first startup when it detects existing chunk data without corresponding events.
 
-After migration, ClawMongo uses MongoDB as the sole memory backend. The original Markdown/SQLite files remain untouched as a backup but are no longer read by the runtime.
+After migration, ClawMongo uses MongoDB as the sole runtime memory backend. The original Markdown/SQLite files remain untouched as a backup but are no longer read by the runtime.
 
 ---
 

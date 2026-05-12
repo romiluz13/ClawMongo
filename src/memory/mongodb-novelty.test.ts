@@ -177,10 +177,11 @@ describe("mongodb-novelty", () => {
         }),
         aggregate: vi.fn().mockReturnValue({
           toArray: vi.fn().mockResolvedValue(
-            vectorSearchResults.map((r) => ({
-              ...allEvents.find((e) => e.eventId === r.eventId),
-              __vectorSearchScore: r.score,
-            })),
+            vectorSearchResults.map((r) =>
+              Object.assign({}, allEvents.find((e) => e.eventId === r.eventId), {
+                __vectorSearchScore: r.score,
+              }),
+            ),
           ),
         }),
       });

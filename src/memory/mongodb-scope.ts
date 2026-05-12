@@ -52,4 +52,5 @@ export function resolveScopeRef(params: ScopeRefParams): string {
     case "global":
       return "global";
   }
+  throw new Error(`unsupported memory scope: ${String(scope)}`);
 }

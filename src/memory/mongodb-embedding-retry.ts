@@ -65,7 +65,7 @@ export async function retryEmbedding(
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       if (attempt < maxAttempts) {
-        const delayMs = backoffBaseMs * Math.pow(2, attempt - 1);
+        const delayMs = backoffBaseMs * 2 ** (attempt - 1);
         log.warn(
           `embedding attempt ${attempt}/${maxAttempts} failed: ${lastError.message}. Retrying in ${delayMs}ms...`,
         );

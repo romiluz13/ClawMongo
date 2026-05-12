@@ -86,6 +86,7 @@ vi.mock("./mongodb-lane-coverage.js", () => ({
 vi.mock("./mongodb-query-cache.js", () => ({
   checkCache: vi.fn(),
   writeCache: vi.fn(),
+  invalidateQueryCache: vi.fn(),
 }));
 
 vi.mock("./mongodb-telemetry.js", () => ({

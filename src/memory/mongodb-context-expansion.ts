@@ -88,7 +88,7 @@ export async function expandSearchContext(params: {
     try {
       sessionEvents = await collection
         .find(filter)
-        // oxlint-disable-next-line unicorn/no-array-sort
+        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
         .sort({ timestamp: 1 })
         .limit(100)
         .toArray();

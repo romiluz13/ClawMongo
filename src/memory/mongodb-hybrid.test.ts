@@ -80,7 +80,7 @@ describe("normalizeVectorScore", () => {
   });
 
   it("returns 0 for non-finite inputs", () => {
-    expect(normalizeVectorScore(NaN)).toBe(0);
+    expect(normalizeVectorScore(Number.NaN)).toBe(0);
     expect(normalizeVectorScore(Infinity)).toBe(1.0);
     expect(normalizeVectorScore(-Infinity)).toBe(0.0);
   });
@@ -109,7 +109,7 @@ describe("normalizeBM25Score", () => {
 
   it("returns 0 for negative or NaN", () => {
     expect(normalizeBM25Score(-1)).toBe(0);
-    expect(normalizeBM25Score(NaN)).toBe(0);
+    expect(normalizeBM25Score(Number.NaN)).toBe(0);
   });
 
   it("approaches 1 for very high scores", () => {

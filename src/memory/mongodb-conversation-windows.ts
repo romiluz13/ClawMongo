@@ -111,7 +111,7 @@ export async function projectConversationWindows(params: {
   const eventsCol = eventsCollection(db, prefix);
   const rawResult = await eventsCol
     .find({ agentId, sessionId })
-    // oxlint-disable-next-line unicorn/no-array-sort
+    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
     .sort({ timestamp: 1 })
     .limit(1000)
     .toArray();

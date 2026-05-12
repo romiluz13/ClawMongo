@@ -1622,9 +1622,7 @@ export async function runEmbeddedAttempt(
 
       await prewarmSessionFile(params.sessionFile);
       sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
-        cfg: params.config,
         agentId: sessionAgentId,
-        sessionId: params.sessionId,
         sessionKey: params.sessionKey,
         config: params.config,
         contextWindowTokens: params.contextTokenBudget,

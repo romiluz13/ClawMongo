@@ -9,7 +9,7 @@ ClawMongo is the MongoDB edition of OpenClaw. This guide gets you from zero to a
 ### Required
 
 - **Node.js 22+** (24 recommended)
-- **MongoDB** via `mongodb-atlas-local:preview` Docker image (recommended) or Atlas CLI local deployment
+- **MongoDB** via `mongodb-atlas-local:preview` Docker image, Atlas CLI local deployment, or MongoDB Atlas cloud
 - **Voyage AI API key** (for automated embeddings via mongot)
 - **LLM API key** (Anthropic Claude recommended, or OpenAI, Google, Mistral, etc.)
 
@@ -64,7 +64,16 @@ atlas deployments setup clawmongo --type local --port 27017
 
 This creates a local deployment with mongod + mongot bundled together -- no separate mongot install needed.
 
-> **Why not Atlas SaaS?** ClawMongo targets local MongoDB via the `mongodb-atlas-local:preview` Docker image. Atlas SaaS URIs (`.mongodb.net`) are not supported by the onboarding wizard. The atlas-local image provides the same search capabilities without a cloud dependency.
+#### Option C: MongoDB Atlas cloud
+
+Use a MongoDB Atlas cluster when you want hosted operations, backups, and managed scaling. Configure ClawMongo with the `atlas-cloud` deployment profile and your Atlas connection string:
+
+```bash
+clawmongo config set memory.mongodb.deploymentProfile atlas-cloud
+clawmongo config set memory.mongodb.uri "mongodb+srv://USER:PASSWORD@cluster0.example.mongodb.net/clawmongo"
+```
+
+Atlas cloud requires Search and Vector Search support on the target cluster. ClawMongo validates the connection and reports missing search/vector capabilities during doctor and startup checks.
 
 ---
 
@@ -74,7 +83,7 @@ This creates a local deployment with mongod + mongot bundled together -- no sepa
 2. Generate an API key from the dashboard
 3. Set `VOYAGE_API_KEY` when starting the atlas-local container (Docker env var) or pass it to Atlas CLI
 
-ClawMongo uses `voyage-4-large` (1024 dimensions) for all embeddings. This is configured in the search index definitions, not in application code.
+ClawMongo uses automated embeddings through MongoDB Vector Search. The local preview profile defaults to `voyage-4-large` where supported by the local preview image. The Atlas cloud profile defaults to `voyage-3.5` unless you set `memory.mongodb.autoEmbedModel` to a model supported by your cluster.
 
 ---
 
@@ -101,6 +110,9 @@ The `openclaw` command is also available as an alias for compatibility.
 ```bash
 # Set the MongoDB connection URI
 clawmongo config set memory.mongodb.uri "mongodb://localhost:27017/clawmongo?replicaSet=rs0"
+
+# Select the local preview profile explicitly (community-mongot is still accepted as an alias)
+clawmongo config set memory.mongodb.deploymentProfile atlas-local-preview
 
 # Enable automated embeddings via mongot
 clawmongo config set memory.mongodb.embeddingMode "automated"
@@ -198,6 +210,7 @@ Minimal `~/.openclaw/openclaw.json` for ClawMongo:
   memory: {
     mongodb: {
       uri: "mongodb://localhost:27017/clawmongo?replicaSet=rs0",
+      deploymentProfile: "atlas-local-preview",
       embeddingMode: "automated",
     },
   },

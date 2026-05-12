@@ -155,7 +155,7 @@ describe("mongodb-episodes", () => {
           body: "Morning update",
           scope: "workspace",
           scopeRef: "workspace:one",
-          timestamp: new Date(start.getTime()),
+          timestamp: new Date(start),
         },
         {
           eventId: "evt-2",

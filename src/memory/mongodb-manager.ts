@@ -420,7 +420,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
   private lastSearchMode = "legacy";
   private lastSearchDetails: Record<string, unknown> | undefined;
   private entityExtractor?: EntityExtractor;
-  private llmFn?: (prompt: string) => Promise<string>;
 
   private constructor(params: {
     client: MongoClient;
@@ -449,7 +448,6 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     this.capabilities = params.capabilities;
     this.config = params.config;
     this.relevance = params.relevance ?? null;
-    this.llmFn = params.llmFn;
 
     // Initialize LLM entity extractor if configured
     const mongoCfg = params.config.mongodb;

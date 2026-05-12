@@ -13,7 +13,7 @@ type MemorySearchHit = {
   startLine: number;
   endLine: number;
   snippet: string;
-  source: "memory" | "sessions";
+  source: "memory" | "sessions" | "conversation" | "structured" | "reference";
   score: number;
 };
 

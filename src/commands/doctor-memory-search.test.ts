@@ -7,6 +7,7 @@ import type { DoctorPrompter } from "./doctor-prompter.js";
 const note = vi.hoisted(() => vi.fn());
 const resolveDefaultAgentId = vi.hoisted(() => vi.fn(() => "agent-default"));
 const resolveAgentDir = vi.hoisted(() => vi.fn(() => "/tmp/agent-default"));
+const resolveAgentWorkspaceDir = vi.hoisted(() => vi.fn(() => "/tmp/agent-default/workspace"));
 const resolveMemorySearchConfig = vi.hoisted(() => vi.fn());
 const resolveApiKeyForProvider = vi.hoisted(() => vi.fn());
 const hasAnyAuthProfileStoreSource = vi.hoisted(() => vi.fn(() => true));
@@ -30,6 +31,7 @@ vi.mock("../terminal/note.js", () => ({
 vi.mock("../agents/agent-scope.js", () => ({
   resolveDefaultAgentId,
   resolveAgentDir,
+  resolveAgentWorkspaceDir,
 }));
 
 vi.mock("../agents/memory-search.js", () => ({
@@ -81,39 +83,6 @@ vi.mock("../plugin-sdk/memory-core-engine-runtime.js", () => ({
     },
     { providerId: "local", authProviderId: "local", envVars: [], transport: "local" },
   ]),
-);
-vi.mock("mongodb", () => ({
-  MongoClient: class MockMongoClient {
-    async connect() {}
-    db() {
-      return {
-        command: async () => ({ ok: 1 }),
-        collection: () => ({
-          listSearchIndexes: () => ({
-            toArray: mockSearchIndexes,
-          }),
-        }),
-      };
-    }
-    async close() {}
-  },
-}));
-
-const mockDetectTopology = vi.hoisted(() =>
-  vi.fn(async () => ({ serverVersion: "8.2.0", replicaSetName: "rs0", hasMongot: true })),
-);
-const mockTopologyToTier = vi.hoisted(() => vi.fn(() => "fullstack"));
-const mockTierFeatures = vi.hoisted(() =>
-  vi.fn(() => ({ available: ["Search", "Vector Search"], unavailable: [] as string[] })),
-);
-vi.mock("../memory/mongodb-topology.js", () => ({
-  detectTopology: mockDetectTopology,
-  topologyToTier: mockTopologyToTier,
-  tierFeatures: mockTierFeatures,
-}));
-
-vi.mock("../memory/mongodb-analytics.js", () => ({
-  getMemoryStats,
 }));
 
 vi.mock("./doctor-workspace.js", async (importOriginal) => {
@@ -179,19 +148,6 @@ function firstNoteMessage(): string {
 describe("noteMemorySearchHealth", () => {
   const cfg = {} as OpenClawConfig;
 
-  function expectOnlyBackendHealthNote() {
-    // At minimum: backend health note + recall diagnostic note (+ possible mongot/auto-embed/vector notes)
-    expect(note.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(String(note.mock.calls[0]?.[0] ?? "")).toContain("MongoDB connected. Profile:");
-    // Recall diagnostic is the last note in the standard doctor flow
-    const lastNote = note.mock.calls[note.mock.calls.length - 1];
-    expect(String(lastNote?.[1] ?? "")).toBe("Memory Recall Diagnostic");
-  }
-
-  function getLastNoteMessage(): string {
-    return String(note.mock.calls.at(-1)?.[0] ?? "");
-  }
-
   async function expectNoWarningWithConfiguredRemoteApiKey(provider: string) {
     resolveMemorySearchConfig.mockReturnValue({
       provider,
@@ -201,7 +157,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   }
 
@@ -209,6 +165,7 @@ describe("noteMemorySearchHealth", () => {
     note.mockClear();
     resolveDefaultAgentId.mockClear();
     resolveAgentDir.mockClear();
+    resolveAgentWorkspaceDir.mockClear();
     resolveMemorySearchConfig.mockReset();
     resolveApiKeyForProvider.mockReset();
     resolveApiKeyForProvider.mockRejectedValue(new Error("missing key"));
@@ -241,7 +198,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("warns when local provider with default model but gateway probe reports not ready", async () => {
@@ -272,7 +229,7 @@ describe("noteMemorySearchHealth", () => {
       gatewayMemoryProbe: { checked: true, ready: true },
     });
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("does not treat an inconclusive gateway timeout as local embeddings not ready", async () => {
@@ -302,7 +259,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("does not emit provider guidance when no memory runtime is active", async () => {
@@ -313,7 +270,7 @@ describe("noteMemorySearchHealth", () => {
       remote: {},
     });
 
-    await noteMemorySearchHealth(invalidCfg, {});
+    await noteMemorySearchHealth(cfg, {});
 
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
     expect(checkQmdBinaryAvailability).not.toHaveBeenCalled();
@@ -429,7 +386,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   });
 
@@ -448,7 +405,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg, {});
 
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
     expect(resolveApiKeyForProvider).not.toHaveBeenCalled();
   });
 
@@ -471,7 +428,7 @@ describe("noteMemorySearchHealth", () => {
       cfg,
       agentDir: "/tmp/agent-default",
     });
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("resolves mistral auth for explicit mistral embedding provider", async () => {
@@ -493,7 +450,7 @@ describe("noteMemorySearchHealth", () => {
       cfg,
       agentDir: "/tmp/agent-default",
     });
-    expectOnlyBackendHealthNote();
+    expect(note).not.toHaveBeenCalled();
   });
 
   it("does not warn for lmstudio when gateway probe is ready", async () => {
@@ -680,7 +637,7 @@ describe("noteMemorySearchHealth", () => {
 
     await noteMemorySearchHealth(cfg);
 
-    expect(note.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(note).toHaveBeenCalledTimes(1);
     const providerCalls = resolveApiKeyForProvider.mock.calls as Array<[{ provider: string }]>;
     const providersChecked = providerCalls.map(([arg]) => arg.provider);
     expect(providersChecked).toEqual([
@@ -751,7 +708,7 @@ describe("noteMemorySearchHealth", () => {
   });
 });
 
-describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
+describe("memory recall doctor integration", () => {
   const cfg = {} as OpenClawConfig;
 
   beforeEach(() => {
@@ -775,16 +732,41 @@ describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
         canPrompt: true,
         updateInProgress: false,
       },
+      ...overrides,
+    };
+  }
+
+  it("notes recall-store audit problems with doctor guidance", async () => {
+    auditShortTermPromotionArtifacts.mockResolvedValueOnce({
+      storePath: "/tmp/agent-default/workspace/memory/.dreams/short-term-recall.json",
+      lockPath: "/tmp/agent-default/workspace/memory/.dreams/short-term-promotion.lock",
+      exists: true,
+      entryCount: 12,
+      promotedCount: 4,
+      spacedEntryCount: 2,
+      conceptTaggedEntryCount: 10,
+      invalidEntryCount: 1,
+      issues: [
+        {
+          severity: "warn",
+          code: "recall-store-invalid",
+          message: "Short-term recall store contains 1 invalid entry.",
+          fixable: true,
+        },
+        {
+          severity: "warn",
+          code: "recall-lock-stale",
+          message: "Short-term promotion lock appears stale.",
+          fixable: true,
+        },
+      ],
     });
-    mockDetectTopology.mockResolvedValue({
-      serverVersion: "8.2.0",
-      replicaSetName: "rs0",
-      hasMongot: true,
-    });
-    mockTopologyToTier.mockReturnValue("fullstack");
-    mockTierFeatures.mockReturnValue({
-      available: ["Search", "Vector Search"],
-      unavailable: [],
+
+    await noteMemoryRecallHealth(cfg);
+
+    expect(auditShortTermPromotionArtifacts).toHaveBeenCalledWith({
+      workspaceDir: "/tmp/agent-default/workspace",
+      qmd: undefined,
     });
     expect(note).toHaveBeenCalledTimes(1);
     const message = firstNoteMessage();
@@ -793,15 +775,34 @@ describe("noteMongoDBBackendHealth - mongot and search diagnostics", () => {
     expect(message).toContain("memory status --fix");
   });
 
-  it("shows start-preview.sh in upgrade guidance when features missing", async () => {
-    mockTopologyToTier.mockReturnValue("standalone");
-    mockTierFeatures.mockReturnValue({
-      available: [],
-      unavailable: ["Vector Search", "Atlas Search"],
+  it("runs memory recall repair during doctor --fix", async () => {
+    auditShortTermPromotionArtifacts.mockResolvedValueOnce({
+      storePath: "/tmp/agent-default/workspace/memory/.dreams/short-term-recall.json",
+      lockPath: "/tmp/agent-default/workspace/memory/.dreams/short-term-promotion.lock",
+      exists: true,
+      entryCount: 12,
+      promotedCount: 4,
+      spacedEntryCount: 2,
+      conceptTaggedEntryCount: 10,
+      invalidEntryCount: 1,
+      issues: [
+        {
+          severity: "warn",
+          code: "recall-store-invalid",
+          message: "Short-term recall store contains 1 invalid entry.",
+          fixable: true,
+        },
+      ],
     });
+    repairShortTermPromotionArtifacts.mockResolvedValueOnce({
+      changed: true,
+      removedInvalidEntries: 1,
+      rewroteStore: true,
+      removedStaleLock: true,
+    });
+    const prompter = createPrompter();
 
-    const { noteMongoDBBackendHealth } = await import("./doctor-memory-search.js");
-    await noteMongoDBBackendHealth(cfg);
+    await maybeRepairMemoryRecallHealth({ cfg, prompter });
 
     expect(maybeRepairWorkspaceMemoryHealth).toHaveBeenCalledWith({ cfg, prompter });
     expect(prompter.confirmRuntimeRepair).toHaveBeenCalled();

@@ -205,24 +205,6 @@ export default definePluginEntry({
       },
     });
 
-    api.registerTool(
-      (ctx) =>
-        createKBSearchTool({
-          config: ctx.config,
-          agentSessionKey: ctx.sessionKey,
-        }),
-      { names: ["kb_search"] },
-    );
-
-    api.registerTool(
-      (ctx) =>
-        createMemoryWriteTool({
-          config: ctx.config,
-          agentSessionKey: ctx.sessionKey,
-        }),
-      { names: ["memory_write"] },
-    );
-
     api.registerCli(
       async ({ program }) => {
         const { registerMemoryCli } = await import("./src/cli.js");

@@ -186,8 +186,8 @@ export class MongoDBRelevanceRuntime {
   private currentSampleRate: number;
 
   constructor(
-    private readonly db: Db,
-    private readonly prefix: string,
+    db: Db,
+    prefix: string,
     private readonly agentId: string,
     private readonly cfg: ResolvedMongoDBConfig,
     capabilities: DetectedCapabilities,

@@ -193,7 +193,6 @@ export async function consolidateMemory(params: {
   const consolidationRuns = consolidationRunsCollection(db, prefix);
   const lastRun = await consolidationRuns.findOne(
     { agentId, status: { $in: ["completed", "running"] } },
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB FindOptions, not Array
     { sort: { startedAt: -1 } },
   );
 

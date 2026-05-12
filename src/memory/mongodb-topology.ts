@@ -155,4 +155,5 @@ export function tierFeatures(tier: DeploymentTier): {
         ],
       };
   }
+    throw new Error(`unsupported MongoDB deployment tier: ${String(tier)}`);
 }

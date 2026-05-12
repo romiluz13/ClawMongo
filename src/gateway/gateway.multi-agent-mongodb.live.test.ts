@@ -821,7 +821,7 @@ async function requestGatewayAgentText(params: {
   const runResult = await runPromise;
   if (runResult?.status !== "ok") {
     throw new Error(
-      `agent.wait failed for ${params.sessionKey} run=${runId}: status=${String(runResult?.status)} error=${String(runResult?.error ?? "")}`,
+      `agent.wait failed for ${params.sessionKey} run=${runId}: status=${String(runResult?.status)} error=${runResult?.error ?? ""}`,
     );
   }
 

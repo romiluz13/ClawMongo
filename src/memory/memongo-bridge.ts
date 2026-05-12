@@ -63,7 +63,7 @@ async function getRequiredManager(params: BridgeParams) {
 }
 
 export async function memongoBridgeStatus(params: BridgeParams): Promise<MemoryProviderStatus> {
-  const { agentId, manager } = await getRequiredManager(params);
+  const { manager } = await getRequiredManager(params);
   return manager.status();
 }
 
@@ -101,7 +101,7 @@ export async function memongoBridgeSearch(
 export async function memongoBridgeWriteStructuredMemory(
   params: BridgeStructuredWriteParams,
 ): Promise<unknown> {
-  const { manager } = await getRequiredManager(params);
+  const { agentId, manager } = await getRequiredManager(params);
   if (!manager.writeStructuredMemory) {
     throw new Error("MongoDB memory manager does not support structured writes");
   }

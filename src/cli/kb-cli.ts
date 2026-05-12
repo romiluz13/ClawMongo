@@ -1,7 +1,8 @@
 import path from "node:path";
 import type { Command } from "commander";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
-import { loadConfig } from "../config/config.js";
+import { getRuntimeConfig } from "../config/config.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { setVerbose } from "../globals.js";
 import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
 import { defaultRuntime } from "../runtime.js";
@@ -17,7 +18,7 @@ type KBCommandOptions = {
   verbose?: boolean;
 };
 
-function resolveAgent(cfg: ReturnType<typeof loadConfig>, agent?: string) {
+function resolveAgent(cfg: OpenClawConfig, agent?: string) {
   const trimmed = agent?.trim();
   if (trimmed) {
     return trimmed;
@@ -26,7 +27,7 @@ function resolveAgent(cfg: ReturnType<typeof loadConfig>, agent?: string) {
 }
 
 /** Connect to MongoDB using config, returning { client, db, prefix } or null. */
-async function connectMongoDB(cfg: ReturnType<typeof loadConfig>, agentId: string) {
+async function connectMongoDB(cfg: OpenClawConfig, agentId: string) {
   const resolved = resolveMemoryBackendConfig({ cfg, agentId });
   const mongoCfg = resolved.mongodb;
   if (!mongoCfg) {
@@ -110,7 +111,7 @@ export function registerKBCli(program: Command) {
         },
       ) => {
         setVerbose(Boolean(opts.verbose));
-        const cfg = loadConfig();
+        const cfg = getRuntimeConfig();
         const agentId = resolveAgent(cfg, opts.agent);
         const conn = await connectMongoDB(cfg, agentId);
         if (!conn) {
@@ -187,7 +188,7 @@ export function registerKBCli(program: Command) {
           tags?: string[];
         },
       ) => {
-        const cfg = loadConfig();
+        const cfg = getRuntimeConfig();
         const agentId = resolveAgent(cfg, opts.agent);
         const conn = await connectMongoDB(cfg, agentId);
         if (!conn) {
@@ -252,7 +253,7 @@ export function registerKBCli(program: Command) {
     .option("--max-results <n>", "Max results", (val: string) => Number(val))
     .option("--json", "Print JSON")
     .action(async (query: string, opts: KBCommandOptions & { maxResults?: number }) => {
-      const cfg = loadConfig();
+      const cfg = getRuntimeConfig();
       const agentId = resolveAgent(cfg, opts.agent);
       const conn = await connectMongoDB(cfg, agentId);
       if (!conn) {
@@ -318,7 +319,7 @@ export function registerKBCli(program: Command) {
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--json", "Print JSON")
     .action(async (opts: KBCommandOptions) => {
-      const cfg = loadConfig();
+      const cfg = getRuntimeConfig();
       const agentId = resolveAgent(cfg, opts.agent);
       const conn = await connectMongoDB(cfg, agentId);
       if (!conn) {
@@ -369,7 +370,7 @@ export function registerKBCli(program: Command) {
     .option("--agent <id>", "Agent id (default: default agent)")
     .option("--yes", "Skip confirmation", false)
     .action(async (docId: string, opts: KBCommandOptions & { yes?: boolean }) => {
-      const cfg = loadConfig();
+      const cfg = getRuntimeConfig();
       const agentId = resolveAgent(cfg, opts.agent);
       const conn = await connectMongoDB(cfg, agentId);
       if (!conn) {

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
-import type { MemoryQmdUpdateConfig } from "../config/types.memory.js";
 
 const { getMemorySearchManagerMock, resolveMemoryBackendConfigMock, registerMemoryRuntimeMock } =
   vi.hoisted(() => ({
@@ -14,20 +13,18 @@ vi.mock("../memory/index.js", () => ({
   closeAllMemorySearchManagers: vi.fn(),
 }));
 
-vi.mock("../plugins/memory-runtime.js", () => ({
-  getActiveMemorySearchManager: getMemorySearchManagerMock,
+vi.mock("../memory/backend-config.js", () => ({
+  resolveMemoryBackendConfig: resolveMemoryBackendConfigMock,
+}));
+
+vi.mock("../plugins/memory-state.js", () => ({
+  registerMemoryRuntime: registerMemoryRuntimeMock,
 }));
 
 import { startGatewayMemoryBackend } from "./server-startup-memory.js";
 
-function createQmdConfig(
-  agents: OpenClawConfig["agents"],
-  update: MemoryQmdUpdateConfig = { startup: "immediate" },
-): OpenClawConfig {
-  return {
-    agents,
-    memory: { backend: "qmd", qmd: { update } },
-  } as OpenClawConfig;
+function createLogMock() {
+  return { info: vi.fn(), warn: vi.fn() };
 }
 
 function createMongoConfig(): OpenClawConfig {
@@ -37,17 +34,15 @@ function createMongoConfig(): OpenClawConfig {
   } as OpenClawConfig;
 }
 
-function createQmdManagerMock() {
-  return {
-    search: vi.fn(),
-    sync: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
-  };
-}
-
 describe("startGatewayMemoryBackend", () => {
   beforeEach(() => {
-    getMemorySearchManagerMock.mockClear();
+    getMemorySearchManagerMock.mockReset();
+    resolveMemoryBackendConfigMock.mockReset();
+    registerMemoryRuntimeMock.mockReset();
+    resolveMemoryBackendConfigMock.mockReturnValue({
+      backend: "mongodb",
+      mongodb: { uri: "mongodb://localhost:27017/openclaw" },
+    });
   });
 
   it("registers MongoDB memory runtime inside startGatewayMemoryBackend (Layer B defense)", async () => {
@@ -69,93 +64,63 @@ describe("startGatewayMemoryBackend", () => {
     expect(runtime).toHaveProperty("closeAllMemorySearchManagers");
   });
 
-  it("keeps qmd managers lazy when startup refresh is not opted in", async () => {
-    const cfg = {
-      agents: { list: [{ id: "main", default: true }] },
-      memory: { backend: "qmd", qmd: {} },
-    } as OpenClawConfig;
-    const log = createGatewayLogMock();
-
-    await startGatewayMemoryBackend({ cfg, log });
-
-    expect(getMemorySearchManagerMock).not.toHaveBeenCalled();
-    expect(log.info).not.toHaveBeenCalled();
-    expect(log.warn).not.toHaveBeenCalled();
-  });
-
-  it("runs qmd boot sync for the default and explicitly configured agents", async () => {
-    const cfg = createQmdConfig({
-      list: [
-        { id: "ops", default: true },
-        { id: "main", memorySearch: { enabled: true } },
-        { id: "lazy" },
-      ],
-    });
-    const log = createGatewayLogMock();
-    getMemorySearchManagerMock.mockResolvedValue({ manager: createQmdManagerMock() });
+  it("initializes MongoDB memory for each enabled agent", async () => {
+    const cfg = createMongoConfig();
+    const log = createLogMock();
+    getMemorySearchManagerMock.mockResolvedValue({ manager: { search: vi.fn() } });
 
     await startGatewayMemoryBackend({ cfg, log });
 
     expect(getMemorySearchManagerMock).toHaveBeenCalledTimes(2);
-    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(1, {
-      cfg,
-      agentId: "ops",
-      purpose: "cli",
-    });
-    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(2, {
-      cfg,
-      agentId: "main",
-      purpose: "cli",
-    });
-    expect(log.info).toHaveBeenCalledWith(
-      'qmd memory startup boot sync completed for 2 agents: "ops", "main"',
+    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(1, { cfg, agentId: "main" });
+    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(2, { cfg, agentId: "ops" });
+    expect(log.info).toHaveBeenNthCalledWith(
+      1,
+      'mongodb memory startup initialization armed for agent "main"',
     );
-    expect(log.info).toHaveBeenCalledWith(
-      'qmd memory startup initialization deferred for 1 agent: "lazy"',
+    expect(log.info).toHaveBeenNthCalledWith(
+      2,
+      'mongodb memory startup initialization armed for agent "ops"',
     );
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it("initializes all qmd agents when memory search is explicitly enabled in defaults", async () => {
-    const cfg = createQmdConfig({
-      defaults: { memorySearch: { enabled: true } },
-      list: [{ id: "ops", default: true }, { id: "main" }],
-    });
-    const log = createGatewayLogMock();
-    getMemorySearchManagerMock.mockResolvedValue({ manager: createQmdManagerMock() });
+  it("runs startup sync when the manager exposes sync", async () => {
+    const cfg = createMongoConfig();
+    const log = createLogMock();
+    const sync = vi.fn(async () => {});
+    getMemorySearchManagerMock.mockResolvedValue({ manager: { sync } });
 
     await startGatewayMemoryBackend({ cfg, log });
 
-    expect(getMemorySearchManagerMock).toHaveBeenCalledTimes(2);
-    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(1, {
-      cfg,
-      agentId: "ops",
-      purpose: "cli",
+    expect(sync).toHaveBeenCalledWith({ reason: "startup" });
+    expect(log.warn).not.toHaveBeenCalled();
+  });
+
+  it("warns and continues when backend resolution fails", async () => {
+    const cfg = createMongoConfig();
+    const log = createLogMock();
+    resolveMemoryBackendConfigMock.mockImplementationOnce(() => {
+      throw new Error('Unsupported memory.backend "custom"');
     });
-    expect(getMemorySearchManagerMock).toHaveBeenNthCalledWith(2, {
-      cfg,
-      agentId: "main",
-      purpose: "cli",
-    });
-    expect(log.info).toHaveBeenCalledWith(
-      'qmd memory startup boot sync completed for 2 agents: "ops", "main"',
+    getMemorySearchManagerMock.mockResolvedValue({ manager: { search: vi.fn() } });
+
+    await startGatewayMemoryBackend({ cfg, log });
+
+    expect(log.warn).toHaveBeenCalledWith(
+      'mongodb memory startup initialization failed for agent "main": Unsupported memory.backend "custom"',
     );
-    expect(log.info.mock.calls.some(([message]) => String(message).includes("deferred"))).toBe(
-      false,
+    expect(log.info).toHaveBeenCalledWith(
+      'mongodb memory startup initialization armed for agent "ops"',
     );
   });
 
-  it("logs a warning when qmd manager init fails and continues with other agents", async () => {
-    const cfg = createQmdConfig({
-      list: [
-        { id: "main", default: true },
-        { id: "ops", memorySearch: { enabled: true } },
-      ],
-    });
-    const log = createGatewayLogMock();
+  it("warns when manager creation fails", async () => {
+    const cfg = createMongoConfig();
+    const log = createLogMock();
     getMemorySearchManagerMock
-      .mockResolvedValueOnce({ manager: null, error: "qmd missing" })
-      .mockResolvedValueOnce({ manager: createQmdManagerMock() });
+      .mockResolvedValueOnce({ manager: null, error: "connection failed" })
+      .mockResolvedValueOnce({ manager: { search: vi.fn() } });
 
     await startGatewayMemoryBackend({ cfg, log });
 
@@ -163,51 +128,31 @@ describe("startGatewayMemoryBackend", () => {
       'mongodb memory startup initialization failed for agent "main": connection failed',
     );
     expect(log.info).toHaveBeenCalledWith(
-      'qmd memory startup boot sync completed for 1 agent: "ops"',
+      'mongodb memory startup initialization armed for agent "ops"',
     );
   });
 
   it("skips agents with memory search disabled", async () => {
-    const cfg = createQmdConfig({
-      defaults: { memorySearch: { enabled: true } },
-      list: [
-        { id: "main", default: true },
-        { id: "ops", memorySearch: { enabled: false } },
-      ],
-    });
-    const log = createGatewayLogMock();
-    getMemorySearchManagerMock.mockResolvedValue({ manager: createQmdManagerMock() });
+    const cfg = {
+      memory: { mongodb: { uri: "mongodb://localhost:27017/openclaw" } },
+      agents: {
+        defaults: { memorySearch: { enabled: true } },
+        list: [
+          { id: "main", default: true },
+          { id: "ops", memorySearch: { enabled: false } },
+        ],
+      },
+    } as OpenClawConfig;
+    const log = createLogMock();
+    getMemorySearchManagerMock.mockResolvedValue({ manager: { search: vi.fn() } });
 
     await startGatewayMemoryBackend({ cfg, log });
 
     expect(getMemorySearchManagerMock).toHaveBeenCalledTimes(1);
-    expect(getMemorySearchManagerMock).toHaveBeenCalledWith({
-      cfg,
-      agentId: "main",
-      purpose: "cli",
-    });
+    expect(getMemorySearchManagerMock).toHaveBeenCalledWith({ cfg, agentId: "main" });
     expect(log.info).toHaveBeenCalledWith(
-      'qmd memory startup boot sync completed for 1 agent: "main"',
+      'mongodb memory startup initialization armed for agent "main"',
     );
-    expect(log.warn).not.toHaveBeenCalled();
-  });
-
-  it("does not initialize qmd managers when background work is disabled", async () => {
-    const cfg = {
-      agents: { list: [{ id: "main", default: true }] },
-      memory: {
-        backend: "qmd",
-        qmd: {
-          update: { startup: "immediate", onBoot: false, interval: "0s", embedInterval: "0s" },
-        },
-      },
-    } as OpenClawConfig;
-    const log = createGatewayLogMock();
-
-    await startGatewayMemoryBackend({ cfg, log });
-
-    expect(getMemorySearchManagerMock).not.toHaveBeenCalled();
-    expect(log.info).not.toHaveBeenCalled();
     expect(log.warn).not.toHaveBeenCalled();
   });
 });

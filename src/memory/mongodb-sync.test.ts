@@ -43,10 +43,9 @@ function createMockChunksCol(): ReturnType<typeof vi.fn> & Collection {
 function createMockFilesCol(
   storedFiles: Map<string, { hash: string; mtime: number; size: number }> = new Map(),
 ): Collection {
-  const docs = Array.from(storedFiles.entries()).map(([filePath, data]) => ({
-    _id: filePath,
-    ...data,
-  }));
+  const docs = Array.from(storedFiles.entries()).map(([filePath, data]) =>
+    Object.assign({ _id: filePath }, data),
+  );
   return {
     find: vi.fn(() => ({
       toArray: vi.fn(async () => docs),

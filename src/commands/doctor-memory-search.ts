@@ -136,56 +136,15 @@ async function resolveRuntimeMemoryAuditContext(
   cfg: OpenClawConfig,
 ): Promise<RuntimeMemoryAuditContext | null> {
   const agentId = resolveDefaultAgentId(cfg);
-  let backendConfig;
-  try {
-    backendConfig = resolveMemoryBackendConfig({ cfg, agentId });
-  } catch {
-    note(
-      [
-        "MongoDB memory is active but no URI is set.",
-        "",
-        "Fix:",
-        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb://localhost:27017/openclaw?replicaSet=rs0")}`,
-        "- Or set OPENCLAW_MONGODB_URI in the environment",
-      ].join("\n"),
-      "Memory (MongoDB)",
-    );
-    return;
-  }
-
-  const mongoConfig = backendConfig.mongodb;
-  if (!mongoConfig) {
-    note(
-      [
-        "MongoDB memory is active but the resolved MongoDB config is incomplete.",
-        "",
-        "Fix:",
-        `- Set URI in config: ${formatCliCommand("openclaw config set memory.mongodb.uri mongodb://localhost:27017/openclaw?replicaSet=rs0")}`,
-        "- Or set OPENCLAW_MONGODB_URI in the environment",
-      ].join("\n"),
-      "Memory (MongoDB)",
-    );
-    return;
-  }
-
-  const { uri, deploymentProfile } = mongoConfig;
-
-  // Connection test with timeout
-  let MongoClient: typeof import("mongodb").MongoClient;
-  try {
-    ({ MongoClient } = await import("mongodb"));
-  } catch {
-    note(
-      ["MongoDB driver is not installed.", "", "Fix:", "- Install: pnpm add mongodb"].join("\n"),
-      "Memory (MongoDB)",
-    );
-    return;
-  }
-
-  const client = new MongoClient(uri, {
-    serverSelectionTimeoutMS: 5000,
-    connectTimeoutMS: 5000,
+  const result = await getActiveMemorySearchManager({
+    cfg,
+    agentId,
+    purpose: "status",
   });
+  const manager = result.manager;
+  if (!manager) {
+    return null;
+  }
   try {
     const status = manager.status();
     const customQmd =
@@ -198,7 +157,7 @@ async function resolveRuntimeMemoryAuditContext(
         typeof customQmd?.collections === "number" ? customQmd.collections : undefined,
     };
   } finally {
-    await client.close().catch(() => {});
+    await manager.close?.().catch(() => undefined);
   }
 }
 
@@ -237,34 +196,10 @@ function buildDreamingArtifactIssueNote(audit: DreamingArtifactsAuditSummary): s
 
 export async function noteMemoryRecallHealth(cfg: OpenClawConfig): Promise<void> {
   try {
-    const { getMemoryStats } = await import("../memory/mongodb-analytics.js");
-    const db = client.db(mongoCfg.database);
-    const stats = await getMemoryStats(db, mongoCfg.collectionPrefix);
-
-    const { embeddingStatusCoverage } = stats;
-    if (embeddingStatusCoverage.failed > 0) {
-      note(
-        [
-          `Embedding coverage: ${embeddingStatusCoverage.failed} chunks have failed embeddings.`,
-          `  Success: ${embeddingStatusCoverage.success}`,
-          `  Failed: ${embeddingStatusCoverage.failed}`,
-          `  Pending: ${embeddingStatusCoverage.pending}`,
-          `  Total: ${embeddingStatusCoverage.total}`,
-          "",
-          "Failed chunks will be re-embedded on the next sync cycle.",
-          "If failures persist, check your embedding provider configuration.",
-        ].join("\n"),
-        "Memory (Embedding Coverage)",
-      );
-    } else if (embeddingStatusCoverage.total > 0) {
-      const successRate =
-        embeddingStatusCoverage.total > 0
-          ? Math.round((embeddingStatusCoverage.success / embeddingStatusCoverage.total) * 100)
-          : 0;
-      note(
-        `Embedding coverage: ${successRate}% (${embeddingStatusCoverage.success}/${embeddingStatusCoverage.total} chunks).`,
-        "Memory (Embedding Coverage)",
-      );
+    const context = await resolveRuntimeMemoryAuditContext(cfg);
+    const workspaceDir = context?.workspaceDir?.trim();
+    if (!workspaceDir) {
+      return;
     }
     const audit = await auditShortTermPromotionArtifacts({
       workspaceDir,
@@ -297,9 +232,10 @@ export async function maybeRepairMemoryRecallHealth(params: {
   await maybeRepairWorkspaceMemoryHealth(params);
 
   try {
-    const parsed = new URL(uri);
-    if (parsed.password) {
-      parsed.password = "***";
+    const context = await resolveRuntimeMemoryAuditContext(params.cfg);
+    const workspaceDir = context?.workspaceDir?.trim();
+    if (!workspaceDir) {
+      return;
     }
     const audit = await auditShortTermPromotionArtifacts({
       workspaceDir,
@@ -369,7 +305,9 @@ export async function maybeRepairMemoryRecallHealth(params: {
 
 /**
  * Check whether memory search has a usable embedding provider.
- * Runs as part of `openclaw doctor` — config-only, no network calls.
+ * Runs as part of `openclaw doctor` — config-only checks where possible;
+ * may spawn a short-lived probe process when `memory.backend=qmd` to verify
+ * the configured `qmd` binary is available.
  */
 export async function noteMemorySearchHealth(
   cfg: OpenClawConfig,
@@ -434,6 +372,7 @@ export async function noteMemorySearchHealth(
   // If a specific provider is configured (not "auto"), check only that one.
   if (resolved.provider !== "auto") {
     if (resolved.provider === "local") {
+      const suggestedRemoteProvider = resolveSuggestedRemoteMemoryProvider();
       if (hasLocalEmbeddings(resolved.local, true)) {
         // Model path looks valid (explicit file, hf: URL, or default model).
         // If a gateway probe is available and reports not-ready, warn anyway —
@@ -461,7 +400,9 @@ export async function noteMemorySearchHealth(
           "",
           "Fix (pick one):",
           `- Install node-llama-cpp and set a local model path in config`,
-          `- Switch to a remote provider: ${formatCliCommand("openclaw config set agents.defaults.memorySearch.provider openai")}`,
+          suggestedRemoteProvider
+            ? `- Switch to a remote provider: ${formatCliCommand(`openclaw config set agents.defaults.memorySearch.provider ${suggestedRemoteProvider}`)}`
+            : `- Switch to a remote embedding provider in config`,
           "",
           `Verify: ${formatCliCommand("openclaw memory status --deep")}`,
         ].join("\n"),
@@ -514,7 +455,7 @@ export async function noteMemorySearchHealth(
       return;
     }
     const gatewayProbeWarning = buildGatewayProbeWarning(opts?.gatewayMemoryProbe);
-    const envVar = providerEnvVar(resolved.provider);
+    const envVar = resolvePrimaryMemoryProviderEnvVar(resolved.provider);
     note(
       [
         `Memory search provider is set to "${resolved.provider}" but no API key was found.`,
@@ -566,7 +507,7 @@ export async function noteMemorySearchHealth(
       gatewayProbeWarning ? gatewayProbeWarning : null,
       "",
       "Fix (pick one):",
-      "- Set OPENAI_API_KEY, GEMINI_API_KEY, VOYAGE_API_KEY, or MISTRAL_API_KEY in your environment",
+      `- Set ${formatMemoryProviderEnvVarList(autoSelectProviders)} in your environment`,
       `- Configure credentials: ${formatCliCommand("openclaw configure --section model")}`,
       `- For local embeddings: configure agents.defaults.memorySearch.provider and local model path`,
       `- To disable: ${formatCliCommand("openclaw config set agents.defaults.memorySearch.enabled false")}`,
@@ -663,158 +604,4 @@ function buildGatewayProbeWarning(
   return detail
     ? `Gateway memory probe for default agent is not ready: ${detail}`
     : "Gateway memory probe for default agent is not ready.";
-}
-
-/**
- * MongoDB-adapted three-failure-mode diagnostic for memory recall issues.
- * Based on the VelvetShark "Memory Masterclass" failure taxonomy, adapted
- * for ClawMongo where "Never Stored" is rare (runtime write path is automatic)
- * and "Not Retrieved" (agent didn't search MongoDB) is the primary failure mode.
- */
-/**
- * Check vector search index existence on chunks collection.
- * Only runs when mongot is available.
- */
-async function noteVectorSearchIndexHealth(
-  db: import("mongodb").Db,
-  prefix: string,
-  hasMongot: boolean,
-): Promise<void> {
-  if (!hasMongot) {
-    return; // Skip when mongot is not available
-  }
-  try {
-    const indexSpecs = [
-      {
-        collectionName: `${prefix}chunks`,
-        indexName: `${prefix}chunks_vector`,
-        requiredPaths: ["agentId", "scope", "scopeRef", "sessionId", "timestamp", "updatedAt"],
-      },
-      {
-        collectionName: `${prefix}kb_chunks`,
-        indexName: `${prefix}kb_chunks_vector`,
-        requiredPaths: ["docId", "path", "source"],
-      },
-      {
-        collectionName: `${prefix}structured_memory`,
-        indexName: `${prefix}structured_mem_vector`,
-        requiredPaths: ["type", "tags", "agentId", "scope", "scopeRef", "state", "salience"],
-      },
-      {
-        collectionName: `${prefix}procedures`,
-        indexName: `${prefix}procedures_vector`,
-        requiredPaths: ["intentTags", "agentId", "scope", "scopeRef", "state"],
-      },
-      {
-        collectionName: `${prefix}query_cache`,
-        indexName: `${prefix}query_cache_vector`,
-        requiredPaths: ["requestSignature", "agentId", "scope", "scopeRef"],
-      },
-    ] as const;
-    const foundIndexes: string[] = [];
-    const missingIndexes: string[] = [];
-    const parityIssues: string[] = [];
-
-    for (const spec of indexSpecs) {
-      const collection = db.collection(spec.collectionName);
-      const indexes = (await collection.listSearchIndexes(spec.indexName).toArray()) as Array<{
-        name?: string;
-        type?: string;
-        definition?: { fields?: Array<Record<string, unknown>> };
-        latestDefinition?: { fields?: Array<Record<string, unknown>> };
-        queryable?: boolean;
-      }>;
-      const current = indexes.find(
-        (idx) => idx.type === "vectorSearch" && idx.name === spec.indexName,
-      );
-      if (!current) {
-        missingIndexes.push(`${spec.indexName} on ${spec.collectionName}`);
-        continue;
-      }
-      foundIndexes.push(`${spec.indexName} on ${spec.collectionName}`);
-
-      if (current.queryable === false) {
-        parityIssues.push(`${spec.indexName} exists but is not yet queryable`);
-      }
-
-      const fields = Array.isArray(current.latestDefinition?.fields)
-        ? current.latestDefinition.fields
-        : Array.isArray(current.definition?.fields)
-          ? current.definition.fields
-          : [];
-      const filterPaths = new Set(
-        fields
-          .filter((field) => field.type === "filter" && typeof field.path === "string")
-          .map((field) => String(field.path)),
-      );
-      const missingPaths = spec.requiredPaths.filter((path) => !filterPaths.has(path));
-      if (missingPaths.length > 0) {
-        parityIssues.push(
-          `${spec.indexName} is missing required filter paths: ${missingPaths.join(", ")}`,
-        );
-      }
-    }
-
-    if (foundIndexes.length === 0) {
-      note(
-        [
-          `Vector search indexes: none found for the expected ClawMongo MongoDB collections`,
-          "",
-          "Fix: Indexes are created automatically on first gateway start.",
-          "Manual: clawmongo memory init --indexes",
-        ].join("\n"),
-        "Memory (Vector Indexes)",
-      );
-    } else {
-      note(
-        `Vector search indexes: ${foundIndexes.length}/${indexSpecs.length} expected indexes found\n${foundIndexes.map((name) => `- ${name}`).join("\n")}`,
-        "Memory (Vector Indexes)",
-      );
-    }
-
-    if (missingIndexes.length > 0 || parityIssues.length > 0) {
-      note(
-        [
-          ...(missingIndexes.length > 0
-            ? [`Missing indexes:`, ...missingIndexes.map((entry) => `- ${entry}`), ""]
-            : []),
-          ...(parityIssues.length > 0
-            ? [`Parity issues:`, ...parityIssues.map((entry) => `- ${entry}`), ""]
-            : []),
-          "Fix: restart the gateway or run memory index bootstrap so ClawMongo can refresh the MongoDB Search and Vector Search definitions.",
-        ].join("\n"),
-        "Memory (Index Parity)",
-      );
-    }
-  } catch {
-    // listSearchIndexes may fail on older MongoDB or without mongot -- skip silently
-  }
-}
-
-export function noteMemoryRecallDiagnostic(params: {
-  backend?: string;
-}): { title: string; lines: string } | null {
-  if (params.backend !== "mongodb") {
-    return null;
-  }
-  const lines = [
-    "If the agent seems to forget things, check these three failure modes:",
-    "",
-    "1. Not Retrieved (most common)",
-    "   The agent didn't call memory_search before answering.",
-    "   Fix: Check that the MongoDB bridge section is in the system prompt.",
-    "   Verify: Look for memory_search tool calls in the session transcript.",
-    "",
-    "2. Compaction Lost It",
-    "   Important context was summarized away during auto-compaction.",
-    "   Fix: Raise reserveTokensFloor (default: 40000) or compact before new instructions.",
-    "   Verify: Check the compaction summary for missing context.",
-    "",
-    "3. Never Stored",
-    "   In ClawMongo this is rare -- conversation turns auto-persist to MongoDB.",
-    "   But structured facts (preferences, decisions) require explicit memory_write.",
-    "   Fix: Check that memory_write is available and the flush is enabled.",
-    "   Verify: Search MongoDB events/structured_memory collections directly.",
-  ].join("\n");
-  return { title: "Memory Recall Diagnostic", lines };
 }

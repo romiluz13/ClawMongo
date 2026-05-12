@@ -27,7 +27,7 @@ const TEST_URI =
   "mongodb://admin:admin@127.0.0.1:27017/openclaw?authSource=admin&replicaSet=rs0&directConnection=true";
 const TEST_DB = "clawmongo_runtime_e2e";
 
-const asAppendMessage = (message: unknown) => message as AppendMessage;
+const asAppendMessage = (message: AppendMessage) => message;
 
 async function waitForCondition<T>(
   producer: () => Promise<T>,

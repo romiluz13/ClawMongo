@@ -1,5 +1,5 @@
 {
-  "name": "@romiluz/clawmongo",
+  "name": "openclaw",
   "version": "2026.5.12-beta.1",
   "description": "MongoDB-native fork of OpenClaw with MongoDB-only memory for multi-channel AI agents",
   "keywords": [],
@@ -1759,6 +1759,7 @@
     "linkedom": "0.18.12",
     "markdown-it": "14.1.1",
     "minimatch": "10.2.5",
+    "mongodb": "^7.2.0",
     "node-edge-tts": "1.2.10",
     "openai": "6.37.0",
     "openshell": "0.1.0",

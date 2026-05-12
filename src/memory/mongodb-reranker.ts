@@ -131,10 +131,11 @@ export async function crossEncoderRerank(params: {
         return true;
       })
       .toSorted((a, b) => b.relevance_score - a.relevance_score)
-      .map((r) => ({
-        ...validCandidates[r.index],
-        score: Math.min(1, Math.max(0, r.relevance_score)),
-      }));
+      .map((r) =>
+        Object.assign({}, validCandidates[r.index], {
+          score: Math.min(1, Math.max(0, r.relevance_score)),
+        }),
+      );
 
     const latencyMs = Date.now() - rerankStart;
     emitTelemetry(db, prefix, {

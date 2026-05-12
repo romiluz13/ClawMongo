@@ -373,6 +373,10 @@ export type MemoryReadResult = {
   title?: string;
   key?: string;
   type?: string;
+  truncated?: boolean;
+  from?: number;
+  lines?: number;
+  nextFrom?: number;
   error?: string;
   disabled?: boolean;
 };
@@ -393,19 +397,10 @@ export type MemorySyncProgressUpdate = {
 };
 
 export type MemorySearchRuntimeDebug = {
-  backend: "builtin" | "qmd";
+  backend: "mongodb" | "builtin" | "qmd";
   configuredMode?: string;
   effectiveMode?: string;
   fallback?: string;
-};
-
-export type MemoryReadResult = {
-  text: string;
-  path: string;
-  truncated?: boolean;
-  from?: number;
-  lines?: number;
-  nextFrom?: number;
 };
 
 export type MemoryProviderStatus = {

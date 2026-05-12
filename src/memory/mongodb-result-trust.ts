@@ -122,9 +122,7 @@ function computeContradiction(result: MemorySearchResult): number {
 }
 
 export function hasOverdueReview(result: MemorySearchResult, now = new Date()): boolean {
-  return Boolean(
-    result.signals?.reviewAt instanceof Date && result.signals.reviewAt.getTime() < now.getTime(),
-  );
+  return result.signals?.reviewAt instanceof Date && result.signals.reviewAt.getTime() < now.getTime();
 }
 
 export function computeResultTrust(
@@ -178,7 +176,7 @@ export function computeImportanceDecay(
     return raw;
   }
   const daysSinceCreation = Math.max(0, (now.getTime() - createdAt.getTime()) / DAY_MS);
-  return clamp01(raw * Math.pow(0.5, daysSinceCreation / recencyHalfLifeDays));
+  return clamp01(raw * 0.5 ** (daysSinceCreation / recencyHalfLifeDays));
 }
 
 export function applyTrustAwareReranking(
@@ -254,11 +252,12 @@ export function applyTrustAwareReranking(
 
   scored.sort((left, right) => right.adjustedScore - left.adjustedScore);
 
-  return scored.map(({ result, trust, adjustedScore }) => ({
-    ...result,
-    score: adjustedScore,
-    trust,
-  }));
+  return scored.map(({ result, trust, adjustedScore }) =>
+    Object.assign({}, result, {
+      score: adjustedScore,
+      trust,
+    }),
+  );
 }
 
 function classifyTrustBand(score: number): MemorySearchTrustBand {

@@ -97,16 +97,13 @@ export async function configureMemorySection(
         if (!trimmed.startsWith("mongodb://") && !trimmed.startsWith("mongodb+srv://")) {
           return "URI must start with mongodb:// or mongodb+srv://";
         }
-        if (trimmed.includes(".mongodb.net")) {
-          return "ClawMongo targets local MongoDB (mongodb-atlas-local:preview Docker image). Atlas SaaS URIs (.mongodb.net) are not supported. Use a local connection string instead.";
-        }
         return undefined;
       },
     }),
     runtime,
   );
 
-  const uri = String(uriInput ?? "").trim() || existingUri;
+  const uri = (uriInput ?? "").trim() || existingUri;
   return configureMongoDBWithUri(nextConfig, runtime, isClawMongo, uri);
 }
 
@@ -323,7 +320,7 @@ async function offerKBImportConfigure(
     runtime,
   );
 
-  const resolvedPath = path.resolve(String(importPathInput).trim());
+  const resolvedPath = path.resolve(importPathInput.trim());
   const tagsInput = guardCancel(
     await text({
       message: "Tags (comma-separated, or leave blank)",
@@ -332,7 +329,7 @@ async function offerKBImportConfigure(
     }),
     runtime,
   );
-  const tagList = String(tagsInput ?? "")
+  const tagList = (tagsInput ?? "")
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);

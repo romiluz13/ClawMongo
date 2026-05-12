@@ -9,7 +9,7 @@ import {
   exactWorkspaceEntryExists,
 } from "../memory/root-memory-files.js";
 import { runCommandWithTimeout } from "../process/exec.js";
-import { isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
+import { isCronSessionKey, isSubagentSessionKey, parseAgentSessionKey } from "../routing/session-key.js";
 import { readStringValue } from "../shared/string-coerce.js";
 import { resolveUserPath } from "../utils.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR } from "./workspace-default.js";

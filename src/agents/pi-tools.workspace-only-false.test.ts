@@ -226,7 +226,7 @@ describe("FS tools with workspaceOnly=false", () => {
     const writeTool = requireTool(tools, "write");
     expect(tools.map((tool) => tool.name).toSorted()).toEqual(["read", "write"]);
 
-    const allowedResult = await writeTool!.execute("memory-flush-write", {
+    const allowedResult = await writeTool.execute("memory-flush-write", {
       path: memoryPath,
       content: "first line",
     });
