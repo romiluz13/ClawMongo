@@ -57,6 +57,8 @@ export type MemorySearchResult = {
   startLine: number;
   endLine: number;
   score: number;
+  vectorScore?: number;
+  textScore?: number;
   snippet: string;
   source: MemorySource;
   sourceType?: MemorySource;
@@ -378,12 +380,32 @@ export type MemoryReadResult = {
 export type MemoryEmbeddingProbeResult = {
   ok: boolean;
   error?: string;
+  checked?: boolean;
+  cached?: boolean;
+  checkedAtMs?: number;
+  cacheExpiresAtMs?: number;
 };
 
 export type MemorySyncProgressUpdate = {
   completed: number;
   total: number;
   label?: string;
+};
+
+export type MemorySearchRuntimeDebug = {
+  backend: "builtin" | "qmd";
+  configuredMode?: string;
+  effectiveMode?: string;
+  fallback?: string;
+};
+
+export type MemoryReadResult = {
+  text: string;
+  path: string;
+  truncated?: boolean;
+  from?: number;
+  lines?: number;
+  nextFrom?: number;
 };
 
 export type MemoryProviderStatus = {
@@ -404,6 +426,8 @@ export type MemoryProviderStatus = {
   fallback?: string | { from: string; reason: string };
   vector?: {
     enabled: boolean;
+    storeAvailable?: boolean;
+    semanticAvailable?: boolean;
     available?: boolean;
     loadError?: string;
     dims?: number;
@@ -426,25 +450,13 @@ export type MemoryProviderStatus = {
 export interface MemorySearchManager {
   search(
     query: string,
-    opts?: { maxResults?: number; minScore?: number; sessionKey?: string },
-  ): Promise<MemorySearchResult[]>;
-  searchDetailed?(request: MemorySearchRequest): Promise<MemorySearchResponse>;
-  buildDiscoveryProjection?(
-    request: MemoryDiscoveryProjectionRequest,
-  ): Promise<MemoryDiscoveryProjection>;
-  hydrateActiveSlate?(params?: {
-    scope?: MemoryScope;
-    scopeRef?: string;
-    maxItems?: number;
-  }): Promise<MemoryActiveSlate>;
-  buildContextBundle?(request?: MemoryContextBundleRequest): Promise<MemoryContextBundle>;
-  /** Direct KB search — optional, only available on MongoDB backend. */
-  searchKB?(
-    query: string,
     opts?: {
       maxResults?: number;
       minScore?: number;
-      filter?: { tags?: string[]; category?: string; source?: string };
+      sessionKey?: string;
+      qmdSearchModeOverride?: "query" | "search" | "vsearch";
+      onDebug?: (debug: MemorySearchRuntimeDebug) => void;
+      sources?: MemorySource[];
     },
   ): Promise<MemorySearchResult[]>;
   readFile(params: { relPath: string; from?: number; lines?: number }): Promise<MemoryReadResult>;
@@ -455,7 +467,9 @@ export interface MemorySearchManager {
     sessionFiles?: string[];
     progress?: (update: MemorySyncProgressUpdate) => void;
   }): Promise<void>;
+  getCachedEmbeddingAvailability?(): MemoryEmbeddingProbeResult | null;
   probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult>;
+  probeVectorStoreAvailability?(): Promise<boolean>;
   probeVectorAvailability(): Promise<boolean>;
   close?(): Promise<void>;
 }

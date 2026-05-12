@@ -1,8 +1,12 @@
 import { type ChannelDoctorAdapter } from "openclaw/plugin-sdk/channel-contract";
-import { type OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { collectProviderDangerousNameMatchingScopes } from "openclaw/plugin-sdk/runtime-doctor";
+import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { inspectDiscordAccount } from "./account-inspect.js";
+import { resolveDefaultDiscordAccountId } from "./accounts.js";
 import { normalizeCompatibilityConfig as normalizeDiscordCompatibilityConfig } from "./doctor-contract.js";
 import { DISCORD_LEGACY_CONFIG_RULES } from "./doctor-shared.js";
+import { isDiscordMutableAllowEntry } from "./security-doctor.js";
 
 type DiscordNumericIdHit = { path: string; entry: number; safe: boolean };
 
@@ -20,27 +24,6 @@ function asObjectRecord(value: unknown): Record<string, unknown> | null {
 
 function sanitizeForLog(value: string): string {
   return value.replace(/\p{Cc}+/gu, " ").trim();
-}
-
-function isDiscordMutableAllowEntry(raw: string): boolean {
-  const text = raw.trim();
-  if (!text || text === "*") {
-    return false;
-  }
-
-  const maybeMentionId = text.replace(/^<@!?/, "").replace(/>$/, "");
-  if (/^\d+$/.test(maybeMentionId)) {
-    return false;
-  }
-
-  for (const prefix of ["discord:", "user:", "pk:"]) {
-    if (!text.startsWith(prefix)) {
-      continue;
-    }
-    return text.slice(prefix.length).trim().length === 0;
-  }
-
-  return true;
 }
 
 function collectDiscordAccountScopes(
@@ -254,6 +237,26 @@ export function maybeRepairDiscordNumericIds(
   };
 }
 
+export function collectDiscordMissingEnvTokenWarnings(params: {
+  cfg: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
+}): string[] {
+  if (resolveDefaultDiscordAccountId(params.cfg) !== "default") {
+    return [];
+  }
+  const account = inspectDiscordAccount({
+    cfg: params.cfg,
+    accountId: "default",
+    envToken: params.env?.DISCORD_BOT_TOKEN ?? "",
+  });
+  if (!account.enabled || account.tokenStatus !== "missing" || account.tokenSource !== "none") {
+    return [];
+  }
+  return [
+    "- channels.discord: default account has no available bot token, and DISCORD_BOT_TOKEN is absent in this doctor environment. After migration, verify DISCORD_BOT_TOKEN is present in the state-dir .env or configure channels.discord.token / channels.discord.accounts.default.token as a SecretRef.",
+  ];
+}
+
 function collectDiscordMutableAllowlistWarnings(cfg: OpenClawConfig): string[] {
   const hits: Array<{ path: string; entry: string }> = [];
   const addHits = (pathLabel: string, list: unknown) => {
@@ -261,7 +264,7 @@ function collectDiscordMutableAllowlistWarnings(cfg: OpenClawConfig): string[] {
       return;
     }
     for (const entry of list) {
-      const text = String(entry).trim();
+      const text = normalizeOptionalString(String(entry)) ?? "";
       if (!text || text === "*" || !isDiscordMutableAllowEntry(text)) {
         continue;
       }
@@ -319,17 +322,19 @@ function collectDiscordMutableAllowlistWarnings(cfg: OpenClawConfig): string[] {
 }
 
 export const discordDoctor: ChannelDoctorAdapter = {
-  dmAllowFromMode: "topOrNested",
+  dmAllowFromMode: "topOnly",
   groupModel: "route",
   groupAllowFromFallbackToAllowFrom: false,
   warnOnEmptyGroupSenderAllowlist: false,
   legacyConfigRules: DISCORD_LEGACY_CONFIG_RULES,
   normalizeCompatibilityConfig: normalizeDiscordCompatibilityConfig,
-  collectPreviewWarnings: ({ cfg, doctorFixCommand }) =>
-    collectDiscordNumericIdWarnings({
+  collectPreviewWarnings: ({ cfg, doctorFixCommand, env }) => [
+    ...collectDiscordMissingEnvTokenWarnings({ cfg, env }),
+    ...collectDiscordNumericIdWarnings({
       hits: scanDiscordNumericIdEntries(cfg),
       doctorFixCommand,
     }),
+  ],
   collectMutableAllowlistWarnings: ({ cfg }) => collectDiscordMutableAllowlistWarnings(cfg),
   repairConfig: ({ cfg, doctorFixCommand }) => maybeRepairDiscordNumericIds(cfg, doctorFixCommand),
 };

@@ -1,19 +1,18 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { coerceSecretRef } from "openclaw/plugin-sdk/config-runtime";
+import { coerceSecretRef } from "openclaw/plugin-sdk/secret-ref-runtime";
 import { normalizeSecretInputString } from "openclaw/plugin-sdk/setup";
 import type { CoreConfig, MatrixConfig } from "../types.js";
 import { findMatrixAccountConfig } from "./account-config.js";
 import {
-  resolveMatrixConfigFieldPath,
-  resolveMatrixConfigPath,
+  resolveMatrixConfigPath as resolveMatrixConfigPathBase,
   shouldStoreMatrixAccountAtTopLevel,
 } from "./config-paths.js";
 
 export {
   resolveMatrixConfigFieldPath,
-  resolveMatrixConfigPath,
   shouldStoreMatrixAccountAtTopLevel,
 } from "./config-paths.js";
+export const resolveMatrixConfigPath = resolveMatrixConfigPathBase;
 
 export type MatrixAccountPatch = {
   name?: string | null;
@@ -30,6 +29,8 @@ export type MatrixAccountPatch = {
   encryption?: boolean | null;
   initialSyncLimit?: number | null;
   allowBots?: MatrixConfig["allowBots"] | null;
+  autoJoin?: MatrixConfig["autoJoin"] | null;
+  autoJoinAllowlist?: MatrixConfig["autoJoinAllowlist"] | null;
   dm?: MatrixConfig["dm"] | null;
   groupPolicy?: MatrixConfig["groupPolicy"] | null;
   groupAllowFrom?: MatrixConfig["groupAllowFrom"] | null;
@@ -203,6 +204,14 @@ export function updateMatrixAccountConfig(
       nextAccount.allowBots = patch.allowBots;
     }
   }
+  if (patch.autoJoin !== undefined) {
+    if (patch.autoJoin === null) {
+      delete nextAccount.autoJoin;
+    } else {
+      nextAccount.autoJoin = patch.autoJoin;
+    }
+  }
+  applyNullableArrayField(nextAccount, "autoJoinAllowlist", patch.autoJoinAllowlist);
   if (patch.dm !== undefined) {
     if (patch.dm === null) {
       delete nextAccount.dm;
@@ -245,16 +254,20 @@ export function updateMatrixAccountConfig(
   );
 
   if (shouldStoreMatrixAccountAtTopLevel(cfg, normalizedAccountId)) {
-    const { accounts: _ignoredAccounts, defaultAccount, ...baseMatrix } = matrix;
+    const { accounts: _ignoredAccounts, defaultAccount } = matrix;
+    const {
+      accounts: _ignoredNextAccounts,
+      defaultAccount: _ignoredNextDefaultAccount,
+      ...topLevelAccount
+    } = nextAccount;
     return {
       ...cfg,
       channels: {
         ...cfg.channels,
         matrix: {
-          ...baseMatrix,
           ...(defaultAccount ? { defaultAccount } : {}),
           enabled: true,
-          ...nextAccount,
+          ...topLevelAccount,
         },
       },
     };

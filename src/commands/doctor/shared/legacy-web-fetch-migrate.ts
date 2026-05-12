@@ -1,26 +1,12 @@
-import type { OpenClawConfig } from "../../../config/config.js";
 import { mergeMissing } from "../../../config/legacy.shared.js";
-
-type JsonRecord = Record<string, unknown>;
+import {
+  cloneRecord,
+  ensureRecord,
+  hasOwnKey,
+  isRecord,
+  type JsonRecord,
+} from "./legacy-config-record-shared.js";
 const DANGEROUS_RECORD_KEYS = new Set(["__proto__", "prototype", "constructor"]);
-
-function isRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function cloneRecord<T extends JsonRecord>(value: T | undefined): T {
-  return { ...value } as T;
-}
-
-function ensureRecord(target: JsonRecord, key: string): JsonRecord {
-  const current = target[key];
-  if (isRecord(current)) {
-    return current;
-  }
-  const next: JsonRecord = {};
-  target[key] = next;
-  return next;
-}
 
 function resolveLegacyFetchConfig(raw: unknown): JsonRecord | undefined {
   if (!isRecord(raw)) {
@@ -29,10 +15,6 @@ function resolveLegacyFetchConfig(raw: unknown): JsonRecord | undefined {
   const tools = isRecord(raw.tools) ? raw.tools : undefined;
   const web = isRecord(tools?.web) ? tools.web : undefined;
   return isRecord(web?.fetch) ? web.fetch : undefined;
-}
-
-function hasOwnKey(target: JsonRecord, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(target, key);
 }
 
 function copyLegacyFirecrawlFetchConfig(fetch: JsonRecord): JsonRecord | undefined {
@@ -102,19 +84,6 @@ export function listLegacyWebFetchConfigPaths(raw: unknown): string[] {
   return Object.keys(firecrawl).map((key) => `tools.web.fetch.firecrawl.${key}`);
 }
 
-export function normalizeLegacyWebFetchConfig<T>(raw: T): T {
-  if (!isRecord(raw)) {
-    return raw;
-  }
-
-  const fetch = resolveLegacyFetchConfig(raw);
-  if (!fetch) {
-    return raw;
-  }
-
-  return normalizeLegacyWebFetchConfigRecord(raw).config;
-}
-
 export function migrateLegacyWebFetchConfig<T>(raw: T): { config: T; changes: string[] } {
   if (!isRecord(raw) || !hasMappedLegacyWebFetchConfig(raw)) {
     return { config: raw, changes: [] };
@@ -161,15 +130,4 @@ function normalizeLegacyWebFetchConfigRecord<T extends JsonRecord>(
   }
 
   return { config: nextRoot, changes };
-}
-
-export function resolvePluginWebFetchConfig(
-  config: OpenClawConfig | undefined,
-  pluginId: string,
-): Record<string, unknown> | undefined {
-  const pluginConfig = config?.plugins?.entries?.[pluginId]?.config;
-  if (!isRecord(pluginConfig)) {
-    return undefined;
-  }
-  return isRecord(pluginConfig.webFetch) ? pluginConfig.webFetch : undefined;
 }

@@ -46,6 +46,15 @@ export {
   getMemorySearchManager,
   type MemorySearchManagerResult,
 } from "./search-manager.js";
+export {
+  memongoBridgeBuildContextBundle,
+  memongoBridgeBuildDiscoveryProjection,
+  memongoBridgeProbeEmbedding,
+  memongoBridgeScanNovelty,
+  memongoBridgeSearch,
+  memongoBridgeStatus,
+  memongoBridgeWriteStructuredMemory,
+} from "./memongo-bridge.js";
 
 // v2 modules
 export {

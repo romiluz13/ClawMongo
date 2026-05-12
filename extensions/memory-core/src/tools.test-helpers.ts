@@ -3,7 +3,7 @@ import type { OpenClawConfig } from "../api.js";
 import { createMemoryGetTool, createMemorySearchTool } from "./tools.js";
 
 export function asOpenClawConfig(config: Partial<OpenClawConfig>): OpenClawConfig {
-  return config as OpenClawConfig;
+  return config;
 }
 
 export function createDefaultMemoryToolConfig(): OpenClawConfig {
@@ -15,10 +15,12 @@ export function createDefaultMemoryToolConfig(): OpenClawConfig {
 
 export function createMemorySearchToolOrThrow(params?: {
   config?: OpenClawConfig;
+  agentId?: string;
   agentSessionKey?: string;
 }) {
   const tool = createMemorySearchTool({
     config: params?.config ?? createDefaultMemoryToolConfig(),
+    ...(params?.agentId ? { agentId: params.agentId } : {}),
     ...(params?.agentSessionKey ? { agentSessionKey: params.agentSessionKey } : {}),
   });
   if (!tool) {
@@ -62,5 +64,10 @@ export function expectUnavailableMemorySearchDetails(
     error: params.error,
     warning: params.warning,
     action: params.action,
+    debug: {
+      warning: params.warning,
+      action: params.action,
+      error: params.error,
+    },
   });
 }

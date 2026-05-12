@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { formatPairingApproveHint } from "../channels/plugins/helpers.js";
 import type { GroupPolicy } from "../config/types.base.js";
 import {
+  coerceNativeSetting,
   createDangerousNameMatchingMutableAllowlistWarningCollector,
   createRestrictSendersChannelSecurity,
+  normalizeAllowFromList,
 } from "./channel-policy.js";
 
 describe("createRestrictSendersChannelSecurity", () => {
-  it("builds dm policy resolution and open-group warnings from one descriptor", async () => {
+  it("builds dm policy resolution and open-group warnings from one descriptor", () => {
     const security = createRestrictSendersChannelSecurity<{
       accountId: string;
       allowFrom?: string[];
@@ -83,12 +85,12 @@ describe("createDangerousNameMatchingMutableAllowlistWarningCollector", () => {
           },
         } as never,
       }),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("mutable allowlist entry"),
-        expect.stringContaining("channels.irc.allowFrom: charlie"),
-      ]),
-    );
+    ).toEqual([
+      "- Found 1 mutable allowlist entry across irc while name matching is disabled by default.",
+      "- channels.irc.allowFrom: charlie",
+      "- Option A (break-glass): enable channels.irc.dangerouslyAllowNameMatching=true to keep name/email/nick matching.",
+      "- Option B (recommended): resolve names/emails/nicks to stable sender IDs and rewrite the allowlist entries.",
+    ]);
   });
 
   it("skips scopes that explicitly allow dangerous name matching", () => {
@@ -103,6 +105,31 @@ describe("createDangerousNameMatchingMutableAllowlistWarningCollector", () => {
           },
         } as never,
       }),
-    ).toEqual([]);
+    ).toStrictEqual([]);
+  });
+});
+
+describe("normalizeAllowFromList", () => {
+  it("normalizes strings and numbers into trimmed entries", () => {
+    expect(normalizeAllowFromList(["  abc ", 42, "", "   "])).toEqual(["abc", "42"]);
+  });
+
+  it("returns an empty list for non-arrays", () => {
+    expect(normalizeAllowFromList(undefined)).toStrictEqual([]);
+    expect(normalizeAllowFromList(null)).toStrictEqual([]);
+  });
+});
+
+describe("coerceNativeSetting", () => {
+  it("keeps boolean and auto values", () => {
+    expect(coerceNativeSetting(true)).toBe(true);
+    expect(coerceNativeSetting(false)).toBe(false);
+    expect(coerceNativeSetting("auto")).toBe("auto");
+  });
+
+  it("drops unsupported values", () => {
+    expect(coerceNativeSetting("true")).toBeUndefined();
+    expect(coerceNativeSetting("on")).toBeUndefined();
+    expect(coerceNativeSetting(1)).toBeUndefined();
   });
 });

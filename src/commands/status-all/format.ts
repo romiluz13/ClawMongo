@@ -7,9 +7,10 @@ import {
   resolveUpdateChannelDisplay,
 } from "../../infra/update-channels.js";
 import { formatGitInstallLabel, type UpdateCheckResult } from "../../infra/update-check.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { VERSION } from "../../version.js";
 import { formatUpdateOneLiner, resolveUpdateAvailability } from "../status.update.js";
 
-export { formatDurationPrecise } from "../../infra/format-time/format-duration.ts";
 export { formatTimeAgo } from "../../infra/format-time/format-relative.ts";
 
 export type StatusOverviewRow = {
@@ -18,6 +19,43 @@ export type StatusOverviewRow = {
 };
 
 type StatusUpdateLike = UpdateCheckResult;
+
+type StatusGatewayConnection = {
+  url: string;
+  urlSource?: string;
+};
+
+type StatusGatewayProbe = {
+  connectLatencyMs?: number | null;
+  error?: string | null;
+} | null;
+
+type StatusGatewayProbeAuth = {
+  token?: string;
+  password?: string;
+} | null;
+
+type StatusGatewaySelf =
+  | {
+      host?: string | null;
+      ip?: string | null;
+      version?: string | null;
+      platform?: string | null;
+    }
+  | null
+  | undefined;
+
+type StatusManagedService = {
+  label: string;
+  installed: boolean | null;
+  managedByOpenClaw?: boolean;
+  loadedText: string;
+  runtimeShort?: string | null;
+  runtime?: {
+    status?: string | null;
+    pid?: number | null;
+  } | null;
+};
 
 export function resolveStatusUpdateChannelInfo(params: {
   updateConfigChannel?: string | null;
@@ -31,6 +69,7 @@ export function resolveStatusUpdateChannelInfo(params: {
 }) {
   return resolveUpdateChannelDisplay({
     configChannel: normalizeUpdateChannel(params.updateConfigChannel),
+    currentVersion: VERSION,
     installKind: params.update.installKind ?? "unknown",
     gitTag: params.update.git?.tag ?? null,
     gitBranch: params.update.git?.branch ?? null,
@@ -55,7 +94,7 @@ export function buildStatusUpdateSurface(params: {
 }
 
 export function formatStatusDashboardValue(value: string | null | undefined): string {
-  const trimmed = value?.trim();
+  const trimmed = normalizeOptionalString(value);
   return trimmed && trimmed.length > 0 ? trimmed : "disabled";
 }
 
@@ -74,7 +113,9 @@ export function formatStatusTailscaleValue(params: {
   const decorateWarn = params.decorateWarn ?? ((value: string) => value);
   if (params.tailscaleMode === "off") {
     const suffix = [
-      params.includeBackendStateWhenOff && params.backendState ? params.backendState : null,
+      params.includeBackendStateWhenOff && params.backendState
+        ? `daemon ${params.backendState}`
+        : null,
       params.includeDnsNameWhenOff && params.dnsName ? params.dnsName : null,
     ]
       .filter(Boolean)
@@ -131,6 +172,7 @@ export function resolveStatusDashboardUrl(params: {
     bind: params.cfg.gateway?.bind,
     customBindHost: params.cfg.gateway?.customBindHost,
     basePath: params.cfg.gateway?.controlUi?.basePath,
+    tlsEnabled: params.cfg.gateway?.tls?.enabled === true,
   }).httpUrl;
 }
 
@@ -153,7 +195,7 @@ export function buildStatusOverviewRows(params: {
   const rows: StatusOverviewRow[] = [...(params.prefixRows ?? [])];
   rows.push(
     { Item: "Dashboard", Value: params.dashboardValue },
-    { Item: "Tailscale", Value: params.tailscaleValue },
+    { Item: "Tailscale exposure", Value: params.tailscaleValue },
     { Item: "Channel", Value: params.channelLabel },
   );
   if (params.gitLabel) {
@@ -196,51 +238,14 @@ export function buildStatusOverviewSurfaceRows(params: {
   decorateTailscaleWarn?: (value: string) => string;
   gatewayMode: "local" | "remote";
   remoteUrlMissing: boolean;
-  gatewayConnection: {
-    url: string;
-    urlSource?: string;
-  };
+  gatewayConnection: StatusGatewayConnection;
   gatewayReachable: boolean;
-  gatewayProbe: {
-    connectLatencyMs?: number | null;
-    error?: string | null;
-  } | null;
-  gatewayProbeAuth: {
-    token?: string;
-    password?: string;
-  } | null;
+  gatewayProbe: StatusGatewayProbe;
+  gatewayProbeAuth: StatusGatewayProbeAuth;
   gatewayProbeAuthWarning?: string | null;
-  gatewaySelf:
-    | {
-        host?: string | null;
-        ip?: string | null;
-        version?: string | null;
-        platform?: string | null;
-      }
-    | null
-    | undefined;
-  gatewayService: {
-    label: string;
-    installed: boolean | null;
-    managedByOpenClaw?: boolean;
-    loadedText: string;
-    runtimeShort?: string | null;
-    runtime?: {
-      status?: string | null;
-      pid?: number | null;
-    } | null;
-  };
-  nodeService: {
-    label: string;
-    installed: boolean | null;
-    managedByOpenClaw?: boolean;
-    loadedText: string;
-    runtimeShort?: string | null;
-    runtime?: {
-      status?: string | null;
-      pid?: number | null;
-    } | null;
-  };
+  gatewaySelf: StatusGatewaySelf;
+  gatewayService: StatusManagedService;
+  nodeService: StatusManagedService;
   nodeOnlyGateway?: {
     gatewayValue: string;
   } | null;
@@ -325,17 +330,7 @@ export function formatGatewayAuthUsed(
   return "none";
 }
 
-export function formatGatewaySelfSummary(
-  gatewaySelf:
-    | {
-        host?: string | null;
-        ip?: string | null;
-        version?: string | null;
-        platform?: string | null;
-      }
-    | null
-    | undefined,
-): string | null {
+export function formatGatewaySelfSummary(gatewaySelf: StatusGatewaySelf): string | null {
   return gatewaySelf?.host || gatewaySelf?.ip || gatewaySelf?.version || gatewaySelf?.platform
     ? [
         gatewaySelf.host ? gatewaySelf.host : null,
@@ -351,19 +346,10 @@ export function formatGatewaySelfSummary(
 export function buildGatewayStatusSummaryParts(params: {
   gatewayMode: "local" | "remote";
   remoteUrlMissing: boolean;
-  gatewayConnection: {
-    url: string;
-    urlSource?: string;
-  };
+  gatewayConnection: StatusGatewayConnection;
   gatewayReachable: boolean;
-  gatewayProbe: {
-    connectLatencyMs?: number | null;
-    error?: string | null;
-  } | null;
-  gatewayProbeAuth: {
-    token?: string;
-    password?: string;
-  } | null;
+  gatewayProbe: StatusGatewayProbe;
+  gatewayProbeAuth: StatusGatewayProbeAuth;
 }): {
   targetText: string;
   targetTextWithSource: string;
@@ -401,50 +387,13 @@ export function buildStatusGatewaySurfaceValues(params: {
   cfg: Pick<OpenClawConfig, "gateway">;
   gatewayMode: "local" | "remote";
   remoteUrlMissing: boolean;
-  gatewayConnection: {
-    url: string;
-    urlSource?: string;
-  };
+  gatewayConnection: StatusGatewayConnection;
   gatewayReachable: boolean;
-  gatewayProbe: {
-    connectLatencyMs?: number | null;
-    error?: string | null;
-  } | null;
-  gatewayProbeAuth: {
-    token?: string;
-    password?: string;
-  } | null;
-  gatewaySelf:
-    | {
-        host?: string | null;
-        ip?: string | null;
-        version?: string | null;
-        platform?: string | null;
-      }
-    | null
-    | undefined;
-  gatewayService: {
-    label: string;
-    installed: boolean | null;
-    managedByOpenClaw?: boolean;
-    loadedText: string;
-    runtimeShort?: string | null;
-    runtime?: {
-      status?: string | null;
-      pid?: number | null;
-    } | null;
-  };
-  nodeService: {
-    label: string;
-    installed: boolean | null;
-    managedByOpenClaw?: boolean;
-    loadedText: string;
-    runtimeShort?: string | null;
-    runtime?: {
-      status?: string | null;
-      pid?: number | null;
-    } | null;
-  };
+  gatewayProbe: StatusGatewayProbe;
+  gatewayProbeAuth: StatusGatewayProbeAuth;
+  gatewaySelf: StatusGatewaySelf;
+  gatewayService: StatusManagedService;
+  nodeService: StatusManagedService;
   nodeOnlyGateway?: {
     gatewayValue: string;
   } | null;
@@ -515,6 +464,7 @@ export function buildGatewayStatusJsonPayload(params: {
     | {
         connectLatencyMs?: number | null;
         error?: string | null;
+        health?: unknown;
       }
     | null
     | undefined;
@@ -539,6 +489,13 @@ export function buildGatewayStatusJsonPayload(params: {
     self: params.gatewaySelf ?? null,
     error: params.gatewayProbe?.error ?? null,
     authWarning: params.gatewayProbeAuthWarning ?? null,
+    ...(params.gatewayProbe?.health &&
+    typeof params.gatewayProbe.health === "object" &&
+    "modelPricing" in params.gatewayProbe.health
+      ? {
+          modelPricing: (params.gatewayProbe.health as { modelPricing?: unknown }).modelPricing,
+        }
+      : {}),
   };
 }
 

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import { normalizeOptionalString } from "../../../shared/string-coerce.js";
 import {
   AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN,
   AUTH_RATE_LIMIT_SCOPE_SHARED_SECRET,
@@ -31,7 +32,7 @@ export type ConnectAuthState = {
   deviceTokenCandidateSource?: DeviceTokenCandidateSource;
 };
 
-type VerifyDeviceTokenResult = { ok: boolean };
+type VerifyDeviceTokenResult = { ok: boolean; reason?: string };
 type VerifyBootstrapTokenResult = { ok: boolean; reason?: string };
 
 export type ConnectAuthDecision = {
@@ -40,19 +41,28 @@ export type ConnectAuthDecision = {
   authMethod: GatewayAuthResult["method"];
 };
 
-function trimToUndefined(value: string | undefined): string | undefined {
-  if (!value) {
-    return undefined;
+function mapDeviceTokenAuthFailureReason(params: {
+  tokenCheckReason?: string;
+  candidateSource?: DeviceTokenCandidateSource;
+  fallbackReason?: string;
+}): string {
+  if (
+    params.tokenCheckReason === "scope-mismatch" ||
+    params.tokenCheckReason === "scope_mismatch"
+  ) {
+    return "scope_mismatch";
   }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  if (params.candidateSource === "explicit-device-token") {
+    return "device_token_mismatch";
+  }
+  return params.fallbackReason ?? "device_token_mismatch";
 }
 
 function resolveSharedConnectAuth(
   connectAuth: HandshakeConnectAuth | null | undefined,
 ): { token?: string; password?: string } | undefined {
-  const token = trimToUndefined(connectAuth?.token);
-  const password = trimToUndefined(connectAuth?.password);
+  const token = normalizeOptionalString(connectAuth?.token);
+  const password = normalizeOptionalString(connectAuth?.password);
   if (!token && !password) {
     return undefined;
   }
@@ -63,21 +73,15 @@ function resolveDeviceTokenCandidate(connectAuth: HandshakeConnectAuth | null | 
   token?: string;
   source?: DeviceTokenCandidateSource;
 } {
-  const explicitDeviceToken = trimToUndefined(connectAuth?.deviceToken);
+  const explicitDeviceToken = normalizeOptionalString(connectAuth?.deviceToken);
   if (explicitDeviceToken) {
     return { token: explicitDeviceToken, source: "explicit-device-token" };
   }
-  const fallbackToken = trimToUndefined(connectAuth?.token);
+  const fallbackToken = normalizeOptionalString(connectAuth?.token);
   if (!fallbackToken) {
     return {};
   }
   return { token: fallbackToken, source: "shared-token-fallback" };
-}
-
-function resolveBootstrapTokenCandidate(
-  connectAuth: HandshakeConnectAuth | null | undefined,
-): string | undefined {
-  return trimToUndefined(connectAuth?.bootstrapToken);
 }
 
 export async function resolveConnectAuthState(params: {
@@ -93,7 +97,7 @@ export async function resolveConnectAuthState(params: {
   const sharedConnectAuth = resolveSharedConnectAuth(params.connectAuth);
   const sharedAuthProvided = Boolean(sharedConnectAuth);
   const bootstrapTokenCandidate = params.hasDeviceIdentity
-    ? resolveBootstrapTokenCandidate(params.connectAuth)
+    ? normalizeOptionalString(params.connectAuth?.bootstrapToken)
     : undefined;
   const { token: deviceTokenCandidate, source: deviceTokenCandidateSource } =
     params.hasDeviceIdentity ? resolveDeviceTokenCandidate(params.connectAuth) : {};
@@ -229,10 +233,11 @@ export async function resolveConnectAuthDecision(params: {
     } else {
       authResult = {
         ok: false,
-        reason:
-          params.state.deviceTokenCandidateSource === "explicit-device-token"
-            ? "device_token_mismatch"
-            : (authResult.reason ?? "device_token_mismatch"),
+        reason: mapDeviceTokenAuthFailureReason({
+          tokenCheckReason: tokenCheck.reason,
+          candidateSource: params.state.deviceTokenCandidateSource,
+          fallbackReason: authResult.reason,
+        }),
       };
       params.rateLimiter?.recordFailure(params.clientIp, AUTH_RATE_LIMIT_SCOPE_DEVICE_TOKEN);
     }

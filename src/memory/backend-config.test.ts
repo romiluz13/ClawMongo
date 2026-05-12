@@ -43,8 +43,9 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("openclaw");
     expect(resolved.mongodb!.collectionPrefix).toBe("openclaw_main_");
-    expect(resolved.mongodb!.deploymentProfile).toBe("community-mongot");
+    expect(resolved.mongodb!.deploymentProfile).toBe("atlas-local-preview");
     expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.autoEmbedModel).toBe("voyage-4-large");
     expect(resolved.mongodb!.fusionMethod).toBe("scoreFusion");
     expect(resolved.mongodb!.quantization).toBe("none");
     expect(resolved.mongodb!.relevance.enabled).toBe(true);
@@ -82,7 +83,7 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.uri).toBe("mongodb://localhost:27017");
     expect(resolved.mongodb!.database).toBe("mydb");
     expect(resolved.mongodb!.collectionPrefix).toBe("custom_");
-    expect(resolved.mongodb!.deploymentProfile).toBe("community-mongot");
+    expect(resolved.mongodb!.deploymentProfile).toBe("atlas-local-preview");
     expect(resolved.mongodb!.embeddingMode).toBe("automated");
     expect(resolved.mongodb!.fusionMethod).toBe("rankFusion");
     expect(resolved.mongodb!.quantization).toBe("scalar");
@@ -270,7 +271,23 @@ describe("resolveMemoryBackendConfig", () => {
     expect(resolved.mongodb!.changeStreamDebounceMs).toBe(1000);
   });
 
-  it("defaults embeddingMode to automated for community-mongot profile", () => {
+  it("defaults embeddingMode to automated for local preview profile", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb://localhost:27017",
+          deploymentProfile: "atlas-local-preview",
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.autoEmbedModel).toBe("voyage-4-large");
+  });
+
+  it("treats community-mongot as an atlas-local-preview compatibility alias", () => {
     const cfg = {
       agents: { defaults: { workspace: "/tmp/memory-test" } },
       memory: {
@@ -282,7 +299,22 @@ describe("resolveMemoryBackendConfig", () => {
       },
     } as OpenClawConfig;
     const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
-    expect(resolved.mongodb!.embeddingMode).toBe("automated");
+    expect(resolved.mongodb!.deploymentProfile).toBe("atlas-local-preview");
+  });
+
+  it("infers atlas-cloud for Atlas SRV URIs", () => {
+    const cfg = {
+      agents: { defaults: { workspace: "/tmp/memory-test" } },
+      memory: {
+        backend: "mongodb",
+        mongodb: {
+          uri: "mongodb+srv://cluster0.example.mongodb.net",
+        },
+      },
+    } as OpenClawConfig;
+    const resolved = resolveMemoryBackendConfig({ cfg, agentId: "main" });
+    expect(resolved.mongodb!.deploymentProfile).toBe("atlas-cloud");
+    expect(resolved.mongodb!.autoEmbedModel).toBe("voyage-3.5");
   });
 
   it("rejects unsupported community-bare profile", () => {

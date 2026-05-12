@@ -1,4 +1,7 @@
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
+import type { SessionWriteLockAcquireTimeoutConfig } from "../../agents/session-write-lock.js";
+import { appendSessionTranscriptMessage } from "../../config/sessions/transcript-append.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 
 type AppendMessageArg = Parameters<SessionManager["appendMessage"]>[0];
@@ -40,7 +43,7 @@ function resolveInjectedAssistantContent(params: {
   return [{ type: "text", text: `${labelPrefix}${params.message}` }];
 }
 
-export function appendInjectedAssistantMessageToTranscript(params: {
+export async function appendInjectedAssistantMessageToTranscript(params: {
   transcriptPath: string;
   message: string;
   label?: string;
@@ -49,7 +52,8 @@ export function appendInjectedAssistantMessageToTranscript(params: {
   idempotencyKey?: string;
   abortMeta?: GatewayInjectedAbortMeta;
   now?: number;
-}): GatewayInjectedTranscriptAppendResult {
+  config?: SessionWriteLockAcquireTimeoutConfig;
+}): Promise<GatewayInjectedTranscriptAppendResult> {
   const now = params.now ?? Date.now();
   const usage = {
     input: 0,
@@ -99,13 +103,13 @@ export function appendInjectedAssistantMessageToTranscript(params: {
   };
 
   try {
-    // IMPORTANT: Use SessionManager so the entry is attached to the current leaf via parentId.
-    // Raw jsonl appends break the parent chain and can hide compaction summaries from context.
-    // Architecture boundary: injected transcript entries (abort markers, system notes) are
-    // transcript-level bookkeeping and intentionally bypass MongoDB canonical persistence.
-    // Canonical conversation events persist via guardSessionManager in attempt.ts/compact.ts.
-    const sessionManager = SessionManager.open(params.transcriptPath);
-    const messageId = sessionManager.appendMessage(messageBody);
+    const { messageId } = await appendSessionTranscriptMessage({
+      transcriptPath: params.transcriptPath,
+      message: messageBody,
+      now,
+      useRawWhenLinear: true,
+      config: params.config,
+    });
     emitSessionTranscriptUpdate({
       sessionFile: params.transcriptPath,
       message: messageBody,
@@ -113,6 +117,6 @@ export function appendInjectedAssistantMessageToTranscript(params: {
     });
     return { ok: true, messageId, message: messageBody };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    return { ok: false, error: formatErrorMessage(err) };
   }
 }

@@ -1,7 +1,7 @@
-import { serializePayload } from "@buape/carbon";
 import { ComponentType } from "discord-api-types/v10";
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import { describe, expect, it, vi } from "vitest";
+import { serializePayload } from "../internal/discord.js";
+import { EMPTY_DISCORD_TEST_CONFIG } from "../test-support/config.js";
 import {
   DISCORD_CUSTOM_ID_MAX_CHARS,
   DISCORD_MODEL_PICKER_MODEL_PAGE_SIZE,
@@ -29,19 +29,24 @@ vi.mock("openclaw/plugin-sdk/models-provider-runtime", () => ({
 type SerializedComponent = {
   type: number;
   custom_id?: string;
-  options?: Array<{ value: string; default?: boolean }>;
+  options?: Array<{ label?: string; value: string; default?: boolean }>;
   components?: SerializedComponent[];
 };
 
+const DISCORD_CONTAINER_COMPONENT_TYPE: SerializedComponent["type"] = ComponentType.Container;
+const DISCORD_ACTION_ROW_COMPONENT_TYPE: SerializedComponent["type"] = ComponentType.ActionRow;
+const DISCORD_STRING_SELECT_COMPONENT_TYPE: SerializedComponent["type"] =
+  ComponentType.StringSelect;
+
 function extractContainerRows(components?: SerializedComponent[]): SerializedComponent[] {
   const container = components?.find(
-    (component) => component.type === Number(ComponentType.Container),
+    (component) => component.type === DISCORD_CONTAINER_COMPONENT_TYPE,
   );
   if (!container) {
     return [];
   }
   return (container.components ?? []).filter(
-    (component) => component.type === Number(ComponentType.ActionRow),
+    (component) => component.type === DISCORD_ACTION_ROW_COMPONENT_TYPE,
   );
 }
 
@@ -75,7 +80,7 @@ function requireValue<T>(value: T | null | undefined, message: string): T {
 describe("loadDiscordModelPickerData", () => {
   it("reuses buildModelsProviderData as source of truth with agent scope", async () => {
     const expected = createModelsProviderData({ openai: ["gpt-4o"] });
-    const cfg = {} as OpenClawConfig;
+    const cfg = EMPTY_DISCORD_TEST_CONFIG;
     buildModelsProviderDataMock.mockResolvedValue(expected);
 
     const result = await loadDiscordModelPickerData(cfg, "support");
@@ -158,6 +163,7 @@ describe("Discord model picker custom_id", () => {
       view: "models",
       u: "42",
       p: "openai",
+      r: "codex",
       pg: "1",
       mi: "7",
     });
@@ -168,6 +174,7 @@ describe("Discord model picker custom_id", () => {
       view: "models",
       userId: "42",
       provider: "openai",
+      runtime: "codex",
       page: 1,
       modelIndex: 7,
     });
@@ -385,9 +392,8 @@ describe("Discord model picker rendering", () => {
       return parsed?.action === "provider";
     });
     expect(providerButtons).toHaveLength(Object.keys(entries).length);
-    expect(allButtons.some((component) => (component.custom_id ?? "").includes(";a=nav;"))).toBe(
-      false,
-    );
+    const customIds = allButtons.map((component) => component.custom_id ?? "");
+    expect(customIds.every((customId) => !customId.includes(";a=nav;"))).toBe(true);
   });
 
   it("does not render navigation buttons even when provider count exceeds one page", () => {
@@ -412,9 +418,8 @@ describe("Discord model picker rendering", () => {
     expect(rows.length).toBeGreaterThan(0);
 
     const allButtons = rows.flatMap((row) => row.components ?? []);
-    expect(allButtons.some((component) => (component.custom_id ?? "").includes(";a=nav;"))).toBe(
-      false,
-    );
+    const customIds = allButtons.map((component) => component.custom_id ?? "");
+    expect(customIds.every((customId) => !customId.includes(";a=nav;"))).toBe(true);
   });
 
   it("supports classic fallback rendering with content + action rows", () => {
@@ -484,24 +489,28 @@ describe("Discord model picker rendering", () => {
     expect(rows).toHaveLength(3);
 
     const providerSelect = rows[0]?.components?.find(
-      (component) => component.type === Number(ComponentType.StringSelect),
+      (component) => component.type === DISCORD_STRING_SELECT_COMPONENT_TYPE,
     );
     if (!providerSelect) {
       throw new Error("models view did not render a provider select");
     }
     expect(providerSelect.options?.length).toBe(2);
-    expect(providerSelect.options?.find((option) => option.value === "openai")?.default).toBe(true);
+    const openaiProviderOption = providerSelect.options?.find(
+      (option) => option.value === "openai",
+    );
+    expect(openaiProviderOption?.default).toBe(true);
     const parsedProviderState = parseDiscordModelPickerCustomId(providerSelect.custom_id ?? "");
     expect(parsedProviderState?.action).toBe("provider");
 
     const modelSelect = rows[1]?.components?.find(
-      (component) => component.type === Number(ComponentType.StringSelect),
+      (component) => component.type === DISCORD_STRING_SELECT_COMPONENT_TYPE,
     );
     if (!modelSelect) {
       throw new Error("models view did not render a model select");
     }
     expect(modelSelect.options?.length).toBe(3);
-    expect(modelSelect.options?.find((option) => option.value === "o3")?.default).toBe(true);
+    const o3ModelOption = modelSelect.options?.find((option) => option.value === "o3");
+    expect(o3ModelOption?.default).toBe(true);
 
     const parsedModelSelectState = parseDiscordModelPickerCustomId(modelSelect.custom_id ?? "");
     expect(parsedModelSelectState?.action).toBe("model");

@@ -5,6 +5,8 @@ export type MemoryBackend = "mongodb" | "builtin" | "qmd";
 // QMD compatibility types — dead code in ClawMongo (no QMD runtime path).
 // Kept so packages/memory-host-sdk/src/host/backend-config.ts compiles.
 export type MemoryQmdSearchMode = "query" | "search" | "vsearch";
+export type MemoryQmdStartupMode = "off" | "idle" | "immediate";
+
 export type MemoryQmdConfig = {
   command?: string;
   mcporter?: MemoryQmdMcporterConfig;
@@ -36,6 +38,8 @@ export type MemoryQmdUpdateConfig = {
   interval?: string;
   debounceMs?: number;
   onBoot?: boolean;
+  startup?: MemoryQmdStartupMode;
+  startupDelayMs?: number;
   waitForBootSync?: boolean;
   embedInterval?: string;
   commandTimeoutMs?: number;
@@ -49,9 +53,22 @@ export type MemoryQmdLimitsConfig = {
   timeoutMs?: number;
 };
 
-export type MemoryMongoDBDeploymentProfile = "community-mongot";
+export type MemoryMongoDBDeploymentProfile =
+  | "atlas-local-preview"
+  | "community-mongot"
+  | "atlas-cloud";
 
 export type MemoryMongoDBEmbeddingMode = "automated";
+export type MemoryMongoDBAutoEmbedModel =
+  | "voyage-4-large"
+  | "voyage-4"
+  | "voyage-4-lite"
+  | "voyage-3-large"
+  | "voyage-3.5"
+  | "voyage-3.5-lite"
+  | "voyage-3"
+  | "voyage-3-lite"
+  | "voyage-code-3";
 
 export type MemoryMongoDBFusionMethod = "scoreFusion" | "rankFusion" | "js-merge";
 
@@ -67,10 +84,12 @@ export type MemoryMongoDBConfig = {
   database?: string;
   /** Collection prefix. Default: "openclaw_" */
   collectionPrefix?: string;
-  /** Supported ClawMongo deployment profile. Default: "community-mongot" */
+  /** Supported ClawMongo deployment profile. Default: "atlas-local-preview" */
   deploymentProfile?: MemoryMongoDBDeploymentProfile;
   /** Supported ClawMongo embedding mode. Default: "automated" */
   embeddingMode?: MemoryMongoDBEmbeddingMode;
+  /** MongoDB Vector Search autoEmbed model. Defaults by deployment profile. */
+  autoEmbedModel?: MemoryMongoDBAutoEmbedModel;
   /** Hybrid search fusion method. Default: "scoreFusion" */
   fusionMethod?: MemoryMongoDBFusionMethod;
   /** Vector quantization. Default: "none" */

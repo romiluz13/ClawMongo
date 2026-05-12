@@ -1,5 +1,6 @@
 import type { Db, Collection, Document } from "mongodb";
 import type {
+  MemoryMongoDBAutoEmbedModel,
   MemoryMongoDBDeploymentProfile,
   MemoryMongoDBEmbeddingMode,
 } from "../config/types.memory.js";
@@ -1587,6 +1588,9 @@ export async function ensureSearchIndexes(
   embeddingMode: MemoryMongoDBEmbeddingMode,
   quantization: "none" | "scalar" | "binary" = "none",
   numDimensions: number = 1024,
+  autoEmbedModel: MemoryMongoDBAutoEmbedModel = profile === "atlas-cloud"
+    ? "voyage-3.5"
+    : "voyage-4-large",
 ): Promise<{ text: boolean; vector: boolean }> {
   void embeddingMode;
   void quantization;
@@ -1673,7 +1677,7 @@ export async function ensureSearchIndexes(
           type: "autoEmbed",
           modality: "text",
           path: "text",
-          model: "voyage-4-large",
+          model: autoEmbedModel,
         },
         ...filterFields,
       ],
@@ -1749,7 +1753,7 @@ export async function ensureSearchIndexes(
 
     const kbVectorDef: Document = {
       fields: [
-        { type: "autoEmbed", modality: "text", path: "text", model: "voyage-4-large" },
+        { type: "autoEmbed", modality: "text", path: "text", model: autoEmbedModel },
         ...kbFilterFields,
       ],
     };
@@ -1827,7 +1831,7 @@ export async function ensureSearchIndexes(
 
     const structVectorDef: Document = {
       fields: [
-        { type: "autoEmbed", modality: "text", path: "value", model: "voyage-4-large" },
+        { type: "autoEmbed", modality: "text", path: "value", model: autoEmbedModel },
         ...structFilterFields,
       ],
     };
@@ -1955,7 +1959,7 @@ export async function ensureSearchIndexes(
   try {
     const procedureVectorDef: Document = {
       fields: [
-        { type: "autoEmbed", modality: "text", path: "searchText", model: "voyage-4-large" },
+        { type: "autoEmbed", modality: "text", path: "searchText", model: autoEmbedModel },
         { type: "filter", path: "intentTags" },
         { type: "filter", path: "agentId" },
         { type: "filter", path: "scope" },
@@ -1987,7 +1991,7 @@ export async function ensureSearchIndexes(
   try {
     const cacheVectorDef: Document = {
       fields: [
-        { type: "autoEmbed", modality: "text", path: "queryNorm", model: "voyage-4-large" },
+        { type: "autoEmbed", modality: "text", path: "queryNorm", model: autoEmbedModel },
         { type: "filter", path: "requestSignature" },
         { type: "filter", path: "agentId" },
         { type: "filter", path: "scope" },
@@ -2020,7 +2024,9 @@ export async function ensureSearchIndexes(
 // ---------------------------------------------------------------------------
 
 const PROFILE_BUDGETS: Record<MemoryMongoDBDeploymentProfile, "self-managed"> = {
+  "atlas-local-preview": "self-managed",
   "community-mongot": "self-managed",
+  "atlas-cloud": "self-managed",
 };
 
 export function assertIndexBudget(

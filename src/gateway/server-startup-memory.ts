@@ -1,53 +1,38 @@
-import { listAgentIds } from "../agents/agent-scope.js";
+import { listAgentEntries, listAgentIds, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
-import type { OpenClawConfig } from "../config/config.js";
-import { resolveMemoryBackendConfig } from "../memory/backend-config.js";
-import { closeAllMemorySearchManagers, getMemorySearchManager } from "../memory/index.js";
-import type { MemorySearchManager } from "../memory/types.js";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import {
-  registerMemoryRuntime,
-  type RegisteredMemorySearchManager,
-} from "../plugins/memory-state.js";
+  resolveMemoryBackendConfig,
+  type ResolvedQmdConfig,
+} from "../memory-host-sdk/host/backend-config.js";
+import { getActiveMemorySearchManager } from "../plugins/memory-runtime.js";
+import { normalizeAgentId } from "../routing/session-key.js";
 
-/**
- * Thin adapter: our MemorySearchManager already implements every method
- * RegisteredMemorySearchManager requires (status, probeEmbedding/Vector,
- * sync, close). TypeScript structural typing makes the shapes compatible;
- * this wrapper only bridges the nominal type boundary.
- */
-function wrapForPluginBridge(manager: MemorySearchManager): RegisteredMemorySearchManager {
-  return manager as unknown as RegisteredMemorySearchManager;
+function shouldRunQmdStartupBootSync(qmd: ResolvedQmdConfig): boolean {
+  return qmd.update.onBoot && qmd.update.startup !== "off";
 }
 
-/**
- * Register MongoDB as the plugin runtime so upstream callers of
- * getActiveMemorySearchManager() get our MongoDB manager.
- *
- * Called inside startGatewayMemoryBackend() (AFTER plugin loading)
- * so our registration is the last-write and always wins, even if
- * memory-core somehow loaded.
- */
-function registerMongoDBPluginRuntime(): void {
-  registerMemoryRuntime({
-    async getMemorySearchManager(params) {
-      const result = await getMemorySearchManager(params);
-      if (!result.manager) {
-        return { manager: null, error: result.error ?? "MongoDB manager not initialized" };
-      }
-      return { manager: wrapForPluginBridge(result.manager), error: undefined };
-    },
-    resolveMemoryBackendConfig(_params) {
-      // INTENTIONAL: returns "builtin" to satisfy upstream's MemoryBackend
-      // type union ("builtin" | "qmd"). The actual runtime backend is always
-      // MongoDB — MongoDBMemoryManager.status() reports backend: "mongodb".
-      // This adapter field is only read by upstream plugin metadata paths
-      // (e.g. doctor diagnostics), never by our MongoDB retrieval pipeline.
-      return { backend: "builtin" as const, qmd: undefined };
-    },
-    async closeAllMemorySearchManagers() {
-      await closeAllMemorySearchManagers();
-    },
-  });
+function hasExplicitAgentMemorySearchConfig(cfg: OpenClawConfig, agentId: string): boolean {
+  return listAgentEntries(cfg).some(
+    (entry) => normalizeAgentId(entry.id) === agentId && entry.memorySearch != null,
+  );
+}
+
+function shouldEagerlyStartAgentMemory(params: {
+  cfg: OpenClawConfig;
+  agentId: string;
+  agentCount: number;
+}): boolean {
+  if (params.agentCount <= 1) {
+    return true;
+  }
+  if (params.agentId === resolveDefaultAgentId(params.cfg)) {
+    return true;
+  }
+  if (params.cfg.agents?.defaults?.memorySearch?.enabled === true) {
+    return true;
+  }
+  return hasExplicitAgentMemorySearchConfig(params.cfg, params.agentId);
 }
 
 export async function startGatewayMemoryBackend(params: {
@@ -59,35 +44,74 @@ export async function startGatewayMemoryBackend(params: {
   registerMongoDBPluginRuntime();
 
   const agentIds = listAgentIds(params.cfg);
+  const armedAgentIds: string[] = [];
+  const deferredAgentIds: string[] = [];
   for (const agentId of agentIds) {
     if (!resolveMemorySearchConfig(params.cfg, agentId)) {
       continue;
     }
-    try {
-      resolveMemoryBackendConfig({ cfg: params.cfg, agentId });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+    const resolved = resolveMemoryBackendConfig({ cfg: params.cfg, agentId });
+    if (!resolved) {
+      continue;
+    }
+    if (resolved.backend !== "qmd" || !resolved.qmd) {
+      continue;
+    }
+    if (!shouldRunQmdStartupBootSync(resolved.qmd)) {
+      continue;
+    }
+    if (
+      !shouldEagerlyStartAgentMemory({
+        cfg: params.cfg,
+        agentId,
+        agentCount: agentIds.length,
+      })
+    ) {
+      deferredAgentIds.push(agentId);
+      continue;
+    }
+
+    const { manager, error } = await getActiveMemorySearchManager({
+      cfg: params.cfg,
+      agentId,
+      purpose: "cli",
+    });
+    if (!manager) {
       params.log.warn(
         `mongodb memory startup initialization failed for agent "${agentId}": ${message}`,
       );
       continue;
     }
-
-    const { manager, error } = await getMemorySearchManager({ cfg: params.cfg, agentId });
-    if (!manager) {
-      params.log.warn(
-        `mongodb memory startup initialization failed for agent "${agentId}": ${error ?? "unknown error"}`,
-      );
+    try {
+      await manager.sync?.({ reason: "boot", force: true });
+    } catch (err) {
+      params.log.warn(`qmd memory startup boot sync failed for agent "${agentId}": ${String(err)}`);
       continue;
+    } finally {
+      await manager.close?.().catch((err) => {
+        params.log.warn(
+          `qmd memory startup manager close failed for agent "${agentId}": ${String(err)}`,
+        );
+      });
     }
-    if (manager.sync) {
-      try {
-        await manager.sync({ reason: "startup" });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        params.log.warn(`mongodb memory startup sync failed for agent "${agentId}": ${message}`);
-      }
-    }
-    params.log.info?.(`mongodb memory startup initialization armed for agent "${agentId}"`);
+    armedAgentIds.push(agentId);
   }
+  if (armedAgentIds.length > 0) {
+    params.log.info?.(
+      `qmd memory startup boot sync completed for ${formatAgentCount(armedAgentIds.length)}: ${armedAgentIds
+        .map((agentId) => `"${agentId}"`)
+        .join(", ")}`,
+    );
+  }
+  if (deferredAgentIds.length > 0) {
+    params.log.info?.(
+      `qmd memory startup initialization deferred for ${formatAgentCount(deferredAgentIds.length)}: ${deferredAgentIds
+        .map((agentId) => `"${agentId}"`)
+        .join(", ")}`,
+    );
+  }
+}
+
+function formatAgentCount(count: number): string {
+  return count === 1 ? "1 agent" : `${count} agents`;
 }

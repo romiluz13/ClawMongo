@@ -1,4 +1,5 @@
 import type { MemoryScope } from "../config/types.memory.js";
+import type { StructuredMemoryEntry } from "./mongodb-structured-memory.js";
 
 // "memory" | "sessions" are legacy upstream source values preserved for
 // extensions/memory-core dead-code compilation. Runtime code uses
@@ -580,6 +581,7 @@ export interface MemorySearchManager {
     options?: ReasoningChainOptions;
   }): Promise<ReasoningChain>;
   scanNovelty?(params?: NoveltyOptions): Promise<NoveltyReport>;
+  writeStructuredMemory?(entry: StructuredMemoryEntry): Promise<{ upserted: boolean; id: string }>;
   probeEmbeddingAvailability(): Promise<MemoryEmbeddingProbeResult>;
   probeVectorAvailability(): Promise<boolean>;
   close?(): Promise<void>;

@@ -1,4 +1,4 @@
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
@@ -21,9 +21,15 @@ vi.mock("./provider-transport-stream.js", () => ({
   prepareTransportAwareSimpleModel,
 }));
 
-vi.mock("../plugins/provider-runtime.js", () => ({
-  resolveProviderStreamFn,
-}));
+vi.mock("../plugins/provider-runtime.js", async () => {
+  const actual = await vi.importActual<typeof import("../plugins/provider-runtime.js")>(
+    "../plugins/provider-runtime.js",
+  );
+  return {
+    ...actual,
+    resolveProviderStreamFn,
+  };
+});
 
 let prepareModelForSimpleCompletion: typeof import("./simple-completion-transport.js").prepareModelForSimpleCompletion;
 
@@ -74,17 +80,19 @@ describe("prepareModelForSimpleCompletion", () => {
       cfg,
     });
 
-    expect(resolveProviderStreamFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        provider: "ollama",
-        config: cfg,
-        context: expect.objectContaining({
-          provider: "ollama",
-          modelId: "llama3",
-          model,
-        }),
-      }),
-    );
+    expect(resolveProviderStreamFn).toHaveBeenCalledTimes(1);
+    const [request] = resolveProviderStreamFn.mock.calls.at(0) as [
+      {
+        provider?: unknown;
+        config?: unknown;
+        context?: { provider?: unknown; modelId?: unknown; model?: unknown };
+      },
+    ];
+    expect(request.provider).toBe("ollama");
+    expect(request.config).toBe(cfg);
+    expect(request.context?.provider).toBe("ollama");
+    expect(request.context?.modelId).toBe("llama3");
+    expect(request.context?.model).toBe(model);
     expect(ensureCustomApiRegistered).toHaveBeenCalledWith("ollama", "ollama-stream");
     expect(result).toBe(model);
   });
@@ -141,8 +149,8 @@ describe("prepareModelForSimpleCompletion", () => {
 
     const result = prepareModelForSimpleCompletion({ model });
 
-    expect(prepareTransportAwareSimpleModel).toHaveBeenCalledWith(model);
-    expect(buildTransportAwareSimpleStreamFn).toHaveBeenCalledWith(model);
+    expect(prepareTransportAwareSimpleModel).toHaveBeenCalledWith(model, { cfg: undefined });
+    expect(buildTransportAwareSimpleStreamFn).toHaveBeenCalledWith(model, { cfg: undefined });
     expect(ensureCustomApiRegistered).toHaveBeenCalledWith(
       "openclaw-openai-responses-transport",
       "transport-stream",

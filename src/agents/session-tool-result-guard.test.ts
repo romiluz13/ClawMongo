@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
@@ -73,7 +70,9 @@ function getToolResultText(messages: AgentMessage[]): string {
   const toolResult = messages.find((m) => m.role === "toolResult") as {
     content: Array<{ type: string; text: string }>;
   };
-  expect(toolResult).toBeDefined();
+  if (toolResult === undefined) {
+    throw new Error("expected toolResult message");
+  }
   const textBlock = toolResult.content.find((b: { type: string }) => b.type === "text") as {
     text: string;
   };
@@ -115,73 +114,16 @@ describe("installSessionToolResultGuard", () => {
     expectPersistedRoles(sm, ["assistant", "toolResult"]);
   });
 
-  it("tracks async post-persist callbacks until flushed", async () => {
+  it("uses configured text for synthetic tool results", () => {
     const sm = SessionManager.inMemory();
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     const guard = installSessionToolResultGuard(sm, {
-      afterMessagePersisted: async () => blocked,
+      missingToolResultText: "aborted",
     });
 
-    sm.appendMessage(
-      asAppendMessage({
-        role: "assistant",
-        content: [{ type: "text", text: "persist me" }],
-        stopReason: "stop",
-      }),
-    );
+    sm.appendMessage(toolCallMessage);
+    guard.flushPendingToolResults();
 
-    let flushed = false;
-    const flush = guard.flushPendingPersistedWrites().then(() => {
-      flushed = true;
-    });
-    await Promise.resolve();
-    expect(flushed).toBe(false);
-
-    release();
-    await flush;
-    expect(flushed).toBe(true);
-  });
-
-  it("emits transcript updates with the session key when a session file exists", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-guard-events-"));
-    const sessionFile = path.join(dir, "session.jsonl");
-    const updates: Array<{
-      sessionFile: string;
-      sessionKey?: string;
-      message?: unknown;
-      messageId?: string;
-    }> = [];
-    const cleanup = onSessionTranscriptUpdate((update) => {
-      updates.push(update);
-    });
-
-    try {
-      const sm = SessionManager.open(sessionFile);
-      installSessionToolResultGuard(sm, {
-        sessionKey: "agent:main:test",
-      });
-
-      sm.appendMessage(
-        asAppendMessage({
-          role: "assistant",
-          content: [{ type: "text", text: "hello" }],
-          stopReason: "stop",
-        }),
-      );
-
-      expect(updates).toHaveLength(1);
-      expect(updates[0]).toMatchObject({
-        sessionFile,
-        sessionKey: "agent:main:test",
-      });
-      expect((updates[0]?.message as { role?: string } | undefined)?.role).toBe("assistant");
-    } finally {
-      cleanup();
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    expect(getToolResultText(getPersistedMessages(sm))).toBe("aborted");
   });
 
   it("clears pending tool calls without inserting synthetic tool results", () => {
@@ -192,7 +134,7 @@ describe("installSessionToolResultGuard", () => {
     guard.clearPendingToolResults();
 
     expectPersistedRoles(sm, ["assistant"]);
-    expect(guard.getPendingIds()).toEqual([]);
+    expect(guard.getPendingIds()).toStrictEqual([]);
   });
 
   it("clears pending on user interruption when synthetic tool results are disabled", () => {
@@ -211,7 +153,7 @@ describe("installSessionToolResultGuard", () => {
     );
 
     expectPersistedRoles(sm, ["assistant", "user"]);
-    expect(guard.getPendingIds()).toEqual([]);
+    expect(guard.getPendingIds()).toStrictEqual([]);
   });
 
   it("does not add synthetic toolResult when a matching one exists", () => {
@@ -240,6 +182,19 @@ describe("installSessionToolResultGuard", () => {
     const text = getToolResultText(getPersistedMessages(sm));
     expect(text).toContain("more characters truncated");
     expect(text).toMatch(/\[\.\.\. \d+ more characters truncated\]$/);
+  });
+
+  it("honors tiny configured tool-result caps truthfully", () => {
+    const sm = SessionManager.inMemory();
+    installSessionToolResultGuard(sm, {
+      maxToolResultChars: 120,
+    });
+
+    appendToolResultText(sm, "x".repeat(80_000));
+
+    const text = getToolResultText(getPersistedMessages(sm));
+    expect(text.length).toBeLessThanOrEqual(120);
+    expect(text).toContain("truncated");
   });
 
   it("backfills blank toolResult names from pending tool calls", () => {
@@ -299,7 +254,7 @@ describe("installSessionToolResultGuard", () => {
       "assistant", // text
     ]);
     expect((messages[2] as { toolCallId?: string }).toolCallId).toBe("call_b");
-    expect(guard.getPendingIds()).toEqual([]);
+    expect(guard.getPendingIds()).toStrictEqual([]);
   });
 
   it("flushes pending on guard when no toolResult arrived", () => {
@@ -314,7 +269,7 @@ describe("installSessionToolResultGuard", () => {
         stopReason: "error",
       }),
     );
-    expect(guard.getPendingIds()).toEqual([]);
+    expect(guard.getPendingIds()).toStrictEqual([]);
   });
 
   it("handles toolUseId on toolResult", () => {
@@ -411,7 +366,7 @@ describe("installSessionToolResultGuard", () => {
     appendAssistantToolCall(sm, { id: "call_2", name: "write" });
 
     expectPersistedRoles(sm, ["assistant"]);
-    expect(guard.getPendingIds()).toEqual([]);
+    expect(guard.getPendingIds()).toStrictEqual([]);
   });
 
   it("drops older pending ids before new tool calls when synthetic results are disabled", () => {
@@ -544,6 +499,32 @@ describe("installSessionToolResultGuard", () => {
       kind: "inter_session",
       sourceTool: "sessions_send",
     });
+  });
+
+  it("suppresses only the next persisted user message when requested", () => {
+    const sm = SessionManager.inMemory();
+    installSessionToolResultGuard(sm, {
+      suppressNextUserMessagePersistence: true,
+    });
+
+    sm.appendMessage(
+      asAppendMessage({
+        role: "user",
+        content: "first",
+        timestamp: Date.now(),
+      }),
+    );
+    sm.appendMessage(
+      asAppendMessage({
+        role: "user",
+        content: "second",
+        timestamp: Date.now() + 1,
+      }),
+    );
+
+    const persisted = getPersistedMessages(sm);
+    expect(persisted.map((message) => message.role)).toEqual(["user"]);
+    expect((persisted[0] as { content?: unknown } | undefined)?.content).toBe("second");
   });
 
   // When an assistant message with toolCalls is aborted, no synthetic toolResult

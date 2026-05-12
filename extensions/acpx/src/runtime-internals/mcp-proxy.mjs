@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
+import { formatErrorMessage } from "./error-format.mjs";
 import { splitCommandLine } from "./mcp-command-line.mjs";
 
 function decodePayload(argv) {
@@ -63,6 +64,17 @@ function rewriteLine(line, mcpServers) {
   }
 }
 
+export function createTargetSpawnOptions(platform = process.platform) {
+  const options = {
+    stdio: ["pipe", "pipe", "inherit"],
+    env: process.env,
+  };
+  if (platform === "win32") {
+    options.windowsHide = true;
+  }
+  return options;
+}
+
 function isMainModule() {
   const mainPath = process.argv[1];
   if (!mainPath) {
@@ -74,10 +86,7 @@ function isMainModule() {
 function main() {
   const { targetCommand, mcpServers } = decodePayload(process.argv.slice(2));
   const target = splitCommandLine(targetCommand);
-  const child = spawn(target.command, target.args, {
-    stdio: ["pipe", "pipe", "inherit"],
-    env: process.env,
-  });
+  const child = spawn(target.command, target.args, createTargetSpawnOptions());
 
   if (!child.stdin || !child.stdout) {
     throw new Error("Failed to create MCP proxy stdio pipes");
@@ -94,7 +103,7 @@ function main() {
   child.stdout.pipe(process.stdout);
 
   child.on("error", (error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${formatErrorMessage(error)}\n`);
     process.exit(1);
   });
 

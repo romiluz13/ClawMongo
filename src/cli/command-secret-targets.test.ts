@@ -14,6 +14,7 @@ const REGISTRY_IDS = [
   "models.providers.openai.apiKey",
   "messages.tts.providers.openai.apiKey",
   "plugins.entries.firecrawl.config.webFetch.apiKey",
+  "plugins.entries.exa.config.webSearch.apiKey",
   "skills.entries.demo.apiKey",
   "tools.web.search.apiKey",
 ] as const;
@@ -77,6 +78,14 @@ describe("command secret target ids", () => {
     expect(ids.has("agents.defaults.memorySearch.remote.apiKey")).toBe(true);
     expect(ids.has("agents.list[].memorySearch.remote.apiKey")).toBe(true);
     expect(ids.has("plugins.entries.firecrawl.config.webFetch.apiKey")).toBe(true);
+    expect(ids.has("plugins.entries.exa.config.webSearch.apiKey")).toBe(true);
+    expect(ids.has("channels.discord.token")).toBe(false);
+  });
+
+  it("includes channel targets for agent runtime when delivery needs them", () => {
+    const ids = getAgentRuntimeCommandSecretTargetIds({ includeChannelTargets: true });
+    expect(ids.has("channels.discord.token")).toBe(true);
+    expect(ids.has("channels.telegram.botToken")).toBe(true);
   });
 
   it("includes gateway auth and channel targets for security audit", () => {
@@ -94,9 +103,13 @@ describe("command secret target ids", () => {
       channel: "discord",
     });
 
-    expect(scoped.targetIds.size).toBeGreaterThan(0);
-    expect([...scoped.targetIds].every((id) => id.startsWith("channels.discord."))).toBe(true);
-    expect([...scoped.targetIds].some((id) => id.startsWith("channels.telegram."))).toBe(false);
+    expect(scoped.targetIds).toEqual(
+      new Set([
+        "channels.discord.accounts.chat.token",
+        "channels.discord.accounts.ops.token",
+        "channels.discord.token",
+      ]),
+    );
   });
 
   it("does not coerce missing accountId to default when channel is scoped", () => {
@@ -117,8 +130,13 @@ describe("command secret target ids", () => {
     });
 
     expect(scoped.allowedPaths).toBeUndefined();
-    expect(scoped.targetIds.size).toBeGreaterThan(0);
-    expect([...scoped.targetIds].every((id) => id.startsWith("channels.discord."))).toBe(true);
+    expect(scoped.targetIds).toEqual(
+      new Set([
+        "channels.discord.accounts.chat.token",
+        "channels.discord.accounts.ops.token",
+        "channels.discord.token",
+      ]),
+    );
   });
 
   it("scopes allowed paths to channel globals + selected account", () => {
@@ -142,10 +160,9 @@ describe("command secret target ids", () => {
       accountId: "ops",
     });
 
-    expect(scoped.allowedPaths).toBeDefined();
-    expect(scoped.allowedPaths?.has("channels.discord.token")).toBe(true);
-    expect(scoped.allowedPaths?.has("channels.discord.accounts.ops.token")).toBe(true);
-    expect(scoped.allowedPaths?.has("channels.discord.accounts.chat.token")).toBe(false);
+    expect(scoped.allowedPaths).toEqual(
+      new Set(["channels.discord.token", "channels.discord.accounts.ops.token"]),
+    );
   });
 
   it("keeps account-scoped allowedPaths as an empty set when scoped target paths are absent", () => {
@@ -163,7 +180,6 @@ describe("command secret target ids", () => {
       accountId: "ops",
     });
 
-    expect(scoped.allowedPaths).toBeDefined();
-    expect(scoped.allowedPaths?.size).toBe(0);
+    expect(scoped.allowedPaths).toEqual(new Set());
   });
 });

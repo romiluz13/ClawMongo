@@ -1,13 +1,56 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  getMemorySearchManagerMockConfigs,
+  getMemorySearchManagerMockParams,
   resetMemoryToolMockState,
-  setMemorySearchDetailedImpl,
+  setMemoryBackend,
   setMemorySearchImpl,
-} from "../../../test/helpers/memory-tool-manager-mock.js";
+} from "./memory-tool-manager-mock.js";
+import { createMemorySearchTool } from "./tools.js";
+import { MemoryGetSchema, MemorySearchSchema } from "./tools.shared.js";
 import {
+  asOpenClawConfig,
   createMemorySearchToolOrThrow,
   expectUnavailableMemorySearchDetails,
 } from "./tools.test-helpers.js";
+
+const sessionStore = vi.hoisted(() => ({
+  "agent:main:main": {
+    sessionId: "thread-1",
+    updatedAt: 1,
+    sessionFile: "/tmp/sessions/thread-1.jsonl",
+  },
+}));
+
+vi.mock("openclaw/plugin-sdk/session-transcript-hit", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("openclaw/plugin-sdk/session-transcript-hit")>();
+  return {
+    ...actual,
+    loadCombinedSessionStoreForGateway: vi.fn(() => ({
+      storePath: "(test)",
+      store: sessionStore,
+    })),
+  };
+});
+
+describe("memory tool schemas", () => {
+  it("uses flat corpus enums for provider tool compatibility", () => {
+    const searchCorpus = MemorySearchSchema.properties.corpus as {
+      anyOf?: unknown;
+      enum?: unknown;
+    };
+    const getCorpus = MemoryGetSchema.properties.corpus as {
+      anyOf?: unknown;
+      enum?: unknown;
+    };
+
+    expect(searchCorpus.anyOf).toBeUndefined();
+    expect(searchCorpus.enum).toEqual(["memory", "wiki", "all", "sessions"]);
+    expect(getCorpus.anyOf).toBeUndefined();
+    expect(getCorpus.enum).toEqual(["memory", "wiki", "all"]);
+  });
+});
 
 describe("memory_search unavailable payloads", () => {
   beforeEach(() => {
@@ -42,54 +85,192 @@ describe("memory_search unavailable payloads", () => {
     });
   });
 
-  it("surfaces detailed search metadata when the backend provides it", async () => {
-    setMemorySearchDetailedImpl(async () => ({
-      results: [
+  it("returns structured search debug metadata for qmd results", async () => {
+    setMemoryBackend("qmd");
+    setMemorySearchImpl(async (opts) => {
+      opts?.onDebug?.({
+        backend: "qmd",
+        configuredMode: opts.qmdSearchModeOverride ?? "query",
+        effectiveMode: "query",
+        fallback: "unsupported-search-flags",
+      });
+      return [
         {
-          path: "memory/test.md",
+          path: "MEMORY.md",
           startLine: 1,
           endLine: 2,
           score: 0.9,
-          snippet: "hello",
-          source: "conversation",
+          snippet: "ramen",
+          source: "memory",
         },
-      ],
-      metadata: {
-        mode: "agentic",
-        classification: "family",
-        sourceOrder: ["conversation", "reference", "structured"],
-        passes: [
-          {
-            pass: 1,
-            query: "hello",
-            reason: "original",
-            pathsExecuted: ["hybrid"],
-            resultCount: 1,
-            queryRewritten: false,
-            reranked: false,
-          },
-        ],
-        queriesTried: ["hello"],
-        constraintsApplied: [],
-        resultsRejected: [],
-        evidenceCoverage: "direct",
-        pathsExecuted: ["hybrid"],
-        resultsByPath: { hybrid: 1 },
-        queryRewritten: false,
-        reranked: false,
-      },
-    }));
+      ];
+    });
 
-    const tool = createMemorySearchToolOrThrow();
-    const result = await tool.execute("detailed", { query: "hello", searchMode: "agentic" });
-    expect(result.details).toEqual(
-      expect.objectContaining({
-        mode: "agentic",
-        metadata: expect.objectContaining({
-          classification: "family",
-          pathsExecuted: ["hybrid"],
-        }),
+    const tool = createMemorySearchToolOrThrow({
+      config: {
+        plugins: {
+          entries: {
+            "active-memory": {
+              config: {
+                qmd: {
+                  searchMode: "search",
+                },
+              },
+            },
+          },
+        },
+        memory: {
+          backend: "qmd",
+          qmd: {
+            searchMode: "query",
+            limits: {
+              maxInjectedChars: 1000,
+            },
+          },
+        },
+      },
+      agentSessionKey: "agent:main:main:active-memory:debug",
+    });
+    const result = await tool.execute("debug", { query: "favorite food" });
+    const details = result.details as {
+      mode?: unknown;
+      debug?: {
+        backend?: unknown;
+        configuredMode?: unknown;
+        effectiveMode?: unknown;
+        fallback?: unknown;
+        hits?: unknown;
+        searchMs?: number;
+      };
+    };
+    expect(details.mode).toBe("query");
+    expect(details.debug?.backend).toBe("qmd");
+    expect(details.debug?.configuredMode).toBe("search");
+    expect(details.debug?.effectiveMode).toBe("query");
+    expect(details.debug?.fallback).toBe("unsupported-search-flags");
+    expect(details.debug?.hits).toBe(1);
+    expect(details.debug?.searchMs).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("memory_search corpus labels", () => {
+  beforeEach(() => {
+    resetMemoryToolMockState({ searchImpl: async () => [] });
+  });
+
+  it("uses explicit plugin context agent over synthetic active-memory session keys", async () => {
+    const tool = createMemorySearchToolOrThrow({
+      config: asOpenClawConfig({
+        agents: {
+          list: [
+            { id: "main", default: true, memorySearch: { enabled: false } },
+            { id: "recall", memorySearch: { enabled: true } },
+          ],
+        },
       }),
-    );
+      agentId: "recall",
+      agentSessionKey: "explicit:user-session:active-memory:abc123",
+    });
+
+    await tool.execute("recall", { query: "favorite food" });
+
+    expect(getMemorySearchManagerMockParams().at(-1)?.agentId).toBe("recall");
+  });
+
+  it("re-resolves config when executing a previously created tool", async () => {
+    const startupConfig = asOpenClawConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "ollama",
+            model: "nomic-embed-text",
+          },
+        },
+        list: [{ id: "main", default: true }],
+      },
+      memory: {
+        backend: "builtin",
+      },
+    });
+    const patchedConfig = asOpenClawConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            model: "text-embedding-3-small",
+          },
+        },
+        list: [{ id: "main", default: true }],
+      },
+      memory: {
+        backend: "builtin",
+      },
+    });
+    let liveConfig = startupConfig;
+    const tool = createMemorySearchTool({
+      config: startupConfig,
+      getConfig: () => liveConfig,
+    });
+    if (!tool) {
+      throw new Error("tool missing");
+    }
+
+    liveConfig = patchedConfig;
+    await tool.execute("patched-config", { query: "provider switch" });
+
+    expect(getMemorySearchManagerMockConfigs()).toEqual([patchedConfig]);
+  });
+
+  it("preserves source corpus labels for memory and session transcript hits", async () => {
+    setMemorySearchImpl(async () => [
+      {
+        path: "MEMORY.md",
+        startLine: 3,
+        endLine: 4,
+        score: 0.95,
+        snippet: "Durable memory note",
+        source: "memory" as const,
+      },
+      {
+        path: "sessions/thread-1.jsonl",
+        startLine: 1,
+        endLine: 2,
+        score: 0.9,
+        snippet: "Thread transcript note",
+        source: "sessions" as const,
+      },
+    ]);
+
+    const tool = createMemorySearchToolOrThrow({
+      config: {
+        agents: { list: [{ id: "main", default: true }] },
+        memory: { citations: "off" },
+        tools: { sessions: { visibility: "all" } },
+      },
+      agentSessionKey: "agent:main:main",
+    });
+    const result = await tool.execute("mixed", { query: "thread note" });
+    const details = result.details as { results: Array<{ corpus: string; path: string }> };
+
+    expect(details.results).toEqual([
+      {
+        corpus: "memory",
+        path: "MEMORY.md",
+        startLine: 3,
+        endLine: 4,
+        score: 0.95,
+        snippet: "Durable memory note",
+        source: "memory",
+      },
+      {
+        corpus: "sessions",
+        path: "sessions/thread-1.jsonl",
+        startLine: 1,
+        endLine: 2,
+        score: 0.9,
+        snippet: "Thread transcript note",
+        source: "sessions",
+      },
+    ]);
   });
 });

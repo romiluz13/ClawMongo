@@ -1,21 +1,17 @@
-import { Type } from "@sinclair/typebox";
-import { getRuntimeConfigSnapshot, type OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import { jsonResult, readStringParam } from "openclaw/plugin-sdk/provider-web-search";
+import { getRuntimeConfigSnapshot } from "openclaw/plugin-sdk/runtime-config-snapshot";
+import { Type } from "typebox";
 import {
   buildXaiCodeExecutionPayload,
   requestXaiCodeExecution,
   resolveXaiCodeExecutionMaxTurns,
   resolveXaiCodeExecutionModel,
 } from "./src/code-execution-shared.js";
-import { isXaiToolEnabled, resolveXaiToolApiKey } from "./src/tool-auth-shared.js";
-
-type _XaiPluginConfig = NonNullable<
-  NonNullable<OpenClawConfig["plugins"]>["entries"]
->["xai"] extends {
-  config?: infer Config;
-}
-  ? Config
-  : undefined;
+import {
+  isXaiToolEnabled,
+  resolveXaiToolApiKeyWithAuth,
+  type XaiToolAuthContext,
+} from "./src/tool-auth-shared.js";
 
 type CodeExecutionConfig = {
   enabled?: boolean;
@@ -30,12 +26,19 @@ function readCodeExecutionConfigRecord(
   return config && typeof config === "object" ? (config as Record<string, unknown>) : undefined;
 }
 
-function readPluginCodeExecutionConfig(cfg?: OpenClawConfig): CodeExecutionConfig | undefined {
-  const entries = cfg?.plugins?.entries;
-  if (!entries || typeof entries !== "object") {
+function readPluginCodeExecutionConfig(cfg?: unknown): CodeExecutionConfig | undefined {
+  if (!cfg || typeof cfg !== "object") {
     return undefined;
   }
-  const xaiEntry = (entries as Record<string, unknown>).xai;
+  const entries = (cfg as Record<string, unknown>).plugins;
+  const pluginEntries =
+    entries && typeof entries === "object"
+      ? ((entries as Record<string, unknown>).entries as Record<string, unknown> | undefined)
+      : undefined;
+  if (!pluginEntries) {
+    return undefined;
+  }
+  const xaiEntry = pluginEntries.xai;
   if (!xaiEntry || typeof xaiEntry !== "object") {
     return undefined;
   }
@@ -51,20 +54,23 @@ function readPluginCodeExecutionConfig(cfg?: OpenClawConfig): CodeExecutionConfi
 }
 
 function resolveCodeExecutionEnabled(params: {
-  sourceConfig?: OpenClawConfig;
-  runtimeConfig?: OpenClawConfig;
+  sourceConfig?: unknown;
+  runtimeConfig?: unknown;
   config?: CodeExecutionConfig;
+  auth?: XaiToolAuthContext;
 }): boolean {
   return isXaiToolEnabled({
     enabled: readCodeExecutionConfigRecord(params.config)?.enabled as boolean | undefined,
-    runtimeConfig: params.runtimeConfig,
-    sourceConfig: params.sourceConfig,
+    runtimeConfig: params.runtimeConfig as never,
+    sourceConfig: params.sourceConfig as never,
+    auth: params.auth,
   });
 }
 
 export function createCodeExecutionTool(options?: {
-  config?: OpenClawConfig;
-  runtimeConfig?: OpenClawConfig | null;
+  config?: unknown;
+  runtimeConfig?: Record<string, unknown> | null;
+  auth?: XaiToolAuthContext;
 }) {
   const runtimeConfig = options?.runtimeConfig ?? getRuntimeConfigSnapshot();
   const codeExecutionConfig =
@@ -75,6 +81,7 @@ export function createCodeExecutionTool(options?: {
       sourceConfig: options?.config,
       runtimeConfig: runtimeConfig ?? undefined,
       config: codeExecutionConfig,
+      auth: options?.auth,
     })
   ) {
     return null;
@@ -92,15 +99,16 @@ export function createCodeExecutionTool(options?: {
       }),
     }),
     execute: async (_toolCallId: string, args: Record<string, unknown>) => {
-      const apiKey = resolveXaiToolApiKey({
-        runtimeConfig: runtimeConfig ?? undefined,
-        sourceConfig: options?.config,
+      const apiKey = await resolveXaiToolApiKeyWithAuth({
+        runtimeConfig: (runtimeConfig ?? undefined) as never,
+        sourceConfig: options?.config as never,
+        auth: options?.auth,
       });
       if (!apiKey) {
         return jsonResult({
           error: "missing_xai_api_key",
           message:
-            "code_execution needs an xAI API key. Set XAI_API_KEY in the Gateway environment, or configure plugins.entries.xai.config.webSearch.apiKey.",
+            "code_execution needs an xAI API key. Run openclaw onboard --auth-choice xai-api-key, set XAI_API_KEY in the Gateway environment, or configure plugins.entries.xai.config.webSearch.apiKey.",
           docs: "https://docs.openclaw.ai/tools/code-execution",
         });
       }

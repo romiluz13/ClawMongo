@@ -528,6 +528,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
         mongoCfg.embeddingMode,
         mongoCfg.quantization,
         mongoCfg.numDimensions,
+        mongoCfg.autoEmbedModel,
       );
     } else {
       log.info("search index management unavailable; skipping search index bootstrap");
@@ -2279,15 +2280,12 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const mongoCfg = this.config.mongodb!;
 
     if (mongoCfg.embeddingMode === "automated") {
-      if (mongoCfg.deploymentProfile !== "community-mongot") {
-        return {
-          ok: false,
-          error: `embeddingMode "automated" is only supported on community-mongot in ClawMongo`,
-        };
-      }
       return this.capabilities.vectorSearch
         ? { ok: true }
-        : { ok: false, error: "vector search not available on this MongoDB deployment" };
+        : {
+            ok: false,
+            error: `vector search not available for ${mongoCfg.deploymentProfile} deployment`,
+          };
     }
 
     return { ok: false, error: "unsupported embedding mode" };
@@ -2303,9 +2301,7 @@ export class MongoDBMemoryManager implements MemorySearchManager {
 
   private probeEmbeddingModeSupportsVector(): boolean {
     const mongoCfg = this.config.mongodb!;
-    return (
-      mongoCfg.embeddingMode === "automated" && mongoCfg.deploymentProfile === "community-mongot"
-    );
+    return mongoCfg.embeddingMode === "automated";
   }
 
   // ---------------------------------------------------------------------------

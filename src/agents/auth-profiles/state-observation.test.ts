@@ -5,11 +5,14 @@ import { logAuthProfileFailureStateChange } from "./state-observation.js";
 afterEach(() => {
   setLoggerOverride(null);
   resetLogger();
+  vi.unstubAllEnvs();
 });
 
 describe("logAuthProfileFailureStateChange", () => {
   it("sanitizes consoleMessage fields before logging", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubEnv("FORCE_COLOR", "0");
+    vi.stubEnv("NO_COLOR", "1");
     setLoggerOverride({ level: "silent", consoleLevel: "warn" });
 
     logAuthProfileFailureStateChange({
@@ -26,7 +29,7 @@ describe("logAuthProfileFailureStateChange", () => {
       now: 1_700_000_000_000,
     });
 
-    const consoleLine = warnSpy.mock.calls[0]?.[0];
+    const consoleLine = warnSpy.mock.calls.at(0)?.[0];
     expect(typeof consoleLine).toBe("string");
     expect(consoleLine).toContain("runId=run-1 forged entry test");
     expect(consoleLine).toContain("provider=openai]8;;https://evil.test");

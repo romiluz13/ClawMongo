@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../config/config.js";
 import type {
+  MemoryMongoDBAutoEmbedModel,
   MemoryCitationsMode,
   MemoryMongoDBDeploymentProfile,
   MemoryMongoDBEmbeddingMode,
@@ -29,6 +30,7 @@ export type ResolvedMongoDBConfig = {
   collectionPrefix: string;
   deploymentProfile: MemoryMongoDBDeploymentProfile;
   embeddingMode: MemoryMongoDBEmbeddingMode;
+  autoEmbedModel: MemoryMongoDBAutoEmbedModel;
   fusionMethod: MemoryMongoDBFusionMethod;
   quantization: "none" | "scalar" | "binary";
   watchDebounceMs: number;
@@ -119,8 +121,22 @@ export type ResolvedMemoryBackendConfig = {
 const DEFAULT_BACKEND = "mongodb";
 const DEFAULT_CITATIONS: MemoryCitationsMode = "auto";
 const DEFAULT_RELEVANCE_DATASET = "~/.openclaw/relevance/golden.jsonl";
-const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "community-mongot";
+const DEFAULT_MONGODB_PROFILE: MemoryMongoDBDeploymentProfile = "atlas-local-preview";
 const DEFAULT_MONGODB_EMBEDDING_MODE: MemoryMongoDBEmbeddingMode = "automated";
+const DEFAULT_LOCAL_AUTO_EMBED_MODEL: MemoryMongoDBAutoEmbedModel = "voyage-4-large";
+const DEFAULT_ATLAS_CLOUD_AUTO_EMBED_MODEL: MemoryMongoDBAutoEmbedModel = "voyage-3.5";
+
+const SUPPORTED_AUTO_EMBED_MODELS: ReadonlySet<MemoryMongoDBAutoEmbedModel> = new Set([
+  "voyage-4-large",
+  "voyage-4",
+  "voyage-4-lite",
+  "voyage-3-large",
+  "voyage-3.5",
+  "voyage-3.5-lite",
+  "voyage-3",
+  "voyage-3-lite",
+  "voyage-code-3",
+]);
 
 function resolveQueryRewriteMethod(raw: unknown): "synonym-expansion" {
   if (raw === undefined || raw === "synonym-expansion") {
@@ -140,6 +156,46 @@ function sanitizeName(input: string): string {
   return trimmed || "collection";
 }
 
+function looksLikeAtlasCloudUri(uri: string): boolean {
+  return uri.includes(".mongodb.net") || uri.startsWith("mongodb+srv://");
+}
+
+function resolveDeploymentProfile(params: {
+  rawProfile: MemoryMongoDBDeploymentProfile | undefined;
+  uri: string;
+}): MemoryMongoDBDeploymentProfile {
+  if (params.rawProfile === "community-mongot") {
+    return "atlas-local-preview";
+  }
+  if (params.rawProfile) {
+    return params.rawProfile;
+  }
+  return looksLikeAtlasCloudUri(params.uri) ? "atlas-cloud" : DEFAULT_MONGODB_PROFILE;
+}
+
+function resolveAutoEmbedModel(params: {
+  rawModel: unknown;
+  deploymentProfile: MemoryMongoDBDeploymentProfile;
+}): MemoryMongoDBAutoEmbedModel {
+  const fallback =
+    params.deploymentProfile === "atlas-cloud"
+      ? DEFAULT_ATLAS_CLOUD_AUTO_EMBED_MODEL
+      : DEFAULT_LOCAL_AUTO_EMBED_MODEL;
+  if (params.rawModel === undefined) {
+    return fallback;
+  }
+  if (
+    typeof params.rawModel !== "string" ||
+    !SUPPORTED_AUTO_EMBED_MODELS.has(params.rawModel as MemoryMongoDBAutoEmbedModel)
+  ) {
+    throw new Error(
+      `Unsupported memory.mongodb.autoEmbedModel "${String(params.rawModel)}". ` +
+        `Supported values: ${Array.from(SUPPORTED_AUTO_EMBED_MODELS).join(", ")}.`,
+    );
+  }
+  return params.rawModel as MemoryMongoDBAutoEmbedModel;
+}
+
 export function resolveMemoryBackendConfig(params: {
   cfg: OpenClawConfig;
   agentId: string;
@@ -155,7 +211,12 @@ export function resolveMemoryBackendConfig(params: {
 
   if (backend === "mongodb") {
     const mongoCfg = params.cfg.memory?.mongodb;
-    const uri = mongoCfg?.uri ?? process.env.OPENCLAW_MONGODB_URI;
+    const uri =
+      process.env.CLAWMONGO_FORCE_MONGODB_URI ??
+      mongoCfg?.uri ??
+      process.env.OPENCLAW_MONGODB_URI ??
+      process.env.CLAWMONGO_MONGODB_URI ??
+      process.env.MEMONGO_MONGODB_URI;
     if (!uri) {
       throw new Error(
         [
@@ -164,25 +225,34 @@ export function resolveMemoryBackendConfig(params: {
         ].join(" "),
       );
     }
-    const rawDeploymentProfile = mongoCfg?.deploymentProfile ?? DEFAULT_MONGODB_PROFILE;
-    const deploymentProfile: MemoryMongoDBDeploymentProfile = DEFAULT_MONGODB_PROFILE;
+    const rawDeploymentProfile = mongoCfg?.deploymentProfile;
+    const deploymentProfile = resolveDeploymentProfile({ rawProfile: rawDeploymentProfile, uri });
     const rawEmbeddingMode = mongoCfg?.embeddingMode ?? DEFAULT_MONGODB_EMBEDDING_MODE;
     const embeddingMode: MemoryMongoDBEmbeddingMode = DEFAULT_MONGODB_EMBEDDING_MODE;
+    const autoEmbedModel = resolveAutoEmbedModel({
+      rawModel: mongoCfg?.autoEmbedModel,
+      deploymentProfile,
+    });
 
-    if (uri.includes(".mongodb.net")) {
+    if (looksLikeAtlasCloudUri(uri) && deploymentProfile !== "atlas-cloud") {
       throw new Error(
         [
-          "ClawMongo supports only MongoDB Community with mongot as the official deployment path.",
-          "Atlas URIs (*.mongodb.net) are not part of the supported ClawMongo contract.",
+          "Atlas cloud URIs require memory.mongodb.deploymentProfile \"atlas-cloud\".",
+          "Use \"atlas-local-preview\" for local MongoDB/mongot deployments.",
         ].join(" "),
       );
     }
-    if (rawDeploymentProfile !== "community-mongot") {
+    if (
+      rawDeploymentProfile !== undefined &&
+      rawDeploymentProfile !== "community-mongot" &&
+      rawDeploymentProfile !== "atlas-local-preview" &&
+      rawDeploymentProfile !== "atlas-cloud"
+    ) {
       const unsupportedDeploymentProfile = String(mongoCfg?.deploymentProfile);
       throw new Error(
         [
           `deploymentProfile "${unsupportedDeploymentProfile}" is not supported in ClawMongo.`,
-          'Use deploymentProfile "community-mongot".',
+          'Use deploymentProfile "atlas-local-preview" or "atlas-cloud".',
         ].join(" "),
       );
     }
@@ -191,7 +261,7 @@ export function resolveMemoryBackendConfig(params: {
       throw new Error(
         [
           `embeddingMode "${unsupportedEmbeddingMode}" is not supported in ClawMongo.`,
-          'Use embeddingMode "automated" with community-mongot.',
+          'Use embeddingMode "automated" with atlas-local-preview or atlas-cloud.',
         ].join(" "),
       );
     }
@@ -205,6 +275,7 @@ export function resolveMemoryBackendConfig(params: {
         collectionPrefix: mongoCfg?.collectionPrefix ?? `openclaw_${sanitizeName(params.agentId)}_`,
         deploymentProfile,
         embeddingMode,
+        autoEmbedModel,
         fusionMethod: mongoCfg?.fusionMethod ?? "scoreFusion",
         quantization: mongoCfg?.quantization ?? "none",
         watchDebounceMs:

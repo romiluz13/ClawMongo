@@ -546,7 +546,7 @@ export function createMemorySearchTool(options: {
     label: "Memory Search",
     name: "memory_search",
     description:
-      "Mandatory recall step: search MongoDB-backed runtime memory before answering questions about prior work, decisions, dates, people, preferences, or todos. Results may include bridge notes synced from memory/*.md plus active structured and KB-backed recall, and the runtime search order is cache -> searchV2 -> legacy fallback. Supports direct or bounded agentic recall controls, returns planner-visible metadata, and preserves reopenable locators and line ranges when available. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user. Example: use memory_search for runtime recall about prior work, then kb_search if you specifically need reference material.",
+      "Mandatory recall step: search MongoDB-backed runtime memory before answering questions about prior work, decisions, dates, people, preferences, or todos. Results come from MongoDB event, structured, graph, episodic, procedural, and KB recall paths. Supports direct or bounded agentic recall controls, returns planner-visible metadata, and preserves reopenable MongoDB locators when available. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user. Example: use memory_search for runtime recall about prior work, then kb_search if you specifically need reference material.",
     parameters: MemorySearchSchema,
     execute:
       ({ cfg, agentId }) =>
@@ -576,18 +576,8 @@ export function createMemorySearchTool(options: {
           const rawResults = detailed.results;
           const status = memory.manager.status();
           const decorated = decorateCitations(rawResults, includeCitations);
-          const resolved = resolveMemoryBackendConfig({ cfg, agentId });
-          const results =
-            (status as { backend: string }).backend === "qmd"
-              ? clampResultsByInjectedChars(
-                  decorated,
-                  (
-                    resolved as Record<string, unknown> & {
-                      qmd?: { limits: { maxInjectedChars?: number } };
-                    }
-                  ).qmd?.limits.maxInjectedChars,
-                )
-              : decorated;
+          resolveMemoryBackendConfig({ cfg, agentId });
+          const results = decorated;
           const searchMode = (status.custom as { searchMode?: string } | undefined)?.searchMode;
           const feedbackHint = computeFeedbackHint(rawResults, status.backend);
           return jsonResult({
@@ -617,7 +607,7 @@ export function createMemoryGetTool(options: {
     label: "Memory Get",
     name: "memory_get",
     description:
-      "Safe snippet read from MEMORY.md or memory/*.md with optional from/lines; use after memory_search to pull only the needed lines and keep context small.",
+      "Safe MongoDB memory locator read with optional from/lines; use after memory_search to pull only the needed canonical event, structured memory, procedure, or KB excerpt and keep context small.",
     parameters: MemoryGetSchema,
     execute:
       ({ cfg, agentId }) =>
@@ -625,23 +615,8 @@ export function createMemoryGetTool(options: {
         const relPath = readStringParam(params, "path", { required: true });
         const from = readNumberParam(params, "from", { integer: true });
         const lines = readNumberParam(params, "lines", { integer: true });
-        const { readAgentMemoryFile, resolveMemoryBackendConfig } = await loadMemoryToolRuntime();
-        const resolved = resolveMemoryBackendConfig({ cfg, agentId });
-        if ((resolved as { backend: string }).backend === "builtin") {
-          try {
-            const result = await readAgentMemoryFile({
-              cfg,
-              agentId,
-              relPath,
-              from: from ?? undefined,
-              lines: lines ?? undefined,
-            });
-            return jsonResult(result);
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            return jsonResult(buildMemoryReadUnavailableResult(relPath, message));
-          }
-        }
+        const { resolveMemoryBackendConfig } = await loadMemoryToolRuntime();
+        resolveMemoryBackendConfig({ cfg, agentId });
         const memory = await getMemoryManagerContextWithPurpose({
           cfg,
           agentId,
@@ -1004,32 +979,6 @@ function formatCitation(entry: MemorySearchResult): string {
       ? `#L${entry.startLine}`
       : `#L${entry.startLine}-L${entry.endLine}`;
   return `${entry.path}${lineRange}`;
-}
-
-function clampResultsByInjectedChars(
-  results: MemorySearchResult[],
-  budget?: number,
-): MemorySearchResult[] {
-  if (!budget || budget <= 0) {
-    return results;
-  }
-  let remaining = budget;
-  const clamped: MemorySearchResult[] = [];
-  for (const entry of results) {
-    if (remaining <= 0) {
-      break;
-    }
-    const snippet = entry.snippet ?? "";
-    if (snippet.length <= remaining) {
-      clamped.push(entry);
-      remaining -= snippet.length;
-    } else {
-      const trimmed = snippet.slice(0, Math.max(0, remaining));
-      clamped.push({ ...entry, snippet: trimmed });
-      break;
-    }
-  }
-  return clamped;
 }
 
 function buildMemorySearchUnavailableResult(error: string | undefined) {
