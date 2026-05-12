@@ -110,7 +110,8 @@ export function execDockerRaw(
         error &&
         typeof error === "object" &&
         "code" in error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT"
+        ((error as NodeJS.ErrnoException).code === "ENOENT" ||
+          (error as NodeJS.ErrnoException).code === "EACCES")
       ) {
         const friendly = Object.assign(
           new Error(

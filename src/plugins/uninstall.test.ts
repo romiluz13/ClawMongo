@@ -404,7 +404,7 @@ describe("removePluginFromConfig", () => {
         },
       }),
       pluginId: "memory-plugin",
-      expectedMemory: "none",
+      expectedMemory: "memory-core",
       expectedChanged: true,
     },
     {
@@ -763,7 +763,7 @@ describe("uninstallPlugin", () => {
     });
     expect(successfulResult.config.plugins?.allow).toEqual(["other-plugin"]);
     expect(successfulResult.config.plugins?.deny).toBeUndefined();
-    expect(successfulResult.config.plugins?.slots?.memory).toBe("none");
+    expect(successfulResult.config.plugins?.slots?.memory).toBe("memory-core");
     expect(runCommandWithTimeoutMock).not.toHaveBeenCalled();
   });
 
@@ -875,7 +875,7 @@ describe("uninstallPlugin", () => {
         plugins: {
           allow: ["other-plugin"],
           slots: {
-            memory: "none",
+            memory: "memory-core",
             contextEngine: "legacy",
           },
         },

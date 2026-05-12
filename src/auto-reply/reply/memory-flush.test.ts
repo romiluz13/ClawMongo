@@ -24,9 +24,9 @@ describe("resolveMemoryFlushPromptForRun", () => {
     });
 
     expect(prompt).toContain("memory/2026-02-16.md");
-    expect(prompt).toContain(
-      "Current time: Monday, February 16th, 2026 — 10:00 AM (America/New_York) / 2026-02-16 15:00 UTC",
-    );
+    expect(prompt).toContain("Current time: Monday, February 16th, 2026");
+    expect(prompt).toContain("10:00 AM (America/New_York)");
+    expect(prompt).toContain("Reference UTC: 2026-02-16 15:00 UTC");
   });
 
   it("does not append a duplicate current time line", () => {

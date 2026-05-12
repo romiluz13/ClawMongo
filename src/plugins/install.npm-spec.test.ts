@@ -213,10 +213,20 @@ function prunePluginLocalOpenClawPeerLinks(npmRoot: string) {
           .map((scopedEntry) => path.join(entryPath, scopedEntry.name))
       : [entryPath];
     for (const packageDir of packageDirs) {
-      fs.rmSync(path.join(packageDir, "node_modules", "openclaw"), {
-        recursive: true,
-        force: true,
-      });
+      const peerPath = path.join(packageDir, "node_modules", "openclaw");
+      try {
+        fs.rmSync(peerPath, { recursive: true, force: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") {
+          throw error;
+        }
+        const linkParent = path.dirname(peerPath);
+        if (fs.existsSync(linkParent) && !fs.statSync(linkParent).isDirectory()) {
+          fs.unlinkSync(linkParent);
+        } else if (fs.existsSync(peerPath)) {
+          fs.unlinkSync(peerPath);
+        }
+      }
     }
   }
 }
@@ -766,13 +776,9 @@ describe("installPluginFromNpmSpec", () => {
       });
 
       expect(second.ok).toBe(true);
-      expect(
-        warnings.some((warning) =>
-          warning.includes(`Skipping openclaw peerDependency link because ${staleNodeModulesPath}`),
-        ),
-      ).toBe(true);
+      expect(warnings).toEqual([]);
       expect(fs.existsSync(path.join(npmRoot, "node_modules", "next-plugin"))).toBe(true);
-      expect(fs.readFileSync(staleNodeModulesPath, "utf-8")).toBe("not a directory");
+      expect(fs.statSync(staleNodeModulesPath).isDirectory()).toBe(true);
     },
   );
 

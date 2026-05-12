@@ -15,9 +15,9 @@ const SLOT_BY_KIND: Record<PluginKind, PluginSlotKey> = {
 };
 
 const DEFAULT_SLOT_BY_KEY: Record<PluginSlotKey, string> = {
-  // ClawMongo: MongoDB owns the memory runtime — never load memory-core plugin.
-  // The memory slot is set to "none" so the upstream plugin loader skips it.
-  memory: "none",
+  // ClawMongo registers its MongoDB manager after plugin startup, so the
+  // memory-core sidecar can still provide upstream-owned prompt/flush seams.
+  memory: "memory-core",
   contextEngine: "legacy",
 };
 

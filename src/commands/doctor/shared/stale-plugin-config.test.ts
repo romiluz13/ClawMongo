@@ -134,10 +134,10 @@ describe("doctor stale plugin config helpers", () => {
     const result = maybeRepairStalePluginConfig(cfg);
 
     expect(result.changes).toEqual([
-      "- plugins.slots: reset 2 stale plugin slots (memory: acpx -> none, contextEngine: missing-engine -> legacy)",
+      "- plugins.slots: reset 2 stale plugin slots (memory: acpx -> memory-core, contextEngine: missing-engine -> legacy)",
     ]);
     expect(result.config.plugins?.slots).toEqual({
-      memory: "none",
+      memory: "memory-core",
       contextEngine: "legacy",
     });
   });
@@ -147,7 +147,7 @@ describe("doctor stale plugin config helpers", () => {
       scanStalePluginConfig({
         plugins: {
           slots: {
-            memory: "none",
+            memory: "memory-core",
             contextEngine: "legacy",
           },
         },
