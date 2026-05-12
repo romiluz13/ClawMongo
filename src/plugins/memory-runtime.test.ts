@@ -72,7 +72,7 @@ function createMemoryRuntimeFixture() {
 
 function expectMemoryRuntimeLoaded(
   config: unknown,
-  pluginIds: readonly string[] = ["memory-core"],
+  pluginIds: readonly string[] = ["none"],
 ) {
   expect(getLoadedRuntimePluginRegistryMock).toHaveBeenCalledWith({
     requiredPluginIds: pluginIds,

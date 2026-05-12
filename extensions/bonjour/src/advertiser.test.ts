@@ -62,6 +62,7 @@ function enableAdvertiserUnitMode(hostname = "test-host") {
   // Allow advertiser to run in unit tests.
   delete process.env.VITEST;
   process.env.NODE_ENV = "development";
+  process.env.OPENCLAW_DISABLE_BONJOUR = "0";
   vi.spyOn(os, "hostname").mockReturnValue(hostname);
   process.env.OPENCLAW_MDNS_HOSTNAME = hostname;
 }
@@ -252,6 +253,7 @@ describe("gateway bonjour advertiser", () => {
 
   it("auto-disables Bonjour in detected containers", async () => {
     enableAdvertiserUnitMode();
+    delete process.env.OPENCLAW_DISABLE_BONJOUR;
     vi.spyOn(fs, "existsSync").mockImplementation((filePath) => String(filePath) === "/.dockerenv");
 
     const started = await startAdvertiser({
@@ -265,6 +267,7 @@ describe("gateway bonjour advertiser", () => {
 
   it("auto-disables Bonjour on Fly Machines without Docker sentinel files", async () => {
     enableAdvertiserUnitMode();
+    delete process.env.OPENCLAW_DISABLE_BONJOUR;
     process.env.FLY_MACHINE_ID = "3d8d5459a03038";
     process.env.FLY_APP_NAME = "openclaw-clawcks-test";
     vi.spyOn(fs, "existsSync").mockReturnValue(false);
@@ -881,6 +884,7 @@ describe("gateway bonjour advertiser", () => {
     // Allow advertiser to run in unit tests.
     delete process.env.VITEST;
     process.env.NODE_ENV = "development";
+    process.env.OPENCLAW_DISABLE_BONJOUR = "0";
 
     vi.spyOn(os, "hostname").mockReturnValue("Mac.localdomain");
 
@@ -906,6 +910,7 @@ describe("gateway bonjour advertiser", () => {
     // Allow advertiser to run in unit tests.
     delete process.env.VITEST;
     process.env.NODE_ENV = "development";
+    process.env.OPENCLAW_DISABLE_BONJOUR = "0";
     delete process.env.OPENCLAW_MDNS_HOSTNAME;
     vi.spyOn(os, "hostname").mockReturnValue("My_Lobster Host");
 
@@ -1002,6 +1007,7 @@ describe("gateway bonjour advertiser", () => {
     // Allow advertiser to run in unit tests.
     delete process.env.VITEST;
     process.env.NODE_ENV = "development";
+    process.env.OPENCLAW_DISABLE_BONJOUR = "0";
     delete process.env.OPENCLAW_MDNS_HOSTNAME;
     vi.spyOn(os, "hostname").mockReturnValue("Lobster");
 

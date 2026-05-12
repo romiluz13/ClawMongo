@@ -9,7 +9,17 @@ read_when:
   - You want to enable multimodal memory indexing
 ---
 
-This page lists every configuration knob for OpenClaw memory search. For conceptual overviews, see:
+This page lists every configuration knob for OpenClaw memory search.
+
+<Note>
+ClawMongo uses MongoDB as the sole runtime memory backend. In ClawMongo, set
+`memory.backend` to `mongodb` or omit it, configure `memory.mongodb.uri`, and
+choose `memory.mongodb.deploymentProfile` as `atlas-local-preview` or
+`atlas-cloud`. QMD, SQLite, LanceDB, and Markdown memory references below are
+upstream OpenClaw compatibility notes, not ClawMongo runtime storage.
+</Note>
+
+For conceptual overviews, see:
 
 <CardGroup cols={2}>
   <Card title="Memory overview" href="/concepts/memory">

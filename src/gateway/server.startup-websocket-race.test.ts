@@ -88,6 +88,7 @@ describe("gateway startup websocket readiness", () => {
     try {
       const port = await getFreePort();
       server = await startGatewayServer(port, {
+        bind: "loopback",
         auth: { mode: "none" },
       });
 

@@ -154,6 +154,11 @@ describe("onboard-hooks", () => {
         options: [
           { value: "__skip__", label: "Skip for now" },
           {
+            value: "session-memory",
+            label: "💾 session-memory",
+            hint: "Legacy bridge export: save recent session context to a workspace Markdown note when /new or /reset is issued",
+          },
+          {
             value: "command-logger",
             label: "📝 command-logger",
             hint: "Log all command events to a centralized audit file",
@@ -180,8 +185,8 @@ describe("onboard-hooks", () => {
       expect(result).toEqual(cfg);
       expect(prompter.multiselect).not.toHaveBeenCalled();
       expect(prompter.note).toHaveBeenCalledWith(
-        "No recommended hooks found. You can configure hooks later in your config, including any legacy bridge-export hooks you want to enable manually.",
-        "No Recommended Hooks",
+        "No eligible hooks found. You can configure hooks later in your config.",
+        "No Hooks Available",
       );
     });
 
@@ -240,7 +245,7 @@ describe("onboard-hooks", () => {
         ],
         [
           [
-            "Enabled 1 hook: session-memory",
+            "Enabled 1 hook: command-logger",
             "",
             "You can manage hooks later with:",
             "  openclaw hooks list",

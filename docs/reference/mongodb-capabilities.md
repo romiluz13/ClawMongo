@@ -48,6 +48,10 @@ MongoDB delegates embedding generation using the `autoEmbed` field type in vecto
 
 Configuration: set `memory.mongodb.embeddingMode = "automated"` and choose `memory.mongodb.deploymentProfile = "atlas-local-preview"` or `"atlas-cloud"` in ClawMongo config. For local preview, set the `VOYAGE_API_KEY` environment variable on the `mongodb-atlas-local:preview` container (or pass it to `start-preview.sh`). For Atlas cloud, configure the embedding/search credentials required by the Atlas cluster.
 
+If the Voyage key is missing, MongoDB can still accept ordinary CRUD writes, but
+ClawMongo cannot prove semantic vector recall. Treat missing Voyage credentials
+as a setup blocker for production memory quality.
+
 ### Configuration Example
 
 ```json5

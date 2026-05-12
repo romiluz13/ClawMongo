@@ -3,15 +3,15 @@
   "version": "2026.5.12-beta.1",
   "description": "MongoDB-native fork of OpenClaw with MongoDB-only memory for multi-channel AI agents",
   "keywords": [],
-  "homepage": "https://github.com/romiluz/ClawMongo-v2#readme",
+  "homepage": "https://github.com/romiluz13/ClawMongo#readme",
   "bugs": {
-    "url": "https://github.com/romiluz/ClawMongo-v2/issues"
+    "url": "https://github.com/romiluz13/ClawMongo/issues"
   },
   "license": "MIT",
   "author": "",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/romiluz/ClawMongo-v2.git"
+    "url": "git+https://github.com/romiluz13/ClawMongo.git"
   },
   "bin": {
     "clawmongo": "openclaw.mjs",
@@ -1338,6 +1338,8 @@
     "canvas:a2ui:bundle": "node scripts/bundle-a2ui.mjs",
     "changed:lanes": "node scripts/changed-lanes.mjs",
     "check": "node scripts/check.mjs",
+    "clawmongo:publish-manifest": "node scripts/clawmongo-publish-manifest.mjs",
+    "clawmongo:e2e": "node scripts/clawmongo-real-e2e.mjs",
     "check:architecture": "pnpm check:import-cycles && pnpm check:madge-import-cycles && pnpm check:deprecated-api-usage && pnpm check:deprecated-jsdoc",
     "check:base-config-schema": "node --import tsx scripts/generate-base-config-schema.ts --check",
     "check:bundled-channel-config-metadata": "node --import tsx scripts/generate-bundled-channel-config-metadata.ts --check",

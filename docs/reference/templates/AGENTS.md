@@ -21,7 +21,7 @@ That context may already include:
 
 - `AGENTS.md`, `SOUL.md`, and `USER.md`
 - recent daily memory such as `memory/YYYY-MM-DD.md`
-- `MEMORY.md` when this is the main session
+- MongoDB runtime recall from `memory_search`
 
 Do not manually reread startup files unless:
 
@@ -31,7 +31,7 @@ Do not manually reread startup files unless:
 
 ## Memory
 
-You wake up fresh each session. Continuity comes from both MongoDB memory and a
+You wake up fresh each session. Continuity comes from MongoDB memory plus a
 small set of human-authored workspace files:
 
 - **Daily bridge notes:** `memory/YYYY-MM-DD.md` (create `memory/` if needed) — optional human-authored raw notes
@@ -45,6 +45,8 @@ Markdown. Durable runtime facts and decisions live in MongoDB.
 - MongoDB is the sole runtime memory store
 - Prefer `memory_write` for durable runtime facts, decisions, preferences, todos, people, projects, and architecture notes
 - Do not use workspace files as a memory store
+- Use `memory_search` before answering questions about prior work, decisions, dates, people, preferences, or todos
+- Use `memory_context_bundle` for handoffs, wake-ups, or compact briefs when available
 
 ### 📝 Write It Down - No "Mental Notes"!
 

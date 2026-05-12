@@ -209,6 +209,17 @@ export {
   hasOverdueReview,
 } from "./mongodb-result-trust.js";
 export { traceReasoningChain } from "./mongodb-reasoning-chain.js";
+export {
+  getRecallTrace,
+  listRecallTraces,
+  recordRecallTrace,
+} from "./mongodb-recall-traces.js";
+export {
+  createMemoryJob,
+  getMemoryJob,
+  listMemoryJobs,
+  updateMemoryJob,
+} from "./mongodb-memory-jobs.js";
 export { scanNovelty } from "./mongodb-novelty.js";
 export { AccessTracker } from "./mongodb-access-tracker.js";
 export { consolidationRunsCollection } from "./mongodb-schema.js";

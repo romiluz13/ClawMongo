@@ -647,7 +647,9 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
   // Now that Tailscale mode is known, compute the effective bind mode.
   const effectiveTailscaleMode = tailscaleMode ?? cfg.gateway?.tailscale?.mode ?? "off";
-  const bind = (bindExplicitRaw ?? defaultGatewayBindMode(effectiveTailscaleMode)) as
+  const defaultBind =
+    process.env.VITEST_POOL_ID !== undefined ? "loopback" : defaultGatewayBindMode(effectiveTailscaleMode);
+  const bind = (bindExplicitRaw ?? defaultBind) as
     | "loopback"
     | "lan"
     | "auto"

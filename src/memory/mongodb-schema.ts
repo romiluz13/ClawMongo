@@ -137,6 +137,14 @@ export function consolidationRunsCollection(db: Db, prefix: string): Collection 
   return col(db, prefix, "consolidation_runs");
 }
 
+export function recallTracesCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "recall_traces");
+}
+
+export function memoryJobsCollection(db: Db, prefix: string): Collection {
+  return col(db, prefix, "memory_jobs");
+}
+
 // ---------------------------------------------------------------------------
 // Ensure collections exist (idempotent)
 // ---------------------------------------------------------------------------
@@ -1472,6 +1480,23 @@ export async function ensureStandardIndexes(
   await consolidationRuns.createIndex(
     { agentId: 1, startedAt: -1 },
     { name: "idx_consolidation_runs_agent_started" },
+  );
+  applied++;
+
+  const recallTraces = recallTracesCollection(db, prefix);
+  await recallTraces.createIndex({ agentId: 1, timestamp: -1 }, { name: "idx_recall_traces_agent_ts" });
+  applied++;
+  await recallTraces.createIndex({ traceId: 1 }, { name: "uq_recall_traces_traceid", unique: true });
+  applied++;
+
+  const memoryJobs = memoryJobsCollection(db, prefix);
+  await memoryJobs.createIndex({ agentId: 1, createdAt: -1 }, { name: "idx_memory_jobs_agent_created" });
+  applied++;
+  await memoryJobs.createIndex({ jobId: 1 }, { name: "uq_memory_jobs_jobid", unique: true });
+  applied++;
+  await memoryJobs.createIndex(
+    { agentId: 1, jobType: 1, status: 1, createdAt: -1 },
+    { name: "idx_memory_jobs_agent_type_status_created" },
   );
   applied++;
 

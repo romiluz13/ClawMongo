@@ -298,6 +298,9 @@ export function defaultGatewayBindMode(tailscaleMode?: string): GatewayBindMode 
   if (tailscaleMode && tailscaleMode !== "off") {
     return "loopback";
   }
+  if (process.env.OPENCLAW_TEST_MINIMAL_GATEWAY === "1") {
+    return "loopback";
+  }
   return isContainerEnvironment() ? "auto" : "loopback";
 }
 

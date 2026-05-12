@@ -170,7 +170,9 @@ async function configureMongoDBWithUri(
   } catch {
     // Connection failed - keep manual flow
   }
-  const profile = "community-mongot";
+  const profile = resolvedUri.includes(".mongodb.net") || resolvedUri.startsWith("mongodb+srv://")
+    ? "atlas-cloud"
+    : "atlas-local-preview";
   const embeddingMode = "automated";
   const existingEnableChangeStreams = nextConfig.memory?.mongodb?.enableChangeStreams;
   const defaultEnableChangeStreams = detectedTier !== "standalone";

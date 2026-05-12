@@ -5,7 +5,10 @@ Skills own workflows; root owns hard policy and routing.
 
 ## Start
 
-- Repo: `https://github.com/openclaw/openclaw`
+- Repo: `https://github.com/romiluz13/ClawMongo` (MongoDB-native OpenClaw fork)
+- Upstream compatibility base: `https://github.com/openclaw/openclaw`
+- Product identity: use **ClawMongo** for this fork in README/docs/onboarding/user-facing copy unless explicitly discussing upstream OpenClaw.
+- Runtime memory contract: MongoDB is the only supported runtime memory backend in ClawMongo. QMD, SQLite, LanceDB, and Markdown files may appear for upstream compatibility or human-authored bridge notes, but they are not runtime memory stores.
 - Replies: repo-root refs only: `extensions/telegram/src/index.ts:80`. No absolute paths, no `~/`.
 - Docs/user-visible work: `pnpm docs:list`, then read relevant docs only.
 - Fix/triage answers need source, tests, current/shipped behavior, and dependency contract proof.
@@ -20,12 +23,17 @@ Skills own workflows; root owns hard policy and routing.
 ## Map
 
 - Core TS: `src/`, `ui/`, `packages/`; plugins: `extensions/`; SDK: `src/plugin-sdk/*`; channels: `src/channels/*`; loader: `src/plugins/*`; protocol: `src/gateway/protocol/*`; docs/apps: `docs/`, `apps/`.
+- ClawMongo memory: `src/memory/**`, `src/agents/tools/memory-tool.ts`, `src/gateway/server-startup-memory.ts`, `src/cli/kb-cli.ts`, `src/docker/mongodb-*`, `docker/mongodb/**`.
+- ClawMongo setup/docs: `docs/start/clawmongo-getting-started.md`, `docs/reference/clawmongo-vs-default-memory.md`, `docs/reference/mongodb-capabilities.md`, `docs/reference/memory-config.md`.
 - Installers: sibling `../openclaw.ai`.
 - Scoped guides: `extensions/`, `src/{plugin-sdk,channels,plugins,gateway,gateway/protocol,agents}/`, `test/helpers*/`, `docs/`, `ui/`, `scripts/`.
 
 ## Architecture
 
 - Core stays plugin-agnostic. No bundled ids/defaults/policy in core when manifest/registry/capability contracts work.
+- ClawMongo exception: MongoDB memory is a fork-level product contract. Keep this integration generic where possible, but do not reintroduce non-Mongo runtime fallback paths for convenience.
+- Atlas profiles are explicit contracts: `atlas-local-preview` for local MongoDB/mongot and `atlas-cloud` for MongoDB Atlas. `community-mongot` is compatibility input only.
+- User-facing memory tools should point agents toward `memory_search`, `memory_write`, `memory_active_slate`, `memory_context_bundle`, `memory_discovery_projection`, `memory_reasoning_chain`, `memory_novelty_scan`, and `kb_search`; do not describe `MEMORY.md` as runtime storage.
 - Plugins cross into core only via `openclaw/plugin-sdk/*`, manifest metadata, injected runtime helpers, documented barrels (`api.ts`, `runtime-api.ts`).
 - Plugin prod code: no core `src/**`, `src/plugin-sdk-internal/**`, other plugin `src/**`, or relative outside package.
 - Core/tests: no deep plugin internals (`extensions/*/src/**`, `onboard.js`). Use public barrels, SDK facade, generic contracts.

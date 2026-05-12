@@ -543,6 +543,40 @@ export type ConsolidationOptions = {
   scope?: MemoryScope;
 };
 
+export type RecallTrace = {
+  traceId: string;
+  agentId: string;
+  query: string;
+  timestamp: Date;
+  pathsExecuted: string[];
+  resultCount: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type MemoryJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
+export type MemoryJobType =
+  | "ingest"
+  | "sync"
+  | "consolidation"
+  | "benchmark"
+  | "migration"
+  | "custom";
+
+export type MemoryJob = {
+  jobId: string;
+  agentId: string;
+  jobType: MemoryJobType;
+  status: MemoryJobStatus;
+  createdAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  error?: string;
+  inputCount?: number;
+  outputCount?: number;
+  durationMs?: number;
+  metadata?: Record<string, unknown>;
+};
+
 export interface MemorySearchManager {
   search(
     query: string,

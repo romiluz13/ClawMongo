@@ -83,6 +83,14 @@ Atlas cloud requires Search and Vector Search support on the target cluster. Cla
 2. Generate an API key from the dashboard
 3. Set `VOYAGE_API_KEY` when starting the atlas-local container (Docker env var) or pass it to Atlas CLI
 
+<Warning>
+ClawMongo can connect to MongoDB without a Voyage key, but vector recall cannot
+be proven or used with automated embeddings until the Voyage key is available to
+MongoDB Search/mongot. For local preview, set `VOYAGE_API_KEY` on the
+`mongodb-atlas-local:preview` container. For split-key deployments, provide the
+indexing/query keys required by your MongoDB Search setup.
+</Warning>
+
 ClawMongo uses automated embeddings through MongoDB Vector Search. The local preview profile defaults to `voyage-4-large` where supported by the local preview image. The Atlas cloud profile defaults to `voyage-3.5` unless you set `memory.mongodb.autoEmbedModel` to a model supported by your cluster.
 
 ---

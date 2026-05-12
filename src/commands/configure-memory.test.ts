@@ -45,7 +45,7 @@ describe("configureMemorySection", () => {
     mockAttemptAutoSetup.mockResolvedValue({ success: false, reason: "Auto-setup unavailable" });
   });
 
-  it("pins ClawMongo to community-mongot with automated embeddings", async () => {
+  it("pins ClawMongo to atlas-local-preview with automated embeddings", async () => {
     const { configureMemorySection } = await import("./configure-memory.js");
     mockSelect.mockResolvedValueOnce("skip");
     mockText.mockResolvedValueOnce("mongodb://localhost:27017/openclaw");
@@ -54,7 +54,7 @@ describe("configureMemorySection", () => {
     const result = await configureMemorySection({}, createRuntime());
 
     expect(result.memory?.backend).toBeUndefined();
-    expect(result.memory?.mongodb?.deploymentProfile).toBe("community-mongot");
+    expect(result.memory?.mongodb?.deploymentProfile).toBe("atlas-local-preview");
     expect(result.memory?.mongodb?.embeddingMode).toBe("automated");
     expect(result.memory?.mongodb?.enableChangeStreams).toBe(true);
     expect(mockNote).toHaveBeenCalledWith(
@@ -107,7 +107,7 @@ describe("configureMemorySection", () => {
     await configureMemorySection({}, createRuntime());
 
     expect(mockNote).toHaveBeenCalledWith(
-      expect.stringContaining("Docker is optional. Local MongoDB works without Docker."),
+      expect.stringContaining("Docker is optional but recommended."),
       "Local MongoDB (No Docker)",
     );
   });

@@ -252,10 +252,35 @@ function buildMemorySection(params: {
   if (params.isMinimal || params.includeMemorySection === false) {
     return [];
   }
-  return buildMemoryPromptSection({
+  const pluginSection = buildMemoryPromptSection({
     availableTools: params.availableTools,
     citationsMode: params.citationsMode,
   });
+  if (pluginSection.length > 0) {
+    return pluginSection;
+  }
+  if (!params.availableTools.has("memory_search")) {
+    return [];
+  }
+  return [
+    "## ClawMongo Memory",
+    "MongoDB is the durable runtime memory store.",
+    "- Use `memory_search` before answering questions about prior work, decisions, dates, people, preferences, or todos.",
+    params.availableTools.has("memory_write")
+      ? "- Use `memory_write` for durable facts, decisions, preferences, todos, people, projects, and architecture notes."
+      : "",
+    params.availableTools.has("memory_context_bundle")
+      ? "- Use `memory_context_bundle` for handoffs, wake-ups, and compact briefs."
+      : "",
+    params.availableTools.has("memory_active_slate")
+      ? "- Use `memory_active_slate` when the user asks what matters now or what is currently active."
+      : "",
+    params.availableTools.has("kb_search")
+      ? "- Use `kb_search` for imported reference material and documentation."
+      : "",
+    "Do not treat `MEMORY.md` or workspace files as runtime memory.",
+    "",
+  ].filter(Boolean);
 }
 
 export function buildAgentBootstrapSystemContext(params: {

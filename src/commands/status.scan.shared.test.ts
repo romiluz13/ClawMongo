@@ -524,7 +524,7 @@ describe("resolveSharedMemoryStatusSnapshot", () => {
     });
   });
 
-  it("keeps default memory-core on the cold-start store shortcut", async () => {
+  it("uses MongoDB memory manager instead of default memory-core cold-start shortcut", async () => {
     const resolveMemoryConfig = vi.fn(() => null);
     const getMemorySearchManager = vi.fn(async () => ({ manager: null }));
 
@@ -539,6 +539,10 @@ describe("resolveSharedMemoryStatusSnapshot", () => {
 
     expect(result).toBeNull();
     expect(resolveMemoryConfig).not.toHaveBeenCalled();
-    expect(getMemorySearchManager).not.toHaveBeenCalled();
+    expect(getMemorySearchManager).toHaveBeenCalledWith({
+      cfg: {},
+      agentId: "main",
+      purpose: "status",
+    });
   });
 });

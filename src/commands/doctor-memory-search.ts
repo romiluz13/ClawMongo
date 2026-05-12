@@ -44,6 +44,28 @@ type RuntimeMemoryAuditContext = {
   qmdCollections?: number;
 };
 
+export function noteMemoryRecallDiagnostic(params: { backend?: string }): {
+  title: string;
+  lines: string[];
+} | null {
+  if (params.backend !== "mongodb") {
+    return null;
+  }
+  return {
+    title: "Memory Recall Diagnostic",
+    lines: [
+      "Not Retrieved",
+      "- Run memory_search with an explicit query and inspect metadata.pathsExecuted.",
+      "- Check Search and Vector Search indexes for the active MongoDB profile.",
+      "Compaction Lost It",
+      "- Important facts should be promoted with memory_write before compaction.",
+      "- Check MongoDB events, structured_mem, and recall traces for source evidence.",
+      "Never Stored",
+      "- If no event or structured memory exists, store the fact with memory_write.",
+    ],
+  };
+}
+
 type MemoryEmbeddingProviderDoctorMetadata = {
   providerId: string;
   authProviderId: string;
