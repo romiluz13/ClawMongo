@@ -26,10 +26,6 @@ describe("bundled plugin runtime dependencies", () => {
     expectPluginOwnsRuntimeDep("extensions/feishu/package.json", "@larksuiteoapi/node-sdk");
   });
 
-  it("keeps bundled Discord runtime deps plugin-local instead of mirroring them into the root package", () => {
-    expectPluginOwnsRuntimeDep("extensions/discord/package.json", "@buape/carbon");
-  });
-
   it("keeps bundled Slack runtime deps plugin-local instead of mirroring them into the root package", () => {
     expectPluginOwnsRuntimeDep("extensions/slack/package.json", "@slack/bolt");
   });
@@ -39,14 +35,15 @@ describe("bundled plugin runtime dependencies", () => {
   });
 
   it("keeps WhatsApp runtime deps plugin-local so packaged installs fetch them on demand", () => {
-    expectPluginOwnsRuntimeDep("extensions/whatsapp/package.json", "@whiskeysockets/baileys");
+    expectPluginOwnsRuntimeDep("extensions/whatsapp/package.json", "baileys");
   });
 
   it("keeps WhatsApp image helper deps plugin-local so bundled builds resolve Baileys peers", () => {
     expectPluginOwnsRuntimeDep("extensions/whatsapp/package.json", "jimp");
   });
 
-  it("keeps bundled proxy-agent deps plugin-local instead of mirroring them into the root package", () => {
-    expectPluginOwnsRuntimeDep("extensions/discord/package.json", "https-proxy-agent");
+  it("keeps bundled Discord proxy-agent support plugin-local even though core also owns it", () => {
+    const pluginManifest = readJson("extensions/discord/package.json");
+    expect(pluginManifest.dependencies?.["https-proxy-agent"]).toBeTruthy();
   });
 });

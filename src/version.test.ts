@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { withTempDir } from "./test-helpers/temp-dir.js";
 import { createSuiteTempRootTracker } from "./test-helpers/temp-dir.js";
 import {
   VERSION,
@@ -72,7 +73,7 @@ describe("version resolution", () => {
   });
 
   it("accepts clawmongo package name when resolving version", async () => {
-    await withTempDir(async (root) => {
+    await withTempDir({ prefix: "clawmongo-version-" }, async (root) => {
       await fs.mkdir(path.join(root, "dist", "plugin-sdk"), { recursive: true });
       await fs.writeFile(
         path.join(root, "package.json"),

@@ -10,6 +10,7 @@ vi.mock("./mongodb-telemetry.js", () => ({
 
 import type { Db } from "mongodb";
 import { rewriteQuery, expandSynonyms, type QueryRewriteConfig } from "./mongodb-query-rewriter.js";
+import { emitTelemetry } from "./mongodb-telemetry.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -169,10 +170,7 @@ describe("rewriteQuery", () => {
   });
 
   it("emits query-rewrite telemetry", async () => {
-    const insertOne = vi.fn().mockResolvedValue({ acknowledged: true });
-    const db = {
-      collection: vi.fn().mockReturnValue({ insertOne }),
-    } as unknown as Db;
+    const db = mockDb();
 
     await rewriteQuery({
       db,
@@ -181,7 +179,9 @@ describe("rewriteQuery", () => {
       query: "auth problem",
       config: enabledConfig(),
     });
-    expect(insertOne).toHaveBeenCalledWith(
+    expect(emitTelemetry).toHaveBeenCalledWith(
+      db,
+      PREFIX,
       expect.objectContaining({
         meta: { agentId: AGENT_ID, operation: "query-rewrite" },
         ok: true,

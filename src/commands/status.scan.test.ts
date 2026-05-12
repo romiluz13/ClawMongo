@@ -269,12 +269,12 @@ describe("scanStatus", () => {
     expect(mocks.probeGateway).not.toHaveBeenCalled();
   });
 
-  it("skips memory backend inspection for default memory-core with no existing store", async () => {
+  it("inspects default memory-core because ClawMongo memory is MongoDB-backed", async () => {
     configureScanStatus();
 
     await scanStatus({ json: true }, {} as never);
 
-    expect(mocks.getMemorySearchManager).not.toHaveBeenCalled();
+    expect(mocks.getMemorySearchManager).toHaveBeenCalledOnce();
   });
 
   it("keeps default text status off plugin compatibility and memory scans", async () => {

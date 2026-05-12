@@ -260,10 +260,11 @@ export async function probeGateway(opts: {
       });
     };
 
+    const shouldPreferCachedDeviceAuth = deviceIdentity !== null;
     const client = new GatewayClient({
       url: opts.url,
-      token: opts.auth?.token,
-      password: opts.auth?.password,
+      token: shouldPreferCachedDeviceAuth ? undefined : opts.auth?.token,
+      password: shouldPreferCachedDeviceAuth ? undefined : opts.auth?.password,
       tlsFingerprint: opts.tlsFingerprint,
       preauthHandshakeTimeoutMs: opts.preauthHandshakeTimeoutMs,
       env: opts.env,

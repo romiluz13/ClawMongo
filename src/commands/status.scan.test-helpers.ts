@@ -441,9 +441,7 @@ export function applyStatusScanDefaults(
     mocks.probeGateway.mockResolvedValue(options.gatewayProbe ?? createStatusGatewayProbeFailure());
   }
 
-  if (options.memoryManager) {
-    mocks.getMemorySearchManager.mockResolvedValue(options.memoryManager);
-  }
+  mocks.getMemorySearchManager.mockResolvedValue(options.memoryManager ?? { manager: null });
 }
 
 export async function withTemporaryEnv(

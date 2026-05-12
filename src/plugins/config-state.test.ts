@@ -45,13 +45,13 @@ function expectNormalizedEnableState(params: {
 
 describe("normalizePluginsConfig", () => {
   it.each([
-    [{}, "none"],
+    [{}, "memory-core"],
     [{ slots: { memory: "custom-memory" } }, "custom-memory"],
     [{ slots: { memory: "none" } }, null],
     [{ slots: { memory: "None" } }, null],
     [{ slots: { memory: "  custom-memory  " } }, "custom-memory"],
-    [{ slots: { memory: "" } }, "none"],
-    [{ slots: { memory: "   " } }, "none"],
+    [{ slots: { memory: "" } }, "memory-core"],
+    [{ slots: { memory: "   " } }, "memory-core"],
   ] as const)("normalizes memory slot for %o", (config, expected) => {
     expect(normalizePluginsConfig(config).slots.memory).toBe(expected);
   });

@@ -6,7 +6,7 @@ import {
 export type CapturedDiagnosticLogRecord = Extract<DiagnosticEventPayload, { type: "log.record" }>;
 
 export function flushDiagnosticLogRecords(): Promise<void> {
-  return new Promise<void>((resolve) => setImmediate(resolve));
+  return new Promise<void>((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
 export function createDiagnosticLogRecordCapture() {

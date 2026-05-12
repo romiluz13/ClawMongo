@@ -12,6 +12,7 @@ import { createConfigIO, replaceConfigFile, resolveGatewayPort } from "../config
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { normalizeSecretInputString } from "../config/types.secrets.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { resolveOpenClawPackageName } from "../infra/openclaw-root.js";
 import {
   buildPluginCompatibilitySnapshotNotices,
   formatPluginCompatibilityNotice,
@@ -19,6 +20,7 @@ import {
 import type { RuntimeEnv } from "../runtime.js";
 import { defaultRuntime } from "../runtime.js";
 import { resolveUserPath } from "../utils.js";
+import { setupMemoryBackend } from "./onboarding-memory.js";
 import { WizardCancelledError, type WizardPrompter } from "./prompts.js";
 import { detectSetupMigrationSources, runSetupMigrationImport } from "./setup.migration-import.js";
 import { resolveSetupSecretInputString } from "./setup.secret-input.js";
@@ -574,6 +576,9 @@ export async function runSetupWizard(
   let nextConfig: OpenClawConfig = applyLocalSetupWorkspaceConfig(baseConfig, workspaceDir);
   if (opts.skipBootstrap) {
     nextConfig = applySkipBootstrapConfig(nextConfig);
+  }
+  if ((await resolveOpenClawPackageName()) === "@romiluz/clawmongo") {
+    nextConfig = await setupMemoryBackend(nextConfig, prompter);
   }
 
   const authChoiceFromPrompt = opts.authChoice === undefined;

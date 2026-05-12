@@ -278,7 +278,7 @@ function buildMemorySection(params: {
     params.availableTools.has("kb_search")
       ? "- Use `kb_search` for imported reference material and documentation."
       : "",
-    "Do not treat `MEMORY.md` or workspace files as runtime memory.",
+    "Do not treat workspace files as runtime memory.",
     "",
   ].filter(Boolean);
 }

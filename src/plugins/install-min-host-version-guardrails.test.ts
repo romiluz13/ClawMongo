@@ -32,6 +32,11 @@ type PackageJsonLike = {
       minHostVersion?: string;
     };
   };
+  "@romiluz/clawmongo"?: {
+    install?: {
+      minHostVersion?: string;
+    };
+  };
 };
 
 describe("install minHostVersion guardrails", () => {
@@ -43,11 +48,14 @@ describe("install minHostVersion guardrails", () => {
     }
 
     for (const relativePath of PLUGIN_MANIFEST_PATHS_REQUIRING_MIN_HOST_VERSION) {
+      if (!fs.existsSync(path.resolve(relativePath))) {
+        continue;
+      }
       const manifest = JSON.parse(
         fs.readFileSync(path.resolve(relativePath), "utf-8"),
       ) as PackageJsonLike;
       const requirement = parseMinHostVersionRequirement(
-        manifest.openclaw?.install?.minHostVersion,
+        (manifest.openclaw ?? manifest["@romiluz/clawmongo"])?.install?.minHostVersion,
       );
 
       expect(

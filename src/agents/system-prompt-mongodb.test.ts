@@ -26,7 +26,8 @@ describe("buildAgentSystemPrompt ClawMongo memory guidance", () => {
     expect(prompt).toContain("memory_context_bundle");
     expect(prompt).toContain("memory_active_slate");
     expect(prompt).toContain("kb_search");
-    expect(prompt).toContain("Do not treat `MEMORY.md` or workspace files as runtime memory.");
+    expect(prompt).toContain("Do not treat workspace files as runtime memory.");
+    expect(prompt).not.toContain("MEMORY.md");
   });
 
   it("omits unavailable memory tool guidance", () => {

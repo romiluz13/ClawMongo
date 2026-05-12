@@ -11,13 +11,24 @@ import { copyStaticExtensionAssetsForPackage } from "./static-extension-assets.m
 const env = {
   NODE_ENV: "production",
 };
+const PLUGIN_METADATA_KEYS = ["openclaw", "@romiluz/clawmongo"];
 
 function readJsonFile(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
 export function isPublishablePluginPackage(packageJson) {
-  return packageJson.openclaw?.release?.publishToNpm === true;
+  return getPluginPackageMetadata(packageJson)?.release?.publishToNpm === true;
+}
+
+function getPluginPackageMetadata(packageJson) {
+  for (const key of PLUGIN_METADATA_KEYS) {
+    const metadata = packageJson[key];
+    if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+      return metadata;
+    }
+  }
+  return undefined;
 }
 
 function normalizePackageEntry(value) {
@@ -142,10 +153,11 @@ function normalizeOpenClawPeerRange(value) {
 }
 
 function resolveOpenClawPeerRange(packageJson, rootPackageJson) {
+  const pluginMetadata = getPluginPackageMetadata(packageJson);
   return (
-    normalizeOpenClawPeerRange(packageJson.openclaw?.compat?.pluginApi) ||
+    normalizeOpenClawPeerRange(pluginMetadata?.compat?.pluginApi) ||
     normalizeOpenClawPeerRange(packageJson.peerDependencies?.openclaw) ||
-    normalizeOpenClawPeerRange(packageJson.openclaw?.build?.openclawVersion) ||
+    normalizeOpenClawPeerRange(pluginMetadata?.build?.openclawVersion) ||
     normalizeOpenClawPeerRange(rootPackageJson?.version) ||
     normalizeOpenClawPeerRange(packageJson.version)
   );
@@ -192,7 +204,11 @@ export function resolvePluginNpmRuntimeBuildPlan(params) {
     return null;
   }
 
-  const packageEntries = collectPluginSourceEntries(packageJson).map(normalizePackageEntry);
+  const pluginMetadata = getPluginPackageMetadata(packageJson) ?? {};
+  const packageEntries = collectPluginSourceEntries({
+    ...packageJson,
+    openclaw: pluginMetadata,
+  }).map(normalizePackageEntry);
   const requiresRuntimeBuild = packageEntries.some(isTypeScriptEntry);
   if (!requiresRuntimeBuild) {
     return null;
@@ -216,20 +232,17 @@ export function resolvePluginNpmRuntimeBuildPlan(params) {
     repoRoot,
     packageDir,
     pluginDir,
-    packageJson,
+    packageJson: { ...packageJson, openclaw: pluginMetadata },
     rootPackageJson,
     sourceEntries,
     entry,
     outDir: path.join(packageDir, "dist"),
-    runtimeExtensions: (Array.isArray(packageJson.openclaw?.extensions)
-      ? packageJson.openclaw.extensions
-      : []
-    )
+    runtimeExtensions: (Array.isArray(pluginMetadata?.extensions) ? pluginMetadata.extensions : [])
       .map(normalizePackageEntry)
       .filter(Boolean)
       .map(toPackageRuntimeEntry),
-    runtimeSetupEntry: normalizePackageEntry(packageJson.openclaw?.setupEntry)
-      ? toPackageRuntimeEntry(packageJson.openclaw.setupEntry)
+    runtimeSetupEntry: normalizePackageEntry(pluginMetadata?.setupEntry)
+      ? toPackageRuntimeEntry(pluginMetadata.setupEntry)
       : undefined,
   };
   return {
