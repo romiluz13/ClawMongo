@@ -133,7 +133,7 @@ describe("scanStatusJsonFast", () => {
       chunks: 0,
       dirty: false,
     });
-    expect(mocks.resolveMemorySearchConfig).toHaveBeenCalled();
+    expect(mocks.resolveMemorySearchConfig).not.toHaveBeenCalled();
     expect(mocks.getMemorySearchManager).toHaveBeenCalledOnce();
     expect(mocks.getMemorySearchManager.mock.calls.at(0)?.[0]).toStrictEqual({
       cfg: createStatusMemorySearchConfig(),
