@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import {
   getEventsByTimeRange,
   getUnconsolidatedEvents,
@@ -350,8 +351,9 @@ export async function getEpisodesByTimeRange(params: {
       filter.scopeRef = scopeRef;
     }
 
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    const docs = await col.find(filter).sort({ "timeRange.start": -1 }).limit(100).toArray();
+    const docs = await sortMongoCursor(col.find(filter), { "timeRange.start": -1 })
+      .limit(100)
+      .toArray();
 
     return docs as unknown as Episode[];
   } catch (err) {
@@ -377,16 +379,16 @@ export async function getEpisodesByType(params: {
   try {
     const col = episodesCollection(db, prefix);
 
-    const docs = await col
-      .find({
+    const docs = await sortMongoCursor(
+      col.find({
         agentId,
         type,
         status: { $ne: "deleted" },
         ...(scope ? { scope } : {}),
         ...(scopeRef ? { scopeRef } : {}),
-      })
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ updatedAt: -1 })
+      }),
+      { updatedAt: -1 },
+    )
       .limit(limit ?? 50)
       .toArray();
 
@@ -484,10 +486,7 @@ export async function searchEpisodes(params: {
       filter["timeRange.end"] = { $gte: timeRange.start };
     }
 
-    const docs = await col
-      .find(filter)
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ updatedAt: -1 })
+    const docs = await sortMongoCursor(col.find(filter), { updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 

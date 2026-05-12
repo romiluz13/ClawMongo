@@ -18,6 +18,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { scanNovelty } from "./mongodb-novelty.js";
 import { traceReasoningChain } from "./mongodb-reasoning-chain.js";
 import { computeImportanceDecay, computeResultTrust } from "./mongodb-result-trust.js";
@@ -231,10 +232,7 @@ export async function consolidateMemory(params: {
     filter.scope = options.scope;
   }
 
-  const events = await eventsCol
-    .find(filter)
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: -1 })
+  const events = await sortMongoCursor(eventsCol.find(filter), { timestamp: -1 })
     .limit(maxEvents)
     .toArray();
 

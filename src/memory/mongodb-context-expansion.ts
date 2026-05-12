@@ -1,5 +1,6 @@
 import type { Db, Document } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { renderEventChunkText } from "./mongodb-events.js";
 import { eventsCollection } from "./mongodb-schema.js";
 import type { MemorySearchResult } from "./types.js";
@@ -86,10 +87,7 @@ export async function expandSearchContext(params: {
 
     let sessionEvents: Document[];
     try {
-      sessionEvents = await collection
-        .find(filter)
-        // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-        .sort({ timestamp: 1 })
+      sessionEvents = await sortMongoCursor(collection.find(filter), { timestamp: 1 })
         .limit(100)
         .toArray();
     } catch (err) {

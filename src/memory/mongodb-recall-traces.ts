@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "mongodb";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { recallTracesCollection } from "./mongodb-schema.js";
 import type { RecallTrace } from "./types.js";
 
@@ -37,10 +38,10 @@ export async function listRecallTraces(params: {
   agentId: string;
   limit?: number;
 }): Promise<RecallTrace[]> {
-  const docs = await recallTracesCollection(params.db, params.prefix)
-    .find({ agentId: params.agentId })
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: -1 })
+  const docs = await sortMongoCursor(
+    recallTracesCollection(params.db, params.prefix).find({ agentId: params.agentId }),
+    { timestamp: -1 },
+  )
     .limit(clampListLimit(params.limit))
     .toArray();
   return docs as unknown as RecallTrace[];

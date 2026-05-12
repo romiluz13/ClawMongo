@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { mutationsCollection } from "./mongodb-schema.js";
 
 const log = createSubsystemLogger("memory:mongodb:mutations");
@@ -78,10 +79,9 @@ export async function getMutationHistory(params: {
     if (since) {
       filter.timestamp = { $gte: since };
     }
-    const docs = await mutationsCollection(db, prefix)
-      .find(filter)
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ timestamp: -1 })
+    const docs = await sortMongoCursor(mutationsCollection(db, prefix).find(filter), {
+      timestamp: -1,
+    })
       .limit(limit)
       .toArray();
     return docs as unknown as MutationRecord[];

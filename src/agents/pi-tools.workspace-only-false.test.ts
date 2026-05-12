@@ -227,7 +227,7 @@ describe("FS tools with workspaceOnly=false", () => {
     expect(tools.map((tool) => tool.name).toSorted()).toEqual(["read", "write"]);
 
     const allowedResult = await writeTool.execute("memory-flush-write", {
-      path: memoryPath,
+      path: allowedRelativePath,
       content: "first line",
     });
     expect(hasToolError(allowedResult)).toBe(false);
@@ -250,6 +250,8 @@ describe("FS tools with workspaceOnly=false", () => {
         appendOnly: true,
       },
     });
-    await expect(fs.readFile(allowedAbsolutePath, "utf-8")).resolves.toBe("seed\nnew note");
+    await expect(fs.readFile(allowedAbsolutePath, "utf-8")).resolves.toBe(
+      "seed\nfirst line\nnew note",
+    );
   });
 });

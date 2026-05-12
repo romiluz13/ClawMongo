@@ -278,6 +278,9 @@ describe("createTelegramBot", () => {
   });
   it("applies global and per-account timeoutSeconds", () => {
     loadConfig.mockReturnValue({
+      messages: {
+        inbound: { debounceMs: 0 },
+      },
       channels: {
         telegram: { dmPolicy: "open", allowFrom: ["*"], timeoutSeconds: 60 },
       },
@@ -373,7 +376,11 @@ describe("createTelegramBot", () => {
         telegram: {
           dmPolicy: "open",
           allowFrom: ["*"],
-          groups: { "*": { requireMention: false } },
+          groupPolicy: "open",
+          groups: {
+            "-1001234567890": { requireMention: false, allowFrom: ["12345"] },
+            "*": { requireMention: false },
+          },
         },
       },
     });
@@ -491,7 +498,9 @@ describe("createTelegramBot", () => {
   });
 
   it("keeps ordinary Telegram messages serialized within the same topic", async () => {
+    vi.useFakeTimers();
     installPerKeySequentializer();
+    readChannelAllowFromStore.mockResolvedValue(["*"]);
     loadConfig.mockReturnValue({
       channels: {
         telegram: {
@@ -503,6 +512,9 @@ describe("createTelegramBot", () => {
     });
 
     const startedBodies: string[] = [];
+    const updateSessionStoreSpy = vi
+      .spyOn(sessionStoreRuntime, "updateSessionStore")
+      .mockResolvedValue(undefined as never);
     let releaseFirstTurn: (() => void) | undefined;
     const firstTurnGate = new Promise<void>((resolve) => {
       releaseFirstTurn = resolve;
@@ -518,60 +530,66 @@ describe("createTelegramBot", () => {
       return { text: `reply:${body}` };
     });
 
-    createTelegramBot({ token: "tok" });
-    const messageHandler = getOnHandler("message") as (
-      ctx: TelegramMiddlewareTestContext,
-    ) => Promise<void>;
+    try {
+      createTelegramBot({ token: "tok" });
+      const messageHandler = getOnHandler("message") as (
+        ctx: TelegramMiddlewareTestContext,
+      ) => Promise<void>;
 
-    const firstCtx = {
-      ...makeForumGroupMessageCtx({ threadId: 99, text: "first message" }),
-      message: {
-        ...makeForumGroupMessageCtx({ threadId: 99, text: "first message" }).message,
-        message_id: 201,
-      },
-      update: { update_id: 201 },
-    };
-    const secondCtx = {
-      ...makeForumGroupMessageCtx({ threadId: 99, text: "second message" }),
-      message: {
-        ...makeForumGroupMessageCtx({ threadId: 99, text: "second message" }).message,
-        message_id: 202,
-      },
-      update: { update_id: 202 },
-    };
+      const firstCtx = {
+        ...makeForumGroupMessageCtx({ threadId: 99, text: "first message" }),
+        message: {
+          ...makeForumGroupMessageCtx({ threadId: 99, text: "first message" }).message,
+          message_id: 201,
+        },
+        update: { update_id: 201 },
+      };
+      const secondCtx = {
+        ...makeForumGroupMessageCtx({ threadId: 99, text: "second message" }),
+        message: {
+          ...makeForumGroupMessageCtx({ threadId: 99, text: "second message" }).message,
+          message_id: 202,
+        },
+        update: { update_id: 202 },
+      };
 
-    const firstPromise = runTelegramMiddlewareChain({
-      ctx: firstCtx,
-      finalHandler: messageHandler,
-    });
+      const firstPromise = runTelegramMiddlewareChain({
+        ctx: firstCtx,
+        finalHandler: messageHandler,
+      });
+      await vi.runOnlyPendingTimersAsync();
 
-    await vi.waitFor(() => {
+      await vi.waitFor(() => {
+        expect(startedBodies).toHaveLength(1);
+        expect(startedBodies[0]).toContain("first message");
+      });
+
+      const secondPromise = runTelegramMiddlewareChain({
+        ctx: secondCtx,
+        finalHandler: messageHandler,
+      });
+
+      await Promise.resolve();
       expect(startedBodies).toHaveLength(1);
       expect(startedBodies[0]).toContain("first message");
-    });
+      expect(sendMessageSpy).not.toHaveBeenCalled();
 
-    const secondPromise = runTelegramMiddlewareChain({
-      ctx: secondCtx,
-      finalHandler: messageHandler,
-    });
+      if (!releaseFirstTurn) {
+        throw new Error("Expected first Telegram turn release callback to be initialized");
+      }
+      releaseFirstTurn();
+      await Promise.all([firstPromise, secondPromise]);
 
-    await Promise.resolve();
-    expect(startedBodies).toHaveLength(1);
-    expect(startedBodies[0]).toContain("first message");
-    expect(sendMessageSpy).not.toHaveBeenCalled();
-
-    if (!releaseFirstTurn) {
-      throw new Error("Expected first Telegram turn release callback to be initialized");
+      expect(startedBodies).toHaveLength(2);
+      expect(startedBodies[0]).toContain("first message");
+      expect(startedBodies[1]).toContain("second message");
+      const sentBodies = sendMessageSpy.mock.calls.map((call) => String(call[1]));
+      expect(sentBodies[0]).toContain("first message");
+      expect(sentBodies[1]).toContain("second message");
+    } finally {
+      updateSessionStoreSpy.mockRestore();
+      vi.useRealTimers();
     }
-    releaseFirstTurn();
-    await Promise.all([firstPromise, secondPromise]);
-
-    expect(startedBodies).toHaveLength(2);
-    expect(startedBodies[0]).toContain("first message");
-    expect(startedBodies[1]).toContain("second message");
-    const sentBodies = sendMessageSpy.mock.calls.map((call) => String(call[1]));
-    expect(sentBodies[0]).toContain("first message");
-    expect(sentBodies[1]).toContain("second message");
   });
 
   it("preserves same-chat reply order when a debounced run is still active", async () => {

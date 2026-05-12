@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { renderEventChunkText } from "./mongodb-events.js";
 import { chunksCollection, eventsCollection } from "./mongodb-schema.js";
 
@@ -109,10 +110,9 @@ export async function projectConversationWindows(params: {
 
   // Fetch all events for this session
   const eventsCol = eventsCollection(db, prefix);
-  const rawResult = await eventsCol
-    .find({ agentId, sessionId })
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1 })
+  const rawResult = await sortMongoCursor(eventsCol.find({ agentId, sessionId }), {
+    timestamp: 1,
+  })
     .limit(1000)
     .toArray();
 

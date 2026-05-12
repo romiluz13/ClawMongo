@@ -1,8 +1,100 @@
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR } from "../../agents/pi-settings.js";
 import { parseNonNegativeByteSize } from "../../config/byte-size.js";
 import { resolveFreshSessionTotalTokens, type SessionEntry } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { SILENT_REPLY_TOKEN } from "../tokens.js";
+
+export const DEFAULT_MEMORY_FLUSH_SOFT_TOKENS = 4000;
+export const DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES = 2 * 1024 * 1024;
+
+const MEMORY_FLUSH_TARGET_HINT =
+  "Store durable structured memories with memory_write only; do not use file writes for runtime memory.";
+const MEMORY_FLUSH_READ_ONLY_HINT =
+  "Treat workspace bootstrap files (SOUL.md, TOOLS.md, AGENTS.md) as read-only during this flush; never overwrite, replace, or edit them.";
+const MEMORY_FLUSH_REQUIRED_HINTS = [MEMORY_FLUSH_TARGET_HINT, MEMORY_FLUSH_READ_ONLY_HINT];
+
+export const DEFAULT_MEMORY_FLUSH_PROMPT = [
+  "Pre-compaction memory flush.",
+  MEMORY_FLUSH_TARGET_HINT,
+  MEMORY_FLUSH_READ_ONLY_HINT,
+  "Write only durable facts, decisions, preferences, todos, people, projects, or architecture notes worth keeping.",
+  `If nothing to store, reply with ${SILENT_REPLY_TOKEN}.`,
+].join(" ");
+
+export const DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT = [
+  "Pre-compaction memory flush turn.",
+  "The session is near auto-compaction; capture durable memories in MongoDB.",
+  MEMORY_FLUSH_TARGET_HINT,
+  MEMORY_FLUSH_READ_ONLY_HINT,
+  `You may reply, but usually ${SILENT_REPLY_TOKEN} is correct.`,
+].join(" ");
+
+export type MemoryFlushSettings = {
+  enabled: boolean;
+  softThresholdTokens: number;
+  forceFlushTranscriptBytes: number;
+  prompt: string;
+  systemPrompt: string;
+  reserveTokensFloor: number;
+};
+
+const normalizeNonNegativeInt = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+  const int = Math.floor(value);
+  return int >= 0 ? int : null;
+};
+
+function ensureNoReplyHint(text: string): string {
+  if (text.includes(SILENT_REPLY_TOKEN)) {
+    return text;
+  }
+  return `${text}\n\nIf no user-visible reply is needed, start with ${SILENT_REPLY_TOKEN}.`;
+}
+
+function ensureMemoryFlushSafetyHints(text: string): string {
+  let next = text.trim();
+  for (const hint of MEMORY_FLUSH_REQUIRED_HINTS) {
+    if (!next.includes(hint)) {
+      next = next ? `${next}\n\n${hint}` : hint;
+    }
+  }
+  return next;
+}
+
+export function resolveMemoryFlushSettings(cfg?: OpenClawConfig): MemoryFlushSettings | null {
+  const defaults = cfg?.agents?.defaults?.compaction?.memoryFlush;
+  const enabled = defaults?.enabled ?? true;
+  if (!enabled) {
+    return null;
+  }
+  const softThresholdTokens =
+    normalizeNonNegativeInt(defaults?.softThresholdTokens) ?? DEFAULT_MEMORY_FLUSH_SOFT_TOKENS;
+  const forceFlushTranscriptBytes =
+    parseNonNegativeByteSize(defaults?.forceFlushTranscriptBytes) ??
+    DEFAULT_MEMORY_FLUSH_FORCE_TRANSCRIPT_BYTES;
+  const prompt = ensureMemoryFlushSafetyHints(
+    defaults?.prompt?.trim() || DEFAULT_MEMORY_FLUSH_PROMPT,
+  );
+  const systemPrompt = ensureMemoryFlushSafetyHints(
+    defaults?.systemPrompt?.trim() || DEFAULT_MEMORY_FLUSH_SYSTEM_PROMPT,
+  );
+  const reserveTokensFloor =
+    normalizeNonNegativeInt(cfg?.agents?.defaults?.compaction?.reserveTokensFloor) ??
+    DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR;
+
+  return {
+    enabled,
+    softThresholdTokens,
+    forceFlushTranscriptBytes,
+    prompt: ensureNoReplyHint(prompt),
+    systemPrompt: ensureNoReplyHint(systemPrompt),
+    reserveTokensFloor,
+  };
+}
 
 export function resolveMemoryFlushContextWindowTokens(params: {
   modelId?: string;

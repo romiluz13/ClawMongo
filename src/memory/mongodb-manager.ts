@@ -9,6 +9,7 @@ import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedMemoryBackendConfig, ResolvedMongoDBConfig } from "./backend-config.js";
 import { normalizeExtraMemoryPaths } from "./internal.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { hydrateActiveSlate } from "./mongodb-active-slate.js";
 import { getMemoryStats, type MemoryStats } from "./mongodb-analytics.js";
 import { MongoDBChangeStreamWatcher } from "./mongodb-change-stream.js";
@@ -1849,8 +1850,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const start = Math.max(1, from ?? 1);
     const count = Math.max(1, lines ?? Number.MAX_SAFE_INTEGER);
     const end = start + count - 1;
-    const docs = await chunksCollection(this.db, this.prefix)
-      .find({
+    const docs = await sortMongoCursor(
+      chunksCollection(this.db, this.prefix).find({
         path: normalizedPath,
         source: { $in: ["sessions", "conversation"] },
         agentId: this.agentId,
@@ -1863,9 +1864,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
               ],
             }
           : {}),
-      })
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ startLine: 1 })
+      }),
+      { startLine: 1 },
+    )
       .toArray();
     if (docs.length === 0) {
       if (normalizedPath.startsWith("events/")) {
@@ -1927,8 +1928,8 @@ export class MongoDBMemoryManager implements MemorySearchManager {
     const start = Math.max(1, from ?? 1);
     const count = Math.max(1, lines ?? Number.MAX_SAFE_INTEGER);
     const end = start + count - 1;
-    const docs = await chunksCollection(this.db, this.prefix)
-      .find({
+    const docs = await sortMongoCursor(
+      chunksCollection(this.db, this.prefix).find({
         path: rawPath,
         source: { $in: ["conversation", "memory"] },
         agentId: this.agentId,
@@ -1943,9 +1944,9 @@ export class MongoDBMemoryManager implements MemorySearchManager {
               ],
             }
           : {}),
-      })
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ startLine: 1 })
+      }),
+      { startLine: 1 },
+    )
       .toArray();
     if (docs.length === 0) {
       return {

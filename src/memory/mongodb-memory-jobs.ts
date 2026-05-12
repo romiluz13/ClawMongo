@@ -1,5 +1,6 @@
 import type { Db } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { memoryJobsCollection } from "./mongodb-schema.js";
 import type { MemoryJob, MemoryJobStatus, MemoryJobType } from "./types.js";
 
@@ -92,14 +93,14 @@ export async function listMemoryJobs(params: {
   limit?: number;
   jobType?: MemoryJobType;
 }): Promise<MemoryJob[]> {
-  const docs = await memoryJobsCollection(params.db, params.prefix)
-    .find({
+  const docs = await sortMongoCursor(
+    memoryJobsCollection(params.db, params.prefix).find({
       agentId: params.agentId,
       ...(params.status ? { status: params.status } : {}),
       ...(params.jobType ? { jobType: params.jobType } : {}),
-    })
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ createdAt: -1 })
+    }),
+    { createdAt: -1 },
+  )
     .limit(clampListLimit(params.limit))
     .toArray();
   return docs as unknown as MemoryJob[];

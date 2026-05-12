@@ -7,6 +7,7 @@ import { ensurePiAuthJsonFromAuthProfiles } from "./pi-auth-json.js";
 
 vi.mock("./auth-profiles/external-auth.js", () => ({
   overlayExternalAuthProfiles: <T>(store: T) => store,
+  syncPersistedExternalCliAuthProfiles: <T>(store: T) => store,
   shouldPersistExternalAuthProfile: () => true,
 }));
 

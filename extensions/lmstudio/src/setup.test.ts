@@ -698,7 +698,9 @@ describe("lmstudio setup", () => {
     await expect(configureLmstudioNonInteractive(ctx)).resolves.toBeNull();
 
     expect(ctx.runtime.error).toHaveBeenCalledWith(
-      "LM Studio model missing-model was not found at http://localhost:1234/v1.\nAvailable models: qwen3-8b-instruct",
+      expect.stringMatching(
+        /^LM Studio model missing-model was not found at http:\/\/(?:localhost|host\.docker\.internal):1234\/v1\.\nAvailable models: qwen3-8b-instruct$/u,
+      ),
     );
     expect(ctx.runtime.exit).toHaveBeenCalledWith(1);
     expect(configureSelfHostedNonInteractiveMock).not.toHaveBeenCalled();

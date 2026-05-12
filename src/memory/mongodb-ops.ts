@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { ingestRunsCollection, projectionRunsCollection } from "./mongodb-schema.js";
 import { emitTelemetry } from "./mongodb-telemetry.js";
 
@@ -102,10 +103,9 @@ export async function getRecentIngestRuns(params: {
 }): Promise<IngestRun[]> {
   const { db, prefix, agentId, limit = 20 } = params;
   try {
-    const docs = await ingestRunsCollection(db, prefix)
-      .find({ agentId })
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ ts: -1 })
+    const docs = await sortMongoCursor(ingestRunsCollection(db, prefix).find({ agentId }), {
+      ts: -1,
+    })
       .limit(limit)
       .toArray();
     return docs as unknown as IngestRun[];
@@ -128,10 +128,9 @@ export async function getRecentProjectionRuns(params: {
     if (projectionType) {
       filter.projectionType = projectionType;
     }
-    const docs = await projectionRunsCollection(db, prefix)
-      .find(filter)
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ ts: -1 })
+    const docs = await sortMongoCursor(projectionRunsCollection(db, prefix).find(filter), {
+      ts: -1,
+    })
       .limit(limit)
       .toArray();
     return docs as unknown as ProjectionRun[];

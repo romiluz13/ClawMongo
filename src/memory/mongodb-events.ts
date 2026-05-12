@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { recordProjectionRun } from "./mongodb-ops.js";
 import { eventsCollection, chunksCollection } from "./mongodb-schema.js";
 import { resolveScopeRef } from "./mongodb-scope.js";
@@ -104,10 +105,7 @@ export async function getEventsByTimeRange(params: {
     filter.scopeRef = scopeRef;
   }
 
-  return (await collection
-    .find(filter)
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1, _id: 1 })
+  return (await sortMongoCursor(collection.find(filter), { timestamp: 1, _id: 1 })
     .limit(limit ?? 1000)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -121,10 +119,7 @@ export async function getEventsBySession(params: {
 }): Promise<CanonicalEvent[]> {
   const { db, prefix, agentId, sessionId, limit } = params;
   const collection = eventsCollection(db, prefix);
-  return (await collection
-    .find({ agentId, sessionId })
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1, _id: 1 })
+  return (await sortMongoCursor(collection.find({ agentId, sessionId }), { timestamp: 1, _id: 1 })
     .limit(limit ?? 1000)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -137,10 +132,10 @@ export async function getUnprojectedEvents(params: {
 }): Promise<CanonicalEvent[]> {
   const { db, prefix, agentId, limit } = params;
   const collection = eventsCollection(db, prefix);
-  return (await collection
-    .find({ agentId, projectedAt: { $exists: false } })
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1, _id: 1 })
+  return (await sortMongoCursor(collection.find({ agentId, projectedAt: { $exists: false } }), {
+    timestamp: 1,
+    _id: 1,
+  })
     .limit(limit ?? 500)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -219,10 +214,7 @@ export async function getUnconsolidatedEvents(params: {
     filter.scopeRef = scopeRef;
   }
 
-  return (await collection
-    .find(filter)
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: 1, _id: 1 })
+  return (await sortMongoCursor(collection.find(filter), { timestamp: 1, _id: 1 })
     .limit(limit ?? 500)
     .toArray()) as unknown as CanonicalEvent[];
 }
@@ -251,10 +243,7 @@ export async function getSessionEventsWithBound(params: {
     filter.scopeRef = scopeRef;
   }
 
-  const events = (await collection
-    .find(filter)
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: -1 })
+  const events = (await sortMongoCursor(collection.find(filter), { timestamp: -1 })
     .limit(effectiveBound)
     .toArray()) as unknown as CanonicalEvent[];
 

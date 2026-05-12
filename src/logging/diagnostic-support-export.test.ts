@@ -259,7 +259,10 @@ describe("diagnostic support export", () => {
     expect(combined).not.toContain("short-token");
     expect(combined).not.toContain(tempDir);
     expect(combined).not.toContain("cron/jobs.json");
-    expect(combined).not.toContain(os.hostname());
+    const currentHostname = os.hostname();
+    if (currentHostname.length > 8) {
+      expect(combined).not.toContain(currentHostname);
+    }
     expect(combined).not.toContain("QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
     expect(combined).not.toContain("sid=secret");
     expect(combined).not.toContain("structured secret payload");

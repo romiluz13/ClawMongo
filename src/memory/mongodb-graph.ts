@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Db, Document } from "mongodb";
 import type { MemoryScope } from "../config/types.memory.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import { type EntityExtractor, RegexEntityExtractor } from "./mongodb-entity-extractor.js";
 import { recordMutation } from "./mongodb-mutations.js";
 import { recordProjectionRun } from "./mongodb-ops.js";
@@ -608,10 +609,7 @@ export async function findEntitiesByName(params: {
       filter.scopeRef = scopeRef;
     }
 
-    const docs = await collection
-      .find(filter)
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ updatedAt: -1 })
+    const docs = await sortMongoCursor(collection.find(filter), { updatedAt: -1 })
       .limit(limit ?? 50)
       .toArray();
 
@@ -639,15 +637,15 @@ export async function getEntitiesByType(params: {
   try {
     const collection = entitiesCollection(db, prefix);
 
-    const docs = await collection
-      .find({
+    const docs = await sortMongoCursor(
+      collection.find({
         agentId,
         type,
         ...(scope ? { scope } : {}),
         ...(scopeRef ? { scopeRef } : {}),
-      })
-      // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-      .sort({ updatedAt: -1 })
+      }),
+      { updatedAt: -1 },
+    )
       .limit(limit ?? 50)
       .toArray();
 

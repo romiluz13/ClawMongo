@@ -16,6 +16,7 @@
 
 import type { Db, Document } from "mongodb";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { sortMongoCursor } from "./mongodb-cursor.js";
 import type { NoveltyEvent, NoveltyOptions, NoveltyReport } from "./types.js";
 
 const log = createSubsystemLogger("memory:mongodb:novelty");
@@ -98,10 +99,7 @@ export async function scanNovelty(params: {
 
   // 2. Fetch recent events with embeddings
   const eventsCol = db.collection(`${prefix}events`);
-  const recentEvents = await eventsCol
-    .find(filter)
-    // oxlint-disable-next-line unicorn/no-array-sort -- MongoDB cursor .sort(), not Array
-    .sort({ timestamp: -1 })
+  const recentEvents = await sortMongoCursor(eventsCol.find(filter), { timestamp: -1 })
     .limit(MAX_RECENT_EVENTS)
     .toArray();
 

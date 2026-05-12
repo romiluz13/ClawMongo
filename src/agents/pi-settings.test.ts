@@ -276,7 +276,7 @@ describe("applyPiCompactionSettingsFromConfig", () => {
     });
   });
 
-  it("does not cap floor for mid-size models when maxReserve exceeds default floor", () => {
+  it("caps the default floor for mid-size models when the default exceeds maxReserve", () => {
     const settingsManager = {
       getCompactionReserveTokens: () => 16_384,
       getCompactionKeepRecentTokens: () => 20_000,
@@ -285,15 +285,15 @@ describe("applyPiCompactionSettingsFromConfig", () => {
 
     // 32 768 context window → minPromptBudget = min(8_000, floor(32_768 * 0.5)) = 8_000.
     // maxReserve = 32_768 - 8_000 = 24_768.
-    // Since 24_768 > 20_000 (DEFAULT_FLOOR), the floor is NOT capped and stays at 20_000.
+    // Since 24_768 < 40_000 (DEFAULT_FLOOR), the floor is capped.
     const result = applyPiCompactionSettingsFromConfig({
       settingsManager,
       contextTokenBudget: 32_768,
     });
 
-    expect(result.compaction.reserveTokens).toBe(DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR);
+    expect(result.compaction.reserveTokens).toBe(24_768);
     expect(settingsManager.applyOverrides).toHaveBeenCalledWith({
-      compaction: { reserveTokens: DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR },
+      compaction: { reserveTokens: 24_768 },
     });
   });
 
