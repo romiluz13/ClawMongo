@@ -166,7 +166,12 @@ describe("tsdown config", () => {
       expect(neverBundle("@lancedb/lancedb")).toBe(true);
       expect(neverBundle("@larksuiteoapi/node-sdk")).toBe(true);
       expect(neverBundle("@matrix-org/matrix-sdk-crypto-nodejs")).toBe(true);
+      expect(neverBundle("@slack/bolt")).toBe(true);
+      expect(neverBundle("@slack/types")).toBe(true);
+      expect(neverBundle("@slack/web-api")).toBe(true);
       expect(neverBundle("@vitest/expect")).toBe(true);
+      expect(neverBundle("baileys")).toBe(true);
+      expect(neverBundle("grammy")).toBe(true);
       expect(neverBundle("matrix-js-sdk/lib/client.js")).toBe(true);
       expect(neverBundle("prism-media")).toBe(true);
       expect(neverBundle("qrcode-terminal/lib/main.js")).toBe(true);
@@ -177,7 +182,12 @@ describe("tsdown config", () => {
         "@discordjs/voice",
         "@lancedb/lancedb",
         "@larksuiteoapi/node-sdk",
+        "@slack/bolt",
+        "@slack/types",
+        "@slack/web-api",
         "@vitest/expect",
+        "baileys",
+        "grammy",
         "matrix-js-sdk",
         "prism-media",
         "qrcode-terminal",
