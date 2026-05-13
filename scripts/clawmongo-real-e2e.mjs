@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -100,10 +100,12 @@ async function main() {
       OPENCLAW_CONFIG_PATH: path.join(homeDir, ".openclaw", "openclaw.json"),
     };
 
-    run("node", ["openclaw.mjs", "memory", "status", "--json"], { env });
+    run("node", ["openclaw.mjs", "status", "--json", "--all"], { env });
 
     const { getMemorySearchManager } = await import("../dist/memory/index.js");
-    const cfg = JSON.parse(await fs.readFile(path.join(homeDir, ".openclaw", "openclaw.json"), "utf8"));
+    const cfg = JSON.parse(
+      await fs.readFile(path.join(homeDir, ".openclaw", "openclaw.json"), "utf8"),
+    );
     const { manager, error } = await getMemorySearchManager({ cfg, agentId });
     if (!manager) {
       throw new Error(error ?? "memory manager unavailable");
@@ -145,7 +147,10 @@ async function main() {
       ),
     );
   } finally {
-    await client.db(database).dropDatabase().catch(() => {});
+    await client
+      .db(database)
+      .dropDatabase()
+      .catch(() => {});
     await client.close().catch(() => {});
     await fs.rm(homeDir, { recursive: true, force: true }).catch(() => {});
   }
