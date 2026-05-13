@@ -27,6 +27,14 @@ function run(command, args, options = {}) {
   });
 }
 
+function runInherited(command, args, options = {}) {
+  execFileSync(command, args, {
+    cwd: repoRoot,
+    stdio: "inherit",
+    ...options,
+  });
+}
+
 function requireEnv() {
   if (!mongoUri.trim()) {
     throw new Error(
@@ -79,6 +87,7 @@ async function writeConfig(homeDir, agentId, database, prefix) {
 
 async function main() {
   requireEnv();
+  runInherited("node", ["scripts/build-all.mjs"]);
   const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
   const agentId = `e2e-${suffix}`;
   const database = `clawmongo_e2e_${suffix}`;
