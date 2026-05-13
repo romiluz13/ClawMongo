@@ -222,6 +222,7 @@ function buildCoreDistEntries(): Record<string, string> {
     "cli/gateway-lifecycle.runtime": "src/cli/gateway-cli/lifecycle.runtime.ts",
     "provider-dispatcher.runtime": "src/auto-reply/reply/provider-dispatcher.runtime.ts",
     "server-close.runtime": "src/gateway/server-close.runtime.ts",
+    "memory/index": "src/memory/index.ts",
     "plugins/memory-state": "src/plugins/memory-state.ts",
     "subagent-registry.runtime": "src/agents/subagent-registry.runtime.ts",
     "task-registry-control.runtime": "src/tasks/task-registry-control.runtime.ts",

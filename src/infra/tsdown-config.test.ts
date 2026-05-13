@@ -98,6 +98,7 @@ describe("tsdown config", () => {
       "media-understanding/apply.runtime",
       "index",
       "commands/status.summary.runtime",
+      "memory/index",
       "provider-dispatcher.runtime",
       "plugins/provider-discovery.runtime",
       "plugins/provider-runtime.runtime",
@@ -126,6 +127,12 @@ describe("tsdown config", () => {
     expect(entrySources(distGraph)["provider-dispatcher.runtime"]).toBe(
       "src/auto-reply/reply/provider-dispatcher.runtime.ts",
     );
+  });
+
+  it("keeps ClawMongo real E2E memory runtime behind a stable dist entry", () => {
+    const distGraph = requireUnifiedDistGraph();
+
+    expect(entrySources(distGraph)["memory/index"]).toBe("src/memory/index.ts");
   });
 
   it("routes gateway run-loop lifecycle imports through the stable runtime boundary", () => {
