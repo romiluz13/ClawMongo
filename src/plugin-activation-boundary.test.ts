@@ -1,7 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { normalizeModelRef } from "./agents/model-selection-normalize.js";
-import { isStaticallyChannelConfigured } from "./config/channel-configured-shared.js";
-import { parseBrowserMajorVersion } from "./plugin-sdk/browser-host-inspection.js";
 
 const loadBundledPluginPublicSurfaceModuleSync = vi.hoisted(() =>
   vi.fn((params: { artifactBasename: string }) => {
@@ -120,8 +117,15 @@ vi.mock("./plugin-sdk/facade-runtime.js", () => ({
 }));
 
 describe("plugin activation boundary", () => {
-  it("keeps generic boundaries cold and loads only narrow browser helper surfaces on use", () => {
+  it("keeps generic boundaries cold and loads only narrow browser helper surfaces on use", async () => {
+    vi.resetModules();
     loadBundledPluginPublicSurfaceModuleSync.mockReset();
+    const [{ normalizeModelRef }, { isStaticallyChannelConfigured }, { parseBrowserMajorVersion }] =
+      await Promise.all([
+        import("./agents/model-selection-normalize.js"),
+        import("./config/channel-configured-shared.js"),
+        import("./plugin-sdk/browser-host-inspection.js"),
+      ]);
 
     expect(isStaticallyChannelConfigured({}, "telegram", { TELEGRAM_BOT_TOKEN: "token" })).toBe(
       true,
